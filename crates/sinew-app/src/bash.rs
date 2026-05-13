@@ -458,11 +458,11 @@ async fn collect_output(session: &mut BashSession, wait: Duration) -> CapturedOu
 
         exit_seen = exit_seen.or_else(|| session.exit_rx.borrow().clone());
         if exit_seen.is_some() {
-            if let Ok(chunk) = timeout(Duration::from_millis(50), session.output_rx.recv()).await {
-                if let Some(chunk) = chunk {
-                    append_limited(&mut bytes, &mut truncated, &chunk);
-                    continue;
-                }
+            if let Ok(Some(chunk)) =
+                timeout(Duration::from_millis(50), session.output_rx.recv()).await
+            {
+                append_limited(&mut bytes, &mut truncated, &chunk);
+                continue;
             }
             while let Ok(chunk) = session.output_rx.try_recv() {
                 append_limited(&mut bytes, &mut truncated, &chunk);

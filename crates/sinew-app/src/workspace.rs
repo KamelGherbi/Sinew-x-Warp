@@ -624,16 +624,14 @@ pub fn read_external_file(path: &Path) -> Result<FileDocument> {
 fn clean_terminal_token(raw: &str) -> String {
     let mut value = raw.trim();
     // Strip wrapping quotes
-    if (value.starts_with('"') && value.ends_with('"'))
-        || (value.starts_with('\'') && value.ends_with('\''))
-    {
-        if value.len() >= 2 {
+    if ((value.starts_with('"') && value.ends_with('"'))
+        || (value.starts_with('\'') && value.ends_with('\'')))
+        && value.len() >= 2 {
             value = &value[1..value.len() - 1];
         }
-    }
     // Strip trailing punctuation often present in prose ("see foo.rs.").
-    let trimmed = value.trim_end_matches(|c: char| matches!(c, ',' | '.' | ';' | ')' | ']' | '>'));
-    let trimmed = trimmed.trim_start_matches(|c: char| matches!(c, '(' | '[' | '<'));
+    let trimmed = value.trim_end_matches([',', '.', ';', ')', ']', '>']);
+    let trimmed = trimmed.trim_start_matches(['(', '[', '<']);
     trimmed.trim().to_string()
 }
 

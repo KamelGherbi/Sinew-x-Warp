@@ -199,17 +199,14 @@ impl TurnCancel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum AgentMode {
+    #[default]
     Act,
     Plan,
     Goal,
 }
 
-impl Default for AgentMode {
-    fn default() -> Self {
-        Self::Act
-    }
-}
 
 pub struct TurnContext {
     pub provider: Arc<dyn Provider>,
@@ -771,7 +768,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         meta.insert(key, value);
                     }
                 }
-                let result_meta = (!meta.is_empty()).then(|| Value::Object(meta));
+                let result_meta = (!meta.is_empty()).then_some(Value::Object(meta));
                 send_event(
                     &event_tx,
                     event_scope.as_ref(),

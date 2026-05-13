@@ -233,6 +233,7 @@ struct ApplyPatchInput {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::enum_variant_names)]
 enum PatchOperation {
     AddFile {
         path: String,

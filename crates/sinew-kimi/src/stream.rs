@@ -290,7 +290,7 @@ impl EventParser {
             }
         }
         out.push(StreamEvent::MessageStop {
-            stop_reason: self.stop_reason.unwrap_or_else(|| {
+            stop_reason: self.stop_reason.unwrap_or({
                 if self.saw_tool_call {
                     StopReason::ToolUse
                 } else {

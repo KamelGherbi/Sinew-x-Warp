@@ -16,6 +16,9 @@ edition = "2021"
 rust-version = "1.80"
 license = "MIT"
 
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+
 [workspace.dependencies]
 sinew-core = { path = "crates/sinew-core" }
 sinew-anthropic = { path = "crates/sinew-anthropic" }

@@ -127,21 +127,20 @@ pub struct PlanArtifactState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "camelCase")]
+#[derive(Default)]
 pub enum PlanWorkflowState {
+    #[default]
     Idle,
     PlanningQuestions,
     PlanReady { artifact: PlanArtifactState },
 }
 
-impl Default for PlanWorkflowState {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "camelCase")]
+#[derive(Default)]
 pub enum GoalWorkflowState {
+    #[default]
     Idle,
     Active {
         objective: String,
@@ -160,11 +159,6 @@ pub enum GoalWorkflowState {
     },
 }
 
-impl Default for GoalWorkflowState {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

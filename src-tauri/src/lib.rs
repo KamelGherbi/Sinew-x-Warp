@@ -1274,7 +1274,7 @@ async fn write_response(
 ) -> Result<()> {
     let response = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.as_bytes().len()
+        body.len()
     );
     stream
         .write_all(response.as_bytes())
@@ -1372,14 +1372,14 @@ fn conversation_active_mode(conversation: &SavedConversation) -> AgentMode {
             AgentMode::Plan
         }
     };
-    let mode = if mode == AgentMode::Act
+    
+    if mode == AgentMode::Act
         && matches!(conversation.goal_workflow, GoalWorkflowState::Active { .. })
     {
         AgentMode::Goal
     } else {
         mode
-    };
-    mode
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -3994,14 +3994,12 @@ fn indent_hidden_lines(value: &str, indent: &str) -> Vec<String> {
 
 fn truncate_hidden_turn_line(value: &str, max_chars: usize) -> String {
     let mut out = String::new();
-    let mut count = 0usize;
-    for ch in value.chars() {
+    for (count, ch) in value.chars().enumerate() {
         if count >= max_chars {
             out.push_str("...");
             break;
         }
         out.push(ch);
-        count += 1;
     }
     out
 }
@@ -4924,7 +4922,7 @@ fn plan_display_path(workspace_root: &Path, raw: &str) -> String {
 fn attach_latest_plan_artifact(
     workspace_root: &Path,
     conversation_id: &str,
-    history: &mut Vec<ChatMessage>,
+    history: &mut [ChatMessage],
     turn_user_history_index: usize,
 ) -> Result<Option<PlanArtifactState>> {
     if turn_has_question_tool(history, turn_user_history_index) {
@@ -5648,9 +5646,7 @@ fn safe_temp_file_stem(value: &str) -> String {
         if out.len() >= 72 {
             break;
         }
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-        } else if matches!(ch, '-' | '_') {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
             out.push(ch);
         } else if ch.is_whitespace() && !out.ends_with('-') {
             out.push('-');
@@ -5787,13 +5783,13 @@ fn install_macos_dock_menu(app: &AppHandle) {
             delegate_class,
             objc2::sel!(applicationDockMenu:),
             dock_menu_imp,
-            b"@@:@\0".as_ptr().cast(),
+            c"@@:@".as_ptr().cast(),
         );
         let _ = class_addMethod(
             delegate_class,
             objc2::sel!(sinewNewWindowFromDock:),
             new_window_imp,
-            b"v@:@\0".as_ptr().cast(),
+            c"v@:@".as_ptr().cast(),
         );
     }
 }
@@ -6209,6 +6205,177 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .try_init();
+
+    let mut providers: HashMap<String, Arc<dyn Provider>> = HashMap::new();
+    if let Ok(provider) = AnthropicProvider::from_default_sources() {
+        providers.insert("anthropic".into(), Arc::new(provider) as Arc<dyn Provider>);
+    }
+    if let Ok(provider) = OpenAiProvider::from_default_sources() {
+        providers.insert("openai".into(), Arc::new(provider) as Arc<dyn Provider>);
+    }
+    if let Ok(provider) = GoogleProvider::from_default_sources() {
+        providers.insert("google".into(), Arc::new(provider) as Arc<dyn Provider>);
+    }
+    if let Ok(provider) = KimiProvider::from_default_sources() {
+        providers.insert("kimi".into(), Arc::new(provider) as Arc<dyn Provider>);
+    }
+
+    let default_model = if providers.contains_key("anthropic") {
+        ModelRef::new("anthropic", ANTHROPIC_MODEL_ID).with_effort(Effort::Max)
+    } else if providers.contains_key("openai") {
+        ModelRef::new("openai", OPENAI_MODEL_ID).with_effort(Effort::Medium)
+    } else if providers.contains_key("kimi") {
+        ModelRef::new("kimi", KIMI_MODEL_ID).with_effort(Effort::High)
+    } else {
+        ModelRef::new("google", GOOGLE_MODEL_ID).with_effort(Effort::Medium)
+    };
+
+    let state = DesktopState {
+        providers: Arc::new(StdMutex::new(providers)),
+        store: AppStore::open_default().expect("unable to open app store"),
+        default_model,
+        system_prompt: DEFAULT_SYSTEM_PROMPT.into(),
+        max_tool_rounds: 200,
+        active_turns: Arc::new(Mutex::new(HashMap::new())),
+        team_runtime: Arc::new(RwLock::new(TeamRuntime::default())),
+        file_watchers: Arc::new(Mutex::new(HashMap::new())),
+        terminal_sessions: Arc::new(Mutex::new(HashMap::new())),
+        openai_login: Arc::new(Mutex::new(None)),
+        anthropic_login: Arc::new(Mutex::new(None)),
+        google_login: Arc::new(Mutex::new(None)),
+        kimi_login: Arc::new(Mutex::new(None)),
+    };
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let handle = app.handle();
+            #[cfg(target_os = "macos")]
+            install_macos_dock_menu(handle);
+
+            let menu = tauri::menu::Menu::default(handle)?;
+            let new_window_item =
+                tauri::menu::MenuItemBuilder::with_id(NEW_WINDOW_MENU_ID, "New Window")
+                    .accelerator("CmdOrCtrl+Shift+N")
+                    .build(handle)?;
+            let file_menu = tauri::menu::SubmenuBuilder::new(handle, "File")
+                .item(&new_window_item)
+                .build()?;
+            let terminal_menu = tauri::menu::SubmenuBuilder::new(handle, "Terminal")
+                .text(TERMINAL_OPEN_MENU_ID, "Open Terminal")
+                .build()?;
+            menu.append(&file_menu)?;
+            menu.append(&terminal_menu)?;
+            app.set_menu(menu)?;
+            Ok(())
+        })
+        .on_menu_event(|app, event| {
+            if event.id() == NEW_WINDOW_MENU_ID {
+                create_new_window_detached(app);
+            } else if event.id() == TERMINAL_OPEN_MENU_ID {
+                let focused = app
+                    .webview_windows()
+                    .into_values()
+                    .find(|window| window.is_focused().unwrap_or(false));
+                if let Some(window) = focused {
+                    let _ = window.emit(TERMINAL_OPEN_EVENT_NAME, ());
+                } else {
+                    let _ = app.emit(TERMINAL_OPEN_EVENT_NAME, ());
+                }
+            }
+        })
+        .manage(state)
+        .invoke_handler(tauri::generate_handler![
+            open_workspace,
+            open_new_window,
+            watch_workspace_command,
+            unwatch_workspace_command,
+            list_workspace_entries_command,
+            list_workspace_files_command,
+            search_workspace_files_command,
+            read_workspace_file_command,
+            write_workspace_file_command,
+            create_workspace_file_command,
+            create_workspace_directory_command,
+            rename_workspace_entry_command,
+            delete_workspace_entry_command,
+            trash_workspace_entry_command,
+            restore_workspace_deleted_entries_command,
+            reveal_workspace_entry_command,
+            reveal_absolute_path_command,
+            resolve_terminal_path_command,
+            read_external_file_command,
+            delete_skill_command,
+            open_external_url_command,
+            copy_workspace_entries_command,
+            import_workspace_paths_command,
+            save_clipboard_image_attachment_command,
+            read_clipboard_file_paths_command,
+            list_conversations,
+            create_conversation,
+            load_conversation,
+            rename_conversation,
+            delete_conversation,
+            set_conversation_mode,
+            set_conversation_model_preference,
+            list_mcp_settings,
+            save_mcp_settings,
+            list_tool_settings,
+            save_tool_settings,
+            list_sub_agent_settings,
+            save_sub_agent_settings,
+            list_configured_model_providers,
+            get_openai_provider_status,
+            start_openai_oauth_login,
+            cancel_openai_oauth_login,
+            disconnect_openai_provider,
+            get_anthropic_provider_status,
+            start_anthropic_oauth_login,
+            cancel_anthropic_oauth_login,
+            disconnect_anthropic_provider,
+            get_google_provider_status,
+            start_google_oauth_login,
+            cancel_google_oauth_login,
+            disconnect_google_provider,
+            get_kimi_provider_status,
+            start_kimi_oauth_login,
+            cancel_kimi_oauth_login,
+            disconnect_kimi_provider,
+            probe_mcp_tools,
+            list_installed_skills_command,
+            save_skill_settings,
+            send_message,
+            compact_conversation,
+            estimate_context,
+            estimate_sub_agent_context,
+            cancel_turn,
+            stop_agent_swarm_command,
+            run_terminal_command,
+            spawn_terminal,
+            write_terminal,
+            resize_terminal,
+            kill_terminal,
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building sinew desktop")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if !focus_existing_window(app) {
+                    create_new_window_detached(app);
+                }
+            }
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6442,175 +6609,4 @@ mod tests {
         assert!(wake_text.contains("Built the feature."));
         assert!(wake_text.contains("Agent Swarm a terminé"));
     }
-}
-
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .try_init();
-
-    let mut providers: HashMap<String, Arc<dyn Provider>> = HashMap::new();
-    if let Ok(provider) = AnthropicProvider::from_default_sources() {
-        providers.insert("anthropic".into(), Arc::new(provider) as Arc<dyn Provider>);
-    }
-    if let Ok(provider) = OpenAiProvider::from_default_sources() {
-        providers.insert("openai".into(), Arc::new(provider) as Arc<dyn Provider>);
-    }
-    if let Ok(provider) = GoogleProvider::from_default_sources() {
-        providers.insert("google".into(), Arc::new(provider) as Arc<dyn Provider>);
-    }
-    if let Ok(provider) = KimiProvider::from_default_sources() {
-        providers.insert("kimi".into(), Arc::new(provider) as Arc<dyn Provider>);
-    }
-
-    let default_model = if providers.contains_key("anthropic") {
-        ModelRef::new("anthropic", ANTHROPIC_MODEL_ID).with_effort(Effort::Max)
-    } else if providers.contains_key("openai") {
-        ModelRef::new("openai", OPENAI_MODEL_ID).with_effort(Effort::Medium)
-    } else if providers.contains_key("kimi") {
-        ModelRef::new("kimi", KIMI_MODEL_ID).with_effort(Effort::High)
-    } else {
-        ModelRef::new("google", GOOGLE_MODEL_ID).with_effort(Effort::Medium)
-    };
-
-    let state = DesktopState {
-        providers: Arc::new(StdMutex::new(providers)),
-        store: AppStore::open_default().expect("unable to open app store"),
-        default_model,
-        system_prompt: DEFAULT_SYSTEM_PROMPT.into(),
-        max_tool_rounds: 200,
-        active_turns: Arc::new(Mutex::new(HashMap::new())),
-        team_runtime: Arc::new(RwLock::new(TeamRuntime::default())),
-        file_watchers: Arc::new(Mutex::new(HashMap::new())),
-        terminal_sessions: Arc::new(Mutex::new(HashMap::new())),
-        openai_login: Arc::new(Mutex::new(None)),
-        anthropic_login: Arc::new(Mutex::new(None)),
-        google_login: Arc::new(Mutex::new(None)),
-        kimi_login: Arc::new(Mutex::new(None)),
-    };
-
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
-            let handle = app.handle();
-            #[cfg(target_os = "macos")]
-            install_macos_dock_menu(handle);
-
-            let menu = tauri::menu::Menu::default(handle)?;
-            let new_window_item =
-                tauri::menu::MenuItemBuilder::with_id(NEW_WINDOW_MENU_ID, "New Window")
-                    .accelerator("CmdOrCtrl+Shift+N")
-                    .build(handle)?;
-            let file_menu = tauri::menu::SubmenuBuilder::new(handle, "File")
-                .item(&new_window_item)
-                .build()?;
-            let terminal_menu = tauri::menu::SubmenuBuilder::new(handle, "Terminal")
-                .text(TERMINAL_OPEN_MENU_ID, "Open Terminal")
-                .build()?;
-            menu.append(&file_menu)?;
-            menu.append(&terminal_menu)?;
-            app.set_menu(menu)?;
-            Ok(())
-        })
-        .on_menu_event(|app, event| {
-            if event.id() == NEW_WINDOW_MENU_ID {
-                create_new_window_detached(app);
-            } else if event.id() == TERMINAL_OPEN_MENU_ID {
-                let focused = app
-                    .webview_windows()
-                    .into_values()
-                    .find(|window| window.is_focused().unwrap_or(false));
-                if let Some(window) = focused {
-                    let _ = window.emit(TERMINAL_OPEN_EVENT_NAME, ());
-                } else {
-                    let _ = app.emit(TERMINAL_OPEN_EVENT_NAME, ());
-                }
-            }
-        })
-        .manage(state)
-        .invoke_handler(tauri::generate_handler![
-            open_workspace,
-            open_new_window,
-            watch_workspace_command,
-            unwatch_workspace_command,
-            list_workspace_entries_command,
-            list_workspace_files_command,
-            search_workspace_files_command,
-            read_workspace_file_command,
-            write_workspace_file_command,
-            create_workspace_file_command,
-            create_workspace_directory_command,
-            rename_workspace_entry_command,
-            delete_workspace_entry_command,
-            trash_workspace_entry_command,
-            restore_workspace_deleted_entries_command,
-            reveal_workspace_entry_command,
-            reveal_absolute_path_command,
-            resolve_terminal_path_command,
-            read_external_file_command,
-            delete_skill_command,
-            open_external_url_command,
-            copy_workspace_entries_command,
-            import_workspace_paths_command,
-            save_clipboard_image_attachment_command,
-            read_clipboard_file_paths_command,
-            list_conversations,
-            create_conversation,
-            load_conversation,
-            rename_conversation,
-            delete_conversation,
-            set_conversation_mode,
-            set_conversation_model_preference,
-            list_mcp_settings,
-            save_mcp_settings,
-            list_tool_settings,
-            save_tool_settings,
-            list_sub_agent_settings,
-            save_sub_agent_settings,
-            list_configured_model_providers,
-            get_openai_provider_status,
-            start_openai_oauth_login,
-            cancel_openai_oauth_login,
-            disconnect_openai_provider,
-            get_anthropic_provider_status,
-            start_anthropic_oauth_login,
-            cancel_anthropic_oauth_login,
-            disconnect_anthropic_provider,
-            get_google_provider_status,
-            start_google_oauth_login,
-            cancel_google_oauth_login,
-            disconnect_google_provider,
-            get_kimi_provider_status,
-            start_kimi_oauth_login,
-            cancel_kimi_oauth_login,
-            disconnect_kimi_provider,
-            probe_mcp_tools,
-            list_installed_skills_command,
-            save_skill_settings,
-            send_message,
-            compact_conversation,
-            estimate_context,
-            estimate_sub_agent_context,
-            cancel_turn,
-            stop_agent_swarm_command,
-            run_terminal_command,
-            spawn_terminal,
-            write_terminal,
-            resize_terminal,
-            kill_terminal,
-        ])
-        .build(tauri::generate_context!())
-        .expect("error while building sinew desktop")
-        .run(|app, event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = event {
-                if !focus_existing_window(app) {
-                    create_new_window_detached(app);
-                }
-            }
-        })
 }

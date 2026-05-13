@@ -30,6 +30,12 @@ pub struct WebSearchTool {
     api_key: Option<String>,
 }
 
+impl Default for WebSearchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebSearchTool {
     pub fn new() -> Self {
         Self::with_api_key(None)
@@ -239,6 +245,12 @@ fn exa_web_search_body(input: &ExaSearchInput, query: &str) -> Value {
 #[derive(Debug, Clone)]
 pub struct WebFetchTool {
     http: reqwest::Client,
+}
+
+impl Default for WebFetchTool {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WebFetchTool {

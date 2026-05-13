@@ -1002,7 +1002,7 @@ impl TeamTool {
         if !final_responses.is_empty() {
             meta.insert("agentFinalResponses".into(), json!(final_responses));
         }
-        result.meta = (!meta.is_empty()).then(|| Value::Object(meta));
+        result.meta = (!meta.is_empty()).then_some(Value::Object(meta));
         result
     }
 
