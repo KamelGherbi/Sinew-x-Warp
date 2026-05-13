@@ -1,0 +1,42 @@
+{
+  "name": "sinew",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@iconify-json/solar": "1.2.5",
+    "@iconify-json/vscode-icons": "1.2.45",
+    "@iconify/react": "6.0.2",
+    "@monaco-editor/react": "^4.6.0",
+    "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/plugin-dialog": "^2.0.1",
+    "@xterm/addon-clipboard": "0.3.0-beta.218",
+    "@xterm/addon-fit": "0.12.0-beta.218",
+    "@xterm/addon-unicode11": "0.10.0-beta.218",
+    "@xterm/addon-web-links": "0.13.0-beta.218",
+    "@xterm/addon-webgl": "0.20.0-beta.217",
+    "@xterm/xterm": "6.1.0-beta.218",
+    "highlight.js": "^11.10.0",
+    "lucide-react": "1.8.0",
+    "monaco-editor": "^0.52.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "rehype-highlight": "^7.0.1",
+    "remark-gfm": "^4.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

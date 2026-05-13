@@ -1,0 +1,511 @@
+use async_trait::async_trait;
+use serde::Serialize;
+use sinew_core::{
+    AppError, ChatMessage, Effort, ModelCapabilities, ModelRef, Part, Provider, ProviderRequest,
+    ProviderStream, Result, Role, TokenEstimate, ToolDescriptor,
+};
+
+use crate::{
+    auth::{Credential, ANTHROPIC_RECONNECT_MESSAGE},
+    model_info,
+    stream::map_stream,
+    wire,
+};
+
+const BASE_URL: &str = "https://api.anthropic.com";
+const API_VERSION: &str = "2023-06-01";
+const USER_AGENT: &str = "claude-cli/2.1.75";
+const CODE_SYSTEM_PREFIX: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+const COMMON_BETA: &str = "fine-grained-tool-streaming-2025-05-14,context-1m-2025-08-07";
+const OAUTH_BETA: &str = "claude-code-20250219,oauth-2025-04-20";
+const CACHE_BREAKPOINTS: usize = 4;
+
+#[derive(Clone)]
+pub struct AnthropicConfig {
+    pub credential: Credential,
+    pub base_url: String,
+    pub api_version: String,
+    pub extra_beta: Option<String>,
+}
+
+impl AnthropicConfig {
+    pub fn new(credential: Credential) -> Self {
+        Self {
+            credential,
+            base_url: BASE_URL.into(),
+            api_version: API_VERSION.into(),
+            extra_beta: None,
+        }
+    }
+
+    pub fn from_default_sources() -> Result<Self> {
+        if let Some(credential) = Credential::load_default()? {
+            return Ok(Self::new(credential));
+        }
+
+        Err(AppError::Auth(
+            "no anthropic credential found. Connect Anthropic in Settings > Providers.".into(),
+        ))
+    }
+}
+
+pub struct AnthropicProvider {
+    config: AnthropicConfig,
+    http: reqwest::Client,
+}
+
+impl AnthropicProvider {
+    pub fn new(config: AnthropicConfig) -> Result<Self> {
+        let http = reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .build()
+            .map_err(|err| AppError::Network(err.to_string()))?;
+        Ok(Self { config, http })
+    }
+
+    pub fn from_default_sources() -> Result<Self> {
+        Self::new(AnthropicConfig::from_default_sources()?)
+    }
+
+    async fn post(&self, route: &str) -> Result<(reqwest::RequestBuilder, String)> {
+        let token = self.config.credential.bearer_or_key(&self.http).await?;
+        let is_oauth = self.config.credential.is_oauth();
+        let mut request = self
+            .http
+            .post(format!(
+                "{}{}",
+                self.config.base_url.trim_end_matches('/'),
+                route
+            ))
+            .header("anthropic-version", &self.config.api_version)
+            .header("content-type", "application/json")
+            .header("accept", "application/json")
+            .header("anthropic-dangerous-direct-browser-access", "true")
+            .header("anthropic-beta", self.beta_header(is_oauth));
+
+        if is_oauth {
+            request = request
+                .header("authorization", format!("Bearer {token}"))
+                .header("x-app", "cli")
+                .header("user-agent", USER_AGENT);
+        } else {
+            request = request.header("x-api-key", token.clone());
+        }
+
+        Ok((request, token))
+    }
+
+    async fn send_json<T: Serialize + ?Sized>(
+        &self,
+        route: &str,
+        body: &T,
+    ) -> Result<reqwest::Response> {
+        let (request, token) = self.post(route).await?;
+        let response = request
+            .json(body)
+            .send()
+            .await
+            .map_err(|err| AppError::Network(err.to_string()))?;
+
+        if response.status() != reqwest::StatusCode::UNAUTHORIZED
+            || !self.config.credential.is_oauth()
+        {
+            return Ok(response);
+        }
+
+        self.config
+            .credential
+            .force_refresh(&self.http, &token)
+            .await
+            .map_err(map_refresh_failure)?;
+
+        let (request, _) = self.post(route).await?;
+        request
+            .json(body)
+            .send()
+            .await
+            .map_err(|err| AppError::Network(err.to_string()))
+    }
+
+    fn beta_header(&self, is_oauth: bool) -> String {
+        let mut values = Vec::new();
+        if is_oauth {
+            values.push(OAUTH_BETA.to_string());
+        }
+        values.push(COMMON_BETA.to_string());
+        if let Some(extra) = &self.config.extra_beta {
+            if !extra.is_empty() {
+                values.push(extra.clone());
+            }
+        }
+        values.join(",")
+    }
+}
+
+#[async_trait]
+impl Provider for AnthropicProvider {
+    fn name(&self) -> &str {
+        "anthropic"
+    }
+
+    fn capabilities(&self, model: &ModelRef) -> Option<ModelCapabilities> {
+        if model.provider != "anthropic" {
+            return None;
+        }
+        Some(model_info::capabilities(model))
+    }
+
+    async fn estimate_tokens(&self, request: ProviderRequest) -> Result<TokenEstimate> {
+        if request.model.provider != "anthropic" {
+            return Err(AppError::Unsupported(format!(
+                "anthropic provider cannot count model provider {}",
+                request.model.provider
+            )));
+        }
+
+        let is_oauth = self.config.credential.is_oauth();
+        let body = wire::CountTokensRequest {
+            model: &request.model.name,
+            system: build_system_blocks(is_oauth, request.system_prompt.as_deref(), false),
+            messages: request
+                .transcript
+                .iter()
+                .filter_map(|message| to_wire_message(message, false).transpose())
+                .collect::<Result<Vec<_>>>()?,
+            tools: request
+                .tools
+                .iter()
+                .map(|tool| to_wire_tool(tool, false))
+                .collect(),
+        };
+
+        let response = self.send_json("/v1/messages/count_tokens", &body).await?;
+
+        if !response.status().is_success() {
+            return Err(read_http_error(response).await);
+        }
+
+        let counted: wire::CountTokensResponse = response
+            .json()
+            .await
+            .map_err(|err| AppError::Decode(err.to_string()))?;
+        Ok(TokenEstimate {
+            input_tokens: counted.input_tokens,
+            exact: true,
+        })
+    }
+
+    async fn stream(&self, request: ProviderRequest) -> Result<ProviderStream> {
+        let caps = model_info::capabilities(&request.model);
+        let is_oauth = self.config.credential.is_oauth();
+        let (thinking, output_config) = effort_to_output(request.effective_effort());
+        let mut cache_budget = CACHE_BREAKPOINTS;
+        let cache_tools = take_cache_breakpoint(&mut cache_budget, !request.tools.is_empty());
+        let cache_system = take_cache_breakpoint(
+            &mut cache_budget,
+            has_system_blocks(is_oauth, request.system_prompt.as_deref()),
+        );
+        let stable_message_count = request
+            .cache_stable_message_count
+            .unwrap_or(request.transcript.len())
+            .min(request.transcript.len());
+        let cached_messages =
+            cache_message_indices(&request.transcript[..stable_message_count], cache_budget);
+        let body = wire::MessagesRequest {
+            model: &request.model.name,
+            max_tokens: request
+                .max_output_tokens
+                .unwrap_or(caps.max_output_tokens)
+                .min(caps.max_output_tokens),
+            system: build_system_blocks(is_oauth, request.system_prompt.as_deref(), cache_system),
+            messages: request
+                .transcript
+                .iter()
+                .enumerate()
+                .filter_map(|(index, message)| {
+                    to_wire_message(message, cached_messages.contains(&index)).transpose()
+                })
+                .collect::<Result<Vec<_>>>()?,
+            tools: request
+                .tools
+                .iter()
+                .enumerate()
+                .map(|(index, tool)| {
+                    to_wire_tool(tool, cache_tools && index + 1 == request.tools.len())
+                })
+                .collect(),
+            thinking,
+            output_config,
+            temperature: request.temperature,
+            stream: true,
+        };
+
+        let response = self.send_json("/v1/messages", &body).await?;
+
+        if !response.status().is_success() {
+            return Err(read_http_error(response).await);
+        }
+
+        Ok(map_stream(response.bytes_stream()))
+    }
+}
+
+fn build_system_blocks<'a>(
+    is_oauth: bool,
+    user_system: Option<&'a str>,
+    cache_last: bool,
+) -> Vec<wire::SystemText<'a>> {
+    let mut blocks = Vec::new();
+    if is_oauth {
+        blocks.push(wire::SystemText {
+            kind: "text",
+            text: CODE_SYSTEM_PREFIX,
+            cache_control: None,
+        });
+    }
+    if let Some(text) = user_system {
+        if !text.trim().is_empty() {
+            blocks.push(wire::SystemText {
+                kind: "text",
+                text,
+                cache_control: None,
+            });
+        }
+    }
+    if cache_last {
+        if let Some(block) = blocks.last_mut() {
+            block.cache_control = Some(cache_control());
+        }
+    }
+    blocks
+}
+
+fn has_system_blocks(is_oauth: bool, user_system: Option<&str>) -> bool {
+    is_oauth || user_system.is_some_and(|text| !text.trim().is_empty())
+}
+
+fn cache_control() -> wire::CacheControl {
+    wire::CacheControl { kind: "ephemeral" }
+}
+
+fn take_cache_breakpoint(budget: &mut usize, condition: bool) -> bool {
+    if !condition || *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    true
+}
+
+fn cache_message_indices(history: &[ChatMessage], limit: usize) -> Vec<usize> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let mut indices = history
+        .iter()
+        .enumerate()
+        .rev()
+        .filter_map(|(index, message)| message.parts.iter().any(cacheable_part).then_some(index))
+        .take(limit)
+        .collect::<Vec<_>>();
+    indices.reverse();
+    indices
+}
+
+fn cacheable_part(part: &Part) -> bool {
+    if part_is_ui_only(part) {
+        return false;
+    }
+    match part {
+        Part::Text { text, .. } => !text.is_empty(),
+        Part::Image { data, .. } => !data.trim().is_empty(),
+        Part::Thinking { .. } => false,
+        Part::ToolCall { .. } | Part::ToolResult { .. } => true,
+    }
+}
+
+fn effort_to_output(
+    effort: Option<Effort>,
+) -> (Option<wire::ThinkingConfig>, Option<wire::OutputConfig>) {
+    let Some(effort) = effort else {
+        return (None, None);
+    };
+    if matches!(effort, Effort::None) {
+        return (None, None);
+    }
+
+    (
+        Some(wire::ThinkingConfig {
+            kind: "adaptive",
+            budget_tokens: None,
+            display: Some("summarized"),
+        }),
+        Some(wire::OutputConfig {
+            effort: match effort {
+                Effort::Low => "low",
+                Effort::Medium => "medium",
+                Effort::High => "high",
+                Effort::Max => "max",
+                Effort::Xhigh => "xhigh",
+                Effort::None => unreachable!(),
+            },
+        }),
+    )
+}
+
+fn to_wire_tool(tool: &ToolDescriptor, cache: bool) -> wire::WireTool<'_> {
+    wire::WireTool {
+        name: &tool.name,
+        description: &tool.description,
+        input_schema: &tool.input_schema,
+        cache_control: cache.then(cache_control),
+    }
+}
+
+fn to_wire_message(message: &ChatMessage, cache: bool) -> Result<Option<wire::WireMessage<'_>>> {
+    let role = match message.role {
+        Role::User => "user",
+        Role::Assistant => "assistant",
+    };
+
+    let cache_part_index = cache.then(|| {
+        message
+            .parts
+            .iter()
+            .rposition(cacheable_part)
+            .unwrap_or(usize::MAX)
+    });
+    let mut content = Vec::new();
+    for (index, part) in message.parts.iter().enumerate() {
+        if part_is_ui_only(part) {
+            continue;
+        }
+        let cache_control = (cache_part_index == Some(index)).then(cache_control);
+        match part {
+            Part::Text { text, .. } => {
+                if !text.is_empty() {
+                    content.push(wire::WirePart::Text {
+                        text,
+                        cache_control,
+                    });
+                }
+            }
+            Part::Image {
+                media_type, data, ..
+            } => content.push(wire::WirePart::Image {
+                source: wire::ImageSource::Base64 { media_type, data },
+                cache_control,
+            }),
+            Part::Thinking { text, meta } => {
+                let signature = meta
+                    .as_ref()
+                    .and_then(|meta| meta.get("signature"))
+                    .and_then(|value| value.as_str());
+                if let Some(signature) = signature {
+                    content.push(wire::WirePart::Thinking {
+                        thinking: text,
+                        signature,
+                    });
+                }
+            }
+            Part::ToolCall {
+                id, name, input, ..
+            } => {
+                content.push(wire::WirePart::ToolUse {
+                    id,
+                    name,
+                    input,
+                    cache_control,
+                });
+            }
+            Part::ToolResult {
+                tool_call_id,
+                content: text,
+                images,
+                is_error,
+                ..
+            } => {
+                let inline_images = images
+                    .iter()
+                    .filter(|image| !image.data.trim().is_empty())
+                    .collect::<Vec<_>>();
+                let result_content = if inline_images.is_empty() {
+                    wire::ToolResultContent::Text(text)
+                } else {
+                    let mut blocks = Vec::new();
+                    if !text.trim().is_empty() {
+                        blocks.push(wire::ToolResultBlock::Text { text });
+                    }
+                    blocks.extend(inline_images.into_iter().map(|image| {
+                        wire::ToolResultBlock::Image {
+                            source: wire::ImageSource::Base64 {
+                                media_type: &image.media_type,
+                                data: &image.data,
+                            },
+                        }
+                    }));
+                    wire::ToolResultContent::Blocks(blocks)
+                };
+                content.push(wire::WirePart::ToolResult {
+                    tool_use_id: tool_call_id,
+                    content: result_content,
+                    is_error: *is_error,
+                    cache_control,
+                });
+            }
+        }
+    }
+
+    Ok((!content.is_empty()).then_some(wire::WireMessage { role, content }))
+}
+
+fn part_is_ui_only(part: &Part) -> bool {
+    part_meta(part)
+        .and_then(|meta| meta.get("ui_only"))
+        .and_then(|value| value.as_bool())
+        == Some(true)
+}
+
+fn part_meta(part: &Part) -> Option<&serde_json::Value> {
+    match part {
+        Part::Text { meta, .. }
+        | Part::Image { meta, .. }
+        | Part::Thinking { meta, .. }
+        | Part::ToolCall { meta, .. }
+        | Part::ToolResult { meta, .. } => meta.as_ref(),
+    }
+}
+
+fn map_refresh_failure(err: AppError) -> AppError {
+    tracing::warn!(error = %err, "failed to refresh anthropic oauth token after auth failure");
+    match err {
+        AppError::Network(_) => AppError::Network(
+            "Could not refresh Anthropic login. Check your connection and try again.".into(),
+        ),
+        _ => AppError::Auth(ANTHROPIC_RECONNECT_MESSAGE.into()),
+    }
+}
+
+async fn read_http_error(response: reqwest::Response) -> AppError {
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    let parsed: std::result::Result<wire::ApiErrorEnvelope, _> = serde_json::from_str(&body);
+    let message = parsed
+        .map(|payload| format!("{}: {}", payload.error.kind, payload.error.message))
+        .unwrap_or(body);
+
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        tracing::warn!(error = %message, "anthropic oauth request was rejected after refresh");
+        AppError::Auth(ANTHROPIC_RECONNECT_MESSAGE.into())
+    } else if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        AppError::RateLimit(message)
+    } else if status.is_client_error() {
+        if message.contains("context") || message.contains("too long") {
+            AppError::ContextLength(message)
+        } else {
+            AppError::InvalidRequest(message)
+        }
+    } else {
+        AppError::Provider(format!("HTTP {status}: {message}"))
+    }
+}

@@ -1,0 +1,56 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sinew-core",
+    "crates/sinew-anthropic",
+    "crates/sinew-google",
+    "crates/sinew-kimi",
+    "crates/sinew-openai",
+    "crates/sinew-app",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+
+[workspace.dependencies]
+sinew-core = { path = "crates/sinew-core" }
+sinew-anthropic = { path = "crates/sinew-anthropic" }
+sinew-google = { path = "crates/sinew-google" }
+sinew-kimi = { path = "crates/sinew-kimi" }
+sinew-openai = { path = "crates/sinew-openai" }
+sinew-app = { path = "crates/sinew-app" }
+
+tokio = { version = "1.40", features = ["full"] }
+futures = "0.3"
+futures-util = "0.3"
+async-trait = "0.1"
+bytes = "1"
+eventsource-stream = "0.2"
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+directories = "5"
+uuid = { version = "1", features = ["v4", "fast-rng"] }
+notify = "6.1"
+rand = "0.9"
+sha2 = "0.10"
+url = "2.5"
+
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+similar = "2.6"
+base64 = "0.22"
+tauri = { version = "2.1", features = ["protocol-asset"] }
+tauri-build = { version = "2.1" }
+tauri-plugin-dialog = "2.0"
+walkdir = "2.5"
