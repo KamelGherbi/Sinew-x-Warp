@@ -46,6 +46,9 @@ export default function App() {
   }, []);
 
   const backToWelcome = useCallback(() => {
+    void api.resetWindowTitle().catch(() => {
+      // best-effort; leaving the previous title is harmless
+    });
     setState({ kind: "welcome" });
   }, []);
 

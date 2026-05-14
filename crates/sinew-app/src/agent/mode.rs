@@ -4,33 +4,9 @@ use serde_json::{json, Value};
 
 use sinew_core::ToolDescriptor;
 
-use crate::{GoalWorkflowState, ToolRunResult};
+use crate::{store::DEFAULT_PLAN_MODE_PROMPT, GoalWorkflowState, ToolRunResult};
 
 use super::context::AgentMode;
-
-const PLAN_MODE_PROMPT: &str = r#"You are in Plan mode.
-
-Rules:
-- Build understanding by reading/searching/running diagnostic shell commands as needed.
-- Do not edit workspace files and do not use apply_patch.
-- You must keep the user in a Question loop until the user explicitly clicks "Send and stop questions".
-- If the user message does not contain <plan_mode_control action="stop_questions">, your turn must end by calling the Question tool. Do not write the final plan yet.
-- After each normal answer to a Question, inspect/explore more if needed, then ask the next Question.
-- If you have no remaining substantive question, ask the user to confirm that you should create the plan now. Still use the Question tool.
-- Only when the user message contains <plan_mode_control action="stop_questions">, stop asking questions and write the complete plan now.
-- When the plan is ready, respond with only the Markdown plan. Do not implement it.
-
-STRICTLY FORBIDDEN in the plan (unless the user explicitly requests it):
-- Code snippets, pseudo-code, or inline code
-- File paths, directory structures, or tree views
-- Function, class, variable, or module names
-- Shell commands or CLI instructions
-- Technical configuration details
-- Any implementation-specific notation
-
-The plan should read as a clear description of intent and expected behavior that anyone could understand without technical background. Bullet points and paragraphs are both acceptable. The focus is on WHAT the system should do, not HOW the code should be written.
-
-If technical specifics become necessary to avoid ambiguity, the AI may include them at its discretion, integrated naturally into the plan - but this should remain the exception, not the default."#;
 
 const GOAL_MODE_PROMPT: &str = r#"You are in Goal mode.
 
@@ -66,7 +42,10 @@ pub(super) fn update_goal_descriptor() -> ToolDescriptor {
     }
 }
 
-pub(super) fn run_update_goal(goal_workflow: &mut GoalWorkflowState, input: Value) -> ToolRunResult {
+pub(super) fn run_update_goal(
+    goal_workflow: &mut GoalWorkflowState,
+    input: Value,
+) -> ToolRunResult {
     let status = input
         .get("status")
         .and_then(Value::as_str)
@@ -132,10 +111,30 @@ fn now_ms() -> i64 {
 }
 
 pub fn system_prompt_for_mode(base: &str, mode: AgentMode) -> String {
+    system_prompt_for_mode_with_plan_prompt(base, mode, DEFAULT_PLAN_MODE_PROMPT)
+}
+
+pub fn system_prompt_for_mode_with_plan_prompt(
+    base: &str,
+    mode: AgentMode,
+    plan_mode_prompt: &str,
+) -> String {
     match mode {
         AgentMode::Act => base.to_string(),
-        AgentMode::Plan => format!("{base}\n\n<plan_mode>\n{PLAN_MODE_PROMPT}\n</plan_mode>"),
+        AgentMode::Plan => format!(
+            "{base}\n\n<plan_mode>\n{}\n</plan_mode>",
+            effective_plan_mode_prompt(plan_mode_prompt)
+        ),
         AgentMode::Goal => format!("{base}\n\n<goal_mode>\n{GOAL_MODE_PROMPT}\n</goal_mode>"),
+    }
+}
+
+fn effective_plan_mode_prompt(plan_mode_prompt: &str) -> &str {
+    let prompt = plan_mode_prompt.trim();
+    if prompt.is_empty() {
+        DEFAULT_PLAN_MODE_PROMPT
+    } else {
+        prompt
     }
 }
 
@@ -143,8 +142,9 @@ pub(super) fn system_prompt_for_turn(
     base: &str,
     mode: AgentMode,
     goal_workflow: &GoalWorkflowState,
+    plan_mode_prompt: &str,
 ) -> String {
-    let prompt = system_prompt_for_mode(base, mode);
+    let prompt = system_prompt_for_mode_with_plan_prompt(base, mode, plan_mode_prompt);
     if mode != AgentMode::Goal {
         return prompt;
     }

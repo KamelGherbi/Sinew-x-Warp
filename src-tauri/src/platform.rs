@@ -52,6 +52,17 @@ pub(super) fn focus_existing_window(app: &AppHandle) -> bool {
     false
 }
 
+/// Set the window title to the workspace folder name. Falls back to the
+/// product name when `folder_name` is empty so the macOS Dock window list
+/// never shows a blank entry.
+pub(super) fn apply_window_title(window: &tauri::WebviewWindow, folder_name: &str) {
+    let trimmed = folder_name.trim();
+    let title = if trimmed.is_empty() { "Sinew" } else { trimmed };
+    if let Err(err) = window.set_title(title) {
+        tracing::warn!(%err, label = %window.label(), "unable to update window title");
+    }
+}
+
 pub(super) fn next_window_label(app: &AppHandle) -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -152,7 +163,11 @@ unsafe extern "C-unwind" fn macos_new_window_from_dock(
     }
 }
 
-pub(super) fn emit_workspace_file_change(app: &AppHandle, workspace_root: &Path, relative_path: &str) {
+pub(super) fn emit_workspace_file_change(
+    app: &AppHandle,
+    workspace_root: &Path,
+    relative_path: &str,
+) {
     let _ = app.emit(
         FILE_CHANGE_EVENT_NAME,
         WorkspaceFileChangeEvent {

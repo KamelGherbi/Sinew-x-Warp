@@ -15,6 +15,9 @@ Code map:
 ├── tsconfig.json
 ├── tsconfig.node.json
 ├── vite.config.ts
+├── .github
+│   └── workflows
+│       └── release.yml
 ├── crates
 │   ├── sinew-anthropic
 │   │   ├── Cargo.toml
@@ -199,6 +202,7 @@ Code map:
 │       ├── terminal.rs
 │       ├── tests.rs
 │       ├── turns.rs
+│       ├── updater.rs
 │       ├── workflow.rs
 │       └── workspace.rs
 └── src
@@ -216,6 +220,7 @@ Code map:
     │   ├── SinewMark.tsx
     │   ├── Splitter.tsx
     │   ├── TerminalPanel.tsx
+    │   ├── UpdateBadge.tsx
     │   ├── Welcome.tsx
     │   ├── Workspace.tsx
     │   └── chat

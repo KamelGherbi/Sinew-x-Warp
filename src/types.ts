@@ -3,6 +3,22 @@
 
 export type Role = "user" | "assistant";
 
+/// Snapshot of an updater check, returned by `updater_check`.
+/// Mirrors `src-tauri/src/updater.rs::UpdateInfo`.
+export type UpdateInfo = {
+  available: boolean;
+  currentVersion: string;
+  version: string | null;
+  notes: string | null;
+  date: string | null;
+};
+
+/// Payload of the `updater://progress` event.
+export type UpdateProgress = {
+  downloaded: number;
+  total: number | null;
+};
+
 export type TextPart = {
   type: "text";
   text: string;
@@ -134,6 +150,8 @@ export type WebSearchProvider = "linkup" | "classic";
 
 export type ToolSettings = {
   tools: ToolConfig[];
+  planModePrompt: string;
+  defaultPlanModePrompt: string;
   imageProvider: ImageProvider;
   openaiImageApiKey: string;
   nanoBananaApiKey: string;

@@ -49,8 +49,8 @@ mod tests;
 
 pub use self::descriptors::is_team_tool_name;
 pub use self::model::{
-    TeamAgent, TeamAgentStatus, TeamQueuedMessage, TeamRecentFileChange, TeamRuntime,
-    TeamSession, TeamTask, TeamTaskStatus, TeamTaskWake, TeamTool,
+    TeamAgent, TeamAgentStatus, TeamQueuedMessage, TeamRecentFileChange, TeamRuntime, TeamSession,
+    TeamTask, TeamTaskStatus, TeamTaskWake, TeamTool,
 };
 
 use self::model::{

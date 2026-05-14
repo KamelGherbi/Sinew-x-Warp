@@ -37,6 +37,16 @@ import type {
 } from "../types";
 
 const EMPTY_SETTINGS: McpSettings = { servers: [] };
+const FALLBACK_TOOL_SETTINGS: ToolSettings = {
+  tools: [],
+  planModePrompt: "",
+  defaultPlanModePrompt: "",
+  imageProvider: "gptImage2",
+  openaiImageApiKey: "",
+  nanoBananaApiKey: "",
+  webSearchProvider: "classic",
+  linkupApiKey: "",
+};
 const PROVIDERS_CHANGED_EVENT = "sinew:providers-changed";
 const TOOL_SETTINGS_CHANGED_EVENT = "sinew:tool-settings-changed";
 
@@ -180,24 +190,9 @@ export function SettingsPane({ workspacePath }: Props) {
       setSavedToolSettingsJson(toolSettingsFingerprint(loaded));
     } catch (err) {
       setToolsStatus(err instanceof Error ? err.message : String(err));
-      setToolSettings({
-        tools: [],
-        imageProvider: "gptImage2",
-        openaiImageApiKey: "",
-        nanoBananaApiKey: "",
-        webSearchProvider: "classic",
-        linkupApiKey: "",
-      });
-      setSavedToolSettingsJson(
-        toolSettingsFingerprint({
-          tools: [],
-          imageProvider: "gptImage2",
-          openaiImageApiKey: "",
-          nanoBananaApiKey: "",
-          webSearchProvider: "classic",
-          linkupApiKey: "",
-        }),
-      );
+      const fallback = normalizeToolSettings(FALLBACK_TOOL_SETTINGS);
+      setToolSettings(fallback);
+      setSavedToolSettingsJson(toolSettingsFingerprint(fallback));
     } finally {
       setToolsLoading(false);
     }
@@ -241,6 +236,12 @@ export function SettingsPane({ workspacePath }: Props) {
         ),
       };
     });
+  }, []);
+
+  const updatePlanModePrompt = useCallback((planModePrompt: string) => {
+    setToolSettings((current) =>
+      current ? { ...current, planModePrompt } : current,
+    );
   }, []);
 
   const updateOpenAiImageApiKey = useCallback((openaiImageApiKey: string) => {
@@ -1034,6 +1035,7 @@ export function SettingsPane({ workspacePath }: Props) {
             status={toolsStatus}
             onSave={() => void saveToolSettings()}
             onUpdate={updateTool}
+            onPlanModePromptChange={updatePlanModePrompt}
             onImageProviderChange={updateImageProvider}
             onOpenAiImageApiKeyChange={updateOpenAiImageApiKey}
             onNanoBananaApiKeyChange={updateNanoBananaApiKey}
@@ -1418,6 +1420,7 @@ type ToolsSectionProps = {
   status: string | null;
   onSave: () => void;
   onUpdate: (name: string, patch: Partial<ToolConfig>) => void;
+  onPlanModePromptChange: (value: string) => void;
   onImageProviderChange: (value: ImageProvider) => void;
   onOpenAiImageApiKeyChange: (value: string) => void;
   onNanoBananaApiKeyChange: (value: string) => void;
@@ -1445,6 +1448,7 @@ function ToolsSection({
   status,
   onSave,
   onUpdate,
+  onPlanModePromptChange,
   onImageProviderChange,
   onOpenAiImageApiKeyChange,
   onNanoBananaApiKeyChange,
@@ -1452,6 +1456,8 @@ function ToolsSection({
   onLinkupApiKeyChange,
 }: ToolsSectionProps) {
   const tools = settings?.tools ?? [];
+  const planModePrompt = settings?.planModePrompt ?? "";
+  const defaultPlanModePrompt = settings?.defaultPlanModePrompt ?? "";
   const imageProvider = settings?.imageProvider ?? "gptImage2";
   const openaiImageApiKey = settings?.openaiImageApiKey ?? "";
   const nanoBananaApiKey = settings?.nanoBananaApiKey ?? "";
@@ -1508,6 +1514,19 @@ function ToolsSection({
 
       <div className="settings-pane__body settings-pane__body--tools">
         <div className="settings-pane__tool-settings-list">
+          <section className="settings-pane__tool-group">
+            <div className="settings-pane__tool-group-head">
+              <h2>Plan mode prompt</h2>
+              <span>
+                {planModePrompt === defaultPlanModePrompt ? "Default" : "Custom"}
+              </span>
+            </div>
+            <PlanModePromptSettingsItem
+              value={planModePrompt}
+              defaultValue={defaultPlanModePrompt}
+              onChange={onPlanModePromptChange}
+            />
+          </section>
           {hasImageTool && (
             <section className="settings-pane__tool-group">
               <div className="settings-pane__tool-group-head">
@@ -1617,6 +1636,58 @@ function ToolsSection({
 
 function toolGroupId(tool: ToolConfig): ToolGroupId {
   return SWARM_TOOL_NAMES.has(tool.name) ? "swarm" : "main";
+}
+
+function PlanModePromptSettingsItem({
+  value,
+  defaultValue,
+  onChange,
+}: {
+  value: string;
+  defaultValue: string;
+  onChange: (value: string) => void;
+}) {
+  const canReset = value !== defaultValue;
+  const rows = Math.min(18, Math.max(10, value.split("\n").length + 1));
+
+  return (
+    <div className="settings-pane__tool-config" data-on="true">
+      <div className="settings-pane__tool-config-head">
+        <span className="settings-pane__tool-config-name">
+          <span className="settings-pane__tool-config-glyph" aria-hidden>
+            <Icon icon="solar:document-text-linear" width={15} height={15} />
+          </span>
+          <span className="settings-pane__tool-config-label">
+            Prompt injected into Plan mode
+          </span>
+        </span>
+        <div className="settings-pane__tool-config-actions">
+          <button
+            type="button"
+            className="settings-pane__icon-btn"
+            aria-label="Reset Plan mode prompt"
+            title="Reset prompt"
+            disabled={!canReset}
+            onClick={() => onChange(defaultValue)}
+          >
+            <Icon icon="solar:refresh-linear" width={14} height={14} />
+          </button>
+        </div>
+      </div>
+      <p className="settings-pane__tool-config-help">
+        This text is appended to the system prompt only when the conversation is in
+        Plan mode.
+      </p>
+      <textarea
+        className="settings-pane__tool-config-desc settings-pane__tool-config-desc--prompt"
+        aria-label="Plan mode prompt"
+        value={value}
+        rows={rows}
+        placeholder="Plan mode instructions…"
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </div>
+  );
 }
 
 function ToolSettingsItem({
@@ -2869,8 +2940,12 @@ function normalizeToolSettings(settings: ToolSettings): ToolSettings {
   const seen = new Set<string>();
   const imageProvider =
     settings.imageProvider === "nanoBanana2" ? "nanoBanana2" : "gptImage2";
+  const defaultPlanModePrompt = settings.defaultPlanModePrompt ?? "";
+  const planModePrompt = settings.planModePrompt ?? defaultPlanModePrompt;
   return {
     imageProvider,
+    planModePrompt,
+    defaultPlanModePrompt,
     openaiImageApiKey: settings.openaiImageApiKey ?? "",
     nanoBananaApiKey: settings.nanoBananaApiKey ?? "",
     webSearchProvider:

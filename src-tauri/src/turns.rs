@@ -568,7 +568,6 @@ pub(super) async fn compact_conversation(
     command_result
 }
 
-
 #[tauri::command]
 pub(super) async fn cancel_turn(
     state: State<'_, DesktopState>,
@@ -886,7 +885,10 @@ pub(super) fn attach_latest_plan_artifact(
     Ok(Some(artifact))
 }
 
-pub(super) fn turn_has_question_tool(history: &[ChatMessage], turn_user_history_index: usize) -> bool {
+pub(super) fn turn_has_question_tool(
+    history: &[ChatMessage],
+    turn_user_history_index: usize,
+) -> bool {
     history
         .iter()
         .skip(turn_user_history_index.saturating_add(1))
@@ -1099,7 +1101,10 @@ pub(super) fn system_prompt_for_workspace(workspace_root: &Path, base: &str) -> 
     Ok(format!("{base}\n\n{}", sections.join("\n\n")))
 }
 
-pub(super) fn read_workspace_prompt_file(workspace_root: &Path, file_name: &str) -> Result<Option<String>> {
+pub(super) fn read_workspace_prompt_file(
+    workspace_root: &Path,
+    file_name: &str,
+) -> Result<Option<String>> {
     let path = workspace_root.join(file_name);
     let contents = match fs::read_to_string(&path) {
         Ok(contents) => contents,

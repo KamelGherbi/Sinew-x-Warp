@@ -45,7 +45,11 @@ pub(super) fn prepare_team_agent_names(
     Ok(out)
 }
 
-pub(super) fn team_kickoff_message(objective: &str, agent_name: &str, agent_prompt: Option<&str>) -> String {
+pub(super) fn team_kickoff_message(
+    objective: &str,
+    agent_name: &str,
+    agent_prompt: Option<&str>,
+) -> String {
     let mut sections = vec![format!("Objective:\n{}", objective.trim())];
     if let Some(prompt) = agent_prompt
         .map(str::trim)
@@ -230,7 +234,9 @@ pub(super) fn render_team_snapshot(snapshot: &TeamSnapshot) -> String {
     lines.join("\n")
 }
 
-pub(super) fn team_agent_final_responses_from_session(session: &TeamSession) -> Vec<TeamAgentFinalResponse> {
+pub(super) fn team_agent_final_responses_from_session(
+    session: &TeamSession,
+) -> Vec<TeamAgentFinalResponse> {
     let mut agents = session.agents.values().collect::<Vec<_>>();
     agents.sort_by(|left, right| left.name.cmp(&right.name));
     agents

@@ -85,7 +85,8 @@ pub(super) async fn estimate_context(
     tools.extend(team_tools);
     let tools = tool_settings.apply_to_descriptors(tools);
     let system = system_prompt_with_todo(&effective_system_prompt, &conversation.todo_list);
-    let system_prompt = system_prompt_for_mode(&system, mode);
+    let system_prompt =
+        system_prompt_for_mode_with_plan_prompt(&system, mode, tool_settings.plan_mode_prompt());
     let workspace_rules_weight =
         workspace_rules_weight(&workspace_root).map_err(error_to_string)?;
     let breakdown_weights = context_breakdown_weights(
@@ -166,7 +167,8 @@ pub(super) async fn estimate_sub_agent_context(
         return Err("sub-agent not found".to_string());
     };
     let system = system_prompt_with_todo(&agent_system_prompt, &TodoListState::default());
-    let system_prompt = system_prompt_for_mode(&system, mode);
+    let system_prompt =
+        system_prompt_for_mode_with_plan_prompt(&system, mode, tool_settings.plan_mode_prompt());
     let workspace_rules_weight =
         workspace_rules_weight(&workspace_root).map_err(error_to_string)?;
     let breakdown_weights = context_breakdown_weights(
@@ -372,7 +374,9 @@ pub(super) fn latest_stream_context_usage(
     None
 }
 
-pub(super) fn context_usage_breakdown(usage: ContextTokenUsage) -> Option<Vec<ContextBreakdownItem>> {
+pub(super) fn context_usage_breakdown(
+    usage: ContextTokenUsage,
+) -> Option<Vec<ContextBreakdownItem>> {
     let mut items = Vec::new();
     push_context_usage_breakdown(&mut items, "input", "Input", usage.input_tokens);
     push_context_usage_breakdown(&mut items, "output", "Output", usage.output_tokens);

@@ -626,9 +626,10 @@ fn clean_terminal_token(raw: &str) -> String {
     // Strip wrapping quotes
     if ((value.starts_with('"') && value.ends_with('"'))
         || (value.starts_with('\'') && value.ends_with('\'')))
-        && value.len() >= 2 {
-            value = &value[1..value.len() - 1];
-        }
+        && value.len() >= 2
+    {
+        value = &value[1..value.len() - 1];
+    }
     // Strip trailing punctuation often present in prose ("see foo.rs.").
     let trimmed = value.trim_end_matches([',', '.', ';', ')', ']', '>']);
     let trimmed = trimmed.trim_start_matches(['(', '[', '<']);

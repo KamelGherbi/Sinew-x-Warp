@@ -56,4 +56,5 @@ base64 = "0.22"
 tauri = { version = "2.1", features = ["protocol-asset"] }
 tauri-build = { version = "2.1" }
 tauri-plugin-dialog = "2.0"
+tauri-plugin-updater = "2.0"
 walkdir = "2.5"

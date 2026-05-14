@@ -312,7 +312,11 @@ impl TeamTool {
         }
     }
 
-    pub(super) async fn team_run_started_result(&self, team_name: &str, label: &str) -> ToolRunResult {
+    pub(super) async fn team_run_started_result(
+        &self,
+        team_name: &str,
+        label: &str,
+    ) -> ToolRunResult {
         let snapshot = self.team_snapshot(team_name).await;
         let subagents = self.team_subagents_meta(team_name).await;
         let content = match &snapshot {

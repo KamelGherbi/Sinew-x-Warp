@@ -2,12 +2,10 @@ use super::*;
 
 #[test]
 fn optional_object_tools_accept_empty_string_input() {
-    let status: TeamNameInput =
-        serde_json::from_value(normalize_optional_object_input(json!("")))
-            .expect("empty status input should parse as an empty object");
-    let stop: TeamStopInput =
-        serde_json::from_value(normalize_optional_object_input(json!("  ")))
-            .expect("empty stop input should parse as an empty object");
+    let status: TeamNameInput = serde_json::from_value(normalize_optional_object_input(json!("")))
+        .expect("empty status input should parse as an empty object");
+    let stop: TeamStopInput = serde_json::from_value(normalize_optional_object_input(json!("  ")))
+        .expect("empty stop input should parse as an empty object");
 
     assert_eq!(status.team_name, None);
     assert_eq!(stop.team_name, None);
@@ -409,14 +407,9 @@ fn unlocked_task_wake_message_names_task_and_start_command() {
 #[test]
 fn dependency_lock_rejects_in_progress_with_unresolved_blocker() {
     let done_ids = BTreeSet::new();
-    let err = validate_task_dependency_lock(
-        2,
-        &[1],
-        &[1],
-        Some(TeamTaskStatus::InProgress),
-        &done_ids,
-    )
-    .expect_err("unresolved dependency should block in_progress");
+    let err =
+        validate_task_dependency_lock(2, &[1], &[1], Some(TeamTaskStatus::InProgress), &done_ids)
+            .expect_err("unresolved dependency should block in_progress");
 
     assert!(err.contains("blocked by #1"));
     assert!(err.contains("status=in_progress"));

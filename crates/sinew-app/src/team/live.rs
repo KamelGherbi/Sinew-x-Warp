@@ -125,7 +125,11 @@ impl TeamTool {
         result
     }
 
-    pub(super) async fn wait_for_next_live_turn(&self, team_name: &str, agent_name: &str) -> Option<TeamTurn> {
+    pub(super) async fn wait_for_next_live_turn(
+        &self,
+        team_name: &str,
+        agent_name: &str,
+    ) -> Option<TeamTurn> {
         let notify = self.agent_notify(team_name, agent_name).await;
         loop {
             if let Some(turn) = self.next_live_turn_for_agent(team_name, agent_name).await {
@@ -245,7 +249,11 @@ impl TeamTool {
         })
     }
 
-    pub(super) async fn team_is_settled_for_agent(&self, team_name: &str, agent_name: &str) -> bool {
+    pub(super) async fn team_is_settled_for_agent(
+        &self,
+        team_name: &str,
+        agent_name: &str,
+    ) -> bool {
         let mut runtime = self.runtime.write().await;
         let Some(session) = runtime
             .scopes

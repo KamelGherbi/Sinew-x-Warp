@@ -4,7 +4,9 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use sinew_core::{AppError, ChatMessage, ModelRef, Part, Provider, ProviderRequest, ToolDescriptor};
+use sinew_core::{
+    AppError, ChatMessage, ModelRef, Part, Provider, ProviderRequest, ToolDescriptor,
+};
 
 use crate::compact_conversation_history;
 

@@ -15,15 +15,13 @@ use super::{
     events::{AgentEvent, AgentEventScope},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AgentMode {
     #[default]
     Act,
     Plan,
     Goal,
 }
-
 
 pub struct TurnContext {
     pub provider: Arc<dyn Provider>,

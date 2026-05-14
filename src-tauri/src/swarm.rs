@@ -103,7 +103,9 @@ pub(super) fn schedule_main_wake_for_swarm_completion(
     });
 }
 
-pub(super) fn agent_swarm_completion_from_event(event: &AgentEvent) -> Option<AgentSwarmCompletion> {
+pub(super) fn agent_swarm_completion_from_event(
+    event: &AgentEvent,
+) -> Option<AgentSwarmCompletion> {
     let AgentEvent::ToolFinished {
         is_error,
         meta: Some(meta),
@@ -138,7 +140,9 @@ pub(super) fn agent_swarm_completion_from_event(event: &AgentEvent) -> Option<Ag
     })
 }
 
-pub(super) fn agent_swarm_final_responses_from_value(value: Option<&Value>) -> Vec<AgentSwarmFinalResponse> {
+pub(super) fn agent_swarm_final_responses_from_value(
+    value: Option<&Value>,
+) -> Vec<AgentSwarmFinalResponse> {
     value
         .and_then(Value::as_array)
         .map(|responses| {
@@ -150,7 +154,9 @@ pub(super) fn agent_swarm_final_responses_from_value(value: Option<&Value>) -> V
         .unwrap_or_default()
 }
 
-pub(super) fn agent_swarm_final_responses_from_team(value: Option<&Value>) -> Vec<AgentSwarmFinalResponse> {
+pub(super) fn agent_swarm_final_responses_from_team(
+    value: Option<&Value>,
+) -> Vec<AgentSwarmFinalResponse> {
     value
         .and_then(Value::as_object)
         .and_then(|team| team.get("agents"))

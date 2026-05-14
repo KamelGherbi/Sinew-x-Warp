@@ -40,16 +40,17 @@ use sinew_app::{
     list_workspace_files, normalize_workspace_root, probe_mcp_servers, read_external_file,
     read_workspace_file, rename_workspace_entry, resolve_terminal_path, restore_turn_checkpoints,
     restore_workspace_deleted_entries, run_turn, search_workspace_files,
-    snapshot_workspace_for_checkpoint, subagent_system_prompt, system_prompt_for_mode,
-    system_prompt_with_todo, todo_list_from_history, tool_settings_view, trash_workspace_entry,
-    write_workspace_file, AgentEvent, AgentMode, AppStore, ApplyPatchTool, BashTool,
-    ConversationEvent, ConversationSummary, CreateImageTool, GlobTool, GoalWorkflowState, GrepTool,
-    ImportedEntry, InstalledSkill, McpSettings, McpToolRegistry, ModeModelSettings,
-    PlanArtifactState, PlanWorkflowState, QuestionTool, ReadTool, SavedConversation, SkillSettings,
-    SkillTool, SubAgentConfig, SubAgentSettings, SubAgentTool, TeamRuntime, TeamTool,
-    TerminalPathResolution, ToDoListTool, TodoListState, ToolSettings, ToolSettingsView,
-    TurnCancel, TurnContext, WebFetchTool, WebSearchTool, WorkspaceBootstrap,
-    WorkspaceCopyOperation, WorkspaceDeletedEntry, WorkspaceFileChangeEvent, WorkspaceSearchResult,
+    snapshot_workspace_for_checkpoint, subagent_system_prompt,
+    system_prompt_for_mode_with_plan_prompt, system_prompt_with_todo, todo_list_from_history,
+    tool_settings_view, trash_workspace_entry, write_workspace_file, AgentEvent, AgentMode,
+    AppStore, ApplyPatchTool, BashTool, ConversationEvent, ConversationSummary, CreateImageTool,
+    GlobTool, GoalWorkflowState, GrepTool, ImportedEntry, InstalledSkill, McpSettings,
+    McpToolRegistry, ModeModelSettings, PlanArtifactState, PlanWorkflowState, QuestionTool,
+    ReadTool, SavedConversation, SkillSettings, SkillTool, SubAgentConfig, SubAgentSettings,
+    SubAgentTool, TeamRuntime, TeamTool, TerminalPathResolution, ToDoListTool, TodoListState,
+    ToolSettings, ToolSettingsView, TurnCancel, TurnContext, WebFetchTool, WebSearchTool,
+    WorkspaceBootstrap, WorkspaceCopyOperation, WorkspaceDeletedEntry, WorkspaceFileChangeEvent,
+    WorkspaceSearchResult,
 };
 use sinew_core::{
     ChatMessage, Effort, ModelRef, Part, Provider, ProviderRequest, Role, ToolDescriptor,
@@ -80,7 +81,6 @@ use tokio::{
     sync::{mpsc, Mutex, Notify, RwLock},
 };
 
-
 mod context;
 mod conversations;
 mod models;
@@ -92,6 +92,7 @@ mod terminal;
 #[cfg(test)]
 mod tests;
 mod turns;
+mod updater;
 mod workflow;
 mod workspace;
 
@@ -155,6 +156,18 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Updater plugin is desktop-only (no iOS / Android support upstream).
+        .plugin({
+            #[cfg(desktop)]
+            {
+                tauri_plugin_updater::Builder::new().build()
+            }
+            #[cfg(not(desktop))]
+            {
+                // No-op plugin so the chain stays uniform on mobile builds.
+                tauri::plugin::Builder::new("updater-stub").build()
+            }
+        })
         .setup(|app| {
             let handle = app.handle();
             #[cfg(target_os = "macos")]
@@ -192,9 +205,11 @@ pub fn run() {
             }
         })
         .manage(state)
+        .manage(updater::UpdaterState::new())
         .invoke_handler(tauri::generate_handler![
             workspace::open_workspace,
             workspace::open_new_window,
+            workspace::reset_window_title,
             workspace::watch_workspace_command,
             workspace::unwatch_workspace_command,
             workspace::list_workspace_entries_command,
@@ -264,6 +279,10 @@ pub fn run() {
             terminal::write_terminal,
             terminal::resize_terminal,
             terminal::kill_terminal,
+            updater::updater_check,
+            updater::updater_download_and_install,
+            updater::updater_restart,
+            updater::updater_current_version,
         ])
         .build(tauri::generate_context!())
         .expect("error while building sinew desktop")

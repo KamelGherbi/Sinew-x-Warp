@@ -26,9 +26,7 @@ use super::{
     },
     mode::{run_update_goal, system_prompt_for_turn, update_goal_descriptor},
     tool_dispatch::{run_tool, should_wait_for_cooperative_cancel},
-    tool_summary::{
-        display_mcp_server_name, pretty_json, should_stream_tool_args, summarize_tool,
-    },
+    tool_summary::{display_mcp_server_name, pretty_json, should_stream_tool_args, summarize_tool},
 };
 
 use crate::{system_prompt_with_todo, ToolRunResult};
@@ -137,8 +135,12 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                 current_system_prompt.push_str(&team_reminder);
             }
         }
-        let current_system_prompt =
-            system_prompt_for_turn(&current_system_prompt, mode, &goal_workflow);
+        let current_system_prompt = system_prompt_for_turn(
+            &current_system_prompt,
+            mode,
+            &goal_workflow,
+            tool_settings.plan_mode_prompt(),
+        );
 
         if auto_compact {
             match maybe_auto_compact_history(

@@ -3,19 +3,30 @@ use crate::*;
 #[tauri::command]
 pub(super) async fn open_workspace(
     state: State<'_, DesktopState>,
+    window: tauri::WebviewWindow,
     input: WorkspaceInput,
 ) -> std::result::Result<WorkspaceBootstrap, String> {
     let workspace_root =
         normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
-    state
+    let bootstrap = state
         .store
         .bootstrap_workspace(&workspace_root, &state.default_model, &state.system_prompt)
-        .map_err(error_to_string)
+        .map_err(error_to_string)?;
+    apply_window_title(&window, &bootstrap.workspace.name);
+    Ok(bootstrap)
 }
 
 #[tauri::command]
 pub(super) async fn open_new_window(app: AppHandle) -> std::result::Result<(), String> {
     create_new_window(&app).map_err(error_to_string)
+}
+
+#[tauri::command]
+pub(super) async fn reset_window_title(
+    window: tauri::WebviewWindow,
+) -> std::result::Result<(), String> {
+    apply_window_title(&window, "");
+    Ok(())
 }
 
 #[tauri::command]
@@ -324,7 +335,9 @@ pub(super) struct SkillPathInput {
 }
 
 #[tauri::command]
-pub(super) async fn reveal_absolute_path_command(input: AbsolutePathInput) -> std::result::Result<(), String> {
+pub(super) async fn reveal_absolute_path_command(
+    input: AbsolutePathInput,
+) -> std::result::Result<(), String> {
     let path = std::path::PathBuf::from(&input.path);
     reveal_path(&path).map_err(error_to_string)
 }
@@ -370,7 +383,9 @@ pub(super) async fn delete_skill_command(
 }
 
 #[tauri::command]
-pub(super) async fn open_external_url_command(input: OpenExternalUrlInput) -> std::result::Result<(), String> {
+pub(super) async fn open_external_url_command(
+    input: OpenExternalUrlInput,
+) -> std::result::Result<(), String> {
     open_external_url(&input.url).map_err(error_to_string)
 }
 
@@ -432,7 +447,8 @@ pub(super) async fn copy_workspace_entries_command(
 }
 
 #[tauri::command]
-pub(super) async fn read_clipboard_file_paths_command() -> std::result::Result<Vec<String>, String> {
+pub(super) async fn read_clipboard_file_paths_command() -> std::result::Result<Vec<String>, String>
+{
     tauri::async_runtime::spawn_blocking(read_clipboard_file_paths)
         .await
         .map_err(error_to_string)?

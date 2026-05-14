@@ -30,6 +30,7 @@ import type {
   TerminalSpawnResult,
   ThinkingLevel,
   ToolSettings,
+  UpdateInfo,
   WorkspaceBootstrap,
   WorkspaceDeletedEntry,
   WorkspaceEntry,
@@ -44,6 +45,9 @@ export const api = {
   },
   openNewWindow() {
     return invoke<void>("open_new_window");
+  },
+  resetWindowTitle() {
+    return invoke<void>("reset_window_title");
   },
   watchWorkspace(workspacePath: string) {
     return invoke<void>("watch_workspace_command", {
@@ -472,5 +476,21 @@ export const api = {
     return invoke<boolean>("kill_terminal", {
       input: { sessionId, token },
     });
+  },
+  // ── Auto-updater ──────────────────────────────────────────────────────
+  // Round-trips to the `tauri-plugin-updater` integration. Progress events
+  // (`updater://progress`, `updater://finished`) are consumed by the
+  // <UpdateBadge /> component via `@tauri-apps/api/event::listen`.
+  checkForUpdate() {
+    return invoke<UpdateInfo>("updater_check");
+  },
+  installUpdate() {
+    return invoke<void>("updater_download_and_install");
+  },
+  restartForUpdate() {
+    return invoke<void>("updater_restart");
+  },
+  currentAppVersion() {
+    return invoke<string>("updater_current_version");
   },
 };

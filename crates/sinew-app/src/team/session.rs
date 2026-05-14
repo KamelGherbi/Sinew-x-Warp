@@ -81,7 +81,11 @@ impl TeamTool {
             .map(TeamSnapshot::from_session)
     }
 
-    pub(super) async fn attach_team_snapshot_meta(&self, team_name: &str, result: &mut ToolRunResult) {
+    pub(super) async fn attach_team_snapshot_meta(
+        &self,
+        team_name: &str,
+        result: &mut ToolRunResult,
+    ) {
         if result.is_error {
             return;
         }
@@ -177,7 +181,10 @@ impl TeamTool {
         agents
     }
 
-    pub(super) async fn team_agent_final_responses(&self, team_name: &str) -> Vec<TeamAgentFinalResponse> {
+    pub(super) async fn team_agent_final_responses(
+        &self,
+        team_name: &str,
+    ) -> Vec<TeamAgentFinalResponse> {
         let runtime = self.runtime.read().await;
         runtime
             .scopes

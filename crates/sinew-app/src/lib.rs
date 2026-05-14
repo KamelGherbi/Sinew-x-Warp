@@ -19,8 +19,9 @@ pub mod web;
 pub mod workspace;
 
 pub use agent::{
-    clean_context_descriptor, run_turn, system_prompt_for_mode, AgentEvent, AgentEventScope,
-    AgentMode, ConversationEvent, EngineCommand, TurnCancel, TurnContext,
+    clean_context_descriptor, run_turn, system_prompt_for_mode,
+    system_prompt_for_mode_with_plan_prompt, AgentEvent, AgentEventScope, AgentMode,
+    ConversationEvent, EngineCommand, TurnCancel, TurnContext,
 };
 pub use bash::BashTool;
 pub use compact::{compact_conversation_history, CompactConversationOutput};
@@ -38,6 +39,7 @@ pub use store::{
     tool_settings_view, AppStore, ConversationSummary, GoalWorkflowState, ModeModelSettings,
     PlanArtifactState, PlanWorkflowState, SavedConversation, ToolConfig, ToolConfigView,
     ToolSettings, ToolSettingsView, TurnCheckpointRecord, WebSearchProvider, WorkspaceBootstrap,
+    DEFAULT_PLAN_MODE_PROMPT,
 };
 pub use subagent::{
     is_subagent_tool_name, subagent_system_prompt, SubAgentConfig, SubAgentSettings, SubAgentTool,

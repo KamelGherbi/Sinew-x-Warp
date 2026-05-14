@@ -20,6 +20,7 @@ import { TerminalPanel } from "./TerminalPanel";
 import { SearchPane } from "./SearchPane";
 import { ChatPane, type ExternalDropFeed } from "./chat/ChatPane";
 import { SinewMark } from "./SinewMark";
+import { UpdateBadge } from "./UpdateBadge";
 import type {
   AgentEvent,
   AgentMode,
@@ -1431,6 +1432,7 @@ export function Workspace({
           </span>
           <span className="titlebar__brand-name">Sinew</span>
         </div>
+        <UpdateBadge />
       </div>
 
       <div className="main">

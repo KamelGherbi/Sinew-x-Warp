@@ -9,3 +9,7 @@
 .env.*
 .idea/
 .vscode/
+
+# Tauri updater signing keys — NEVER commit private keys
+/.tauri-keys/
+*.key

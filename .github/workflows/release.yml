@@ -1,0 +1,170 @@
+name: Release
+
+# Builds Sinew for macOS (universal), Windows and Linux, signs the artifacts
+# with the Tauri updater key, and publishes them — together with the
+# auto-generated `latest.json` manifest — to a GitHub Release.
+#
+# Trigger: push a semver tag like `v0.2.0`. The workflow creates a *draft*
+# release first; once all platforms upload their bundles, you can review and
+# publish it from the GitHub UI. The in-app updater fetches
+# `https://github.com/Paseru/sinew/releases/latest/download/latest.json`,
+# so the release must be marked "latest" (which is the default once published).
+#
+# Required repository secrets:
+#   * TAURI_SIGNING_PRIVATE_KEY          — content of .tauri-keys/sinew.key
+#   * TAURI_SIGNING_PRIVATE_KEY_PASSWORD — empty string if you generated the key without a password
+#
+# Optional (macOS notarization — recommended for distribution outside the App Store):
+#   * APPLE_CERTIFICATE                  — base64-encoded .p12 Developer ID cert
+#   * APPLE_CERTIFICATE_PASSWORD         — password for the .p12
+#   * APPLE_SIGNING_IDENTITY             — e.g. "Developer ID Application: Your Name (TEAMID)"
+#   * APPLE_ID                           — Apple ID email
+#   * APPLE_PASSWORD                     — app-specific password
+#   * APPLE_TEAM_ID                      — Apple Developer team identifier
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag (e.g. v0.2.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  # Creates the draft release first so every platform job can attach to it.
+  create-release:
+    name: Create draft release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+      tag_name: ${{ steps.resolve-tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: resolve-tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: create
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = "${{ steps.resolve-tag.outputs.tag }}";
+            const version = tag.replace(/^v/, "");
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Sinew ${version}`,
+              body: `Sinew ${version}\n\nDownloads below. The desktop app will auto-update existing installs.`,
+              draft: true,
+              prerelease: false,
+            });
+            return data.id;
+
+  build-tauri:
+    name: Build (${{ matrix.platform.name }})
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          # macOS universal binary — one .dmg / .app.tar.gz that runs on Intel + Apple Silicon.
+          - name: macos-universal
+            os: macos-14
+            rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+            tauri_args: "--target universal-apple-darwin"
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            rust_targets: "x86_64-unknown-linux-gnu"
+            tauri_args: ""
+          - name: windows-x86_64
+            os: windows-latest
+            rust_targets: "x86_64-pc-windows-msvc"
+            tauri_args: ""
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.rust_targets }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Install Linux dependencies
+        if: matrix.platform.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            build-essential \
+            curl \
+            wget \
+            file
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build & publish via tauri-action
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Apple-specific (only used on macOS, ignored on other runners).
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ${{ matrix.platform.tauri_args }}
+          # tauri-action auto-generates latest.json when:
+          #   - `bundle.createUpdaterArtifacts` is true (we set this)
+          #   - the updater plugin is configured (we set this)
+          updaterJsonPreferNsis: false
+
+  finalize-release:
+    name: Finalize release
+    needs: [create-release, build-tauri]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            // Flip the release from draft → published so end-users can fetch
+            // it via `releases/latest/download/latest.json`.
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release_id }},
+              draft: false,
+              make_latest: "true",
+            });

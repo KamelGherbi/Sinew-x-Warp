@@ -155,7 +155,12 @@ pub(super) fn send_token_usage_event(
     );
 }
 
-pub(super) fn attach_token_usage(message: &mut ChatMessage, provider: &str, model: &str, usage: Usage) {
+pub(super) fn attach_token_usage(
+    message: &mut ChatMessage,
+    provider: &str,
+    model: &str,
+    usage: Usage,
+) {
     if usage.total_tokens == 0 && usage.input_tokens == 0 && usage.output_tokens == 0 {
         return;
     }

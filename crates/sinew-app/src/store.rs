@@ -27,6 +27,30 @@ const TOOL_SETTINGS_KEY: &str = "tool_settings";
 const SKILL_SETTINGS_KEY: &str = "skill_settings";
 const HIDDEN_TOOL_SETTING_NAMES: &[&str] = &["skill"];
 
+pub const DEFAULT_PLAN_MODE_PROMPT: &str = r#"You are in Plan mode.
+
+Rules:
+- Build understanding by reading/searching/running diagnostic shell commands as needed.
+- Do not edit workspace files and do not use apply_patch.
+- You must keep the user in a Question loop until the user explicitly clicks "Send and stop questions".
+- If the user message does not contain <plan_mode_control action="stop_questions">, your turn must end by calling the Question tool. Do not write the final plan yet.
+- After each normal answer to a Question, inspect/explore more if needed, then ask the next Question.
+- If you have no remaining substantive question, ask the user to confirm that you should create the plan now. Still use the Question tool.
+- Only when the user message contains <plan_mode_control action="stop_questions">, stop asking questions and write the complete plan now.
+- When the plan is ready, respond with only the Markdown plan. Do not implement it.
+
+STRICTLY FORBIDDEN in the plan (unless the user explicitly requests it):
+- Code snippets, pseudo-code, or inline code
+- File paths, directory structures, or tree views
+- Function, class, variable, or module names
+- Shell commands or CLI instructions
+- Technical configuration details
+- Any implementation-specific notation
+
+The plan should read as a clear description of intent and expected behavior that anyone could understand without technical background. Bullet points and paragraphs are both acceptable. The focus is on WHAT the system should do, not HOW the code should be written.
+
+If technical specifics become necessary to avoid ambiguity, the AI may include them at its discretion, integrated naturally into the plan - but this should remain the exception, not the default."#;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationSummary {
@@ -132,9 +156,10 @@ pub enum PlanWorkflowState {
     #[default]
     Idle,
     PlanningQuestions,
-    PlanReady { artifact: PlanArtifactState },
+    PlanReady {
+        artifact: PlanArtifactState,
+    },
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "camelCase")]
@@ -159,7 +184,6 @@ pub enum GoalWorkflowState {
     },
 }
 
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceBootstrap {
@@ -174,6 +198,8 @@ pub struct WorkspaceBootstrap {
 pub struct ToolSettings {
     #[serde(default)]
     pub tools: Vec<ToolConfig>,
+    #[serde(default)]
+    pub plan_mode_prompt: String,
     #[serde(default)]
     pub image_provider: ImageProvider,
     #[serde(default)]
@@ -217,6 +243,8 @@ pub struct ToolConfig {
 #[serde(rename_all = "camelCase")]
 pub struct ToolSettingsView {
     pub tools: Vec<ToolConfigView>,
+    pub plan_mode_prompt: String,
+    pub default_plan_mode_prompt: String,
     pub image_provider: ImageProvider,
     pub openai_image_api_key: String,
     pub nano_banana_api_key: String,
@@ -236,6 +264,7 @@ pub struct ToolConfigView {
 impl ToolSettings {
     pub fn normalized(mut self) -> Self {
         let mut seen = HashSet::new();
+        self.plan_mode_prompt = normalize_plan_mode_prompt(&self.plan_mode_prompt);
         self.openai_image_api_key = self.openai_image_api_key.trim().to_string();
         self.nano_banana_api_key = self.nano_banana_api_key.trim().to_string();
         self.linkup_api_key = self.linkup_api_key.trim().to_string();
@@ -281,6 +310,15 @@ impl ToolSettings {
             .collect()
     }
 
+    pub fn plan_mode_prompt(&self) -> &str {
+        let prompt = self.plan_mode_prompt.trim();
+        if prompt.is_empty() {
+            DEFAULT_PLAN_MODE_PROMPT
+        } else {
+            prompt
+        }
+    }
+
     pub fn is_enabled(&self, name: &str) -> bool {
         self.tools
             .iter()
@@ -317,6 +355,15 @@ impl ToolSettings {
     }
 }
 
+fn normalize_plan_mode_prompt(value: &str) -> String {
+    let prompt = value.trim();
+    if prompt.is_empty() || prompt == DEFAULT_PLAN_MODE_PROMPT.trim() {
+        String::new()
+    } else {
+        prompt.to_string()
+    }
+}
+
 pub fn tool_settings_view(settings: &ToolSettings, catalog: &[ToolDescriptor]) -> ToolSettingsView {
     let by_name = settings
         .tools
@@ -326,6 +373,8 @@ pub fn tool_settings_view(settings: &ToolSettings, catalog: &[ToolDescriptor]) -
     let mut seen = HashSet::new();
 
     ToolSettingsView {
+        plan_mode_prompt: settings.plan_mode_prompt().to_string(),
+        default_plan_mode_prompt: DEFAULT_PLAN_MODE_PROMPT.to_string(),
         image_provider: settings.image_provider,
         openai_image_api_key: settings.openai_image_api_key.clone(),
         nano_banana_api_key: settings.nano_banana_api_key.clone(),

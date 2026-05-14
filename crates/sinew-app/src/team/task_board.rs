@@ -613,7 +613,9 @@ pub(super) fn merge_task_id_inputs(
     }
 }
 
-pub(super) fn normalize_task_ids(ids: Option<Vec<TaskIdInput>>) -> std::result::Result<Vec<u64>, String> {
+pub(super) fn normalize_task_ids(
+    ids: Option<Vec<TaskIdInput>>,
+) -> std::result::Result<Vec<u64>, String> {
     normalize_optional_task_ids(ids).map(Option::unwrap_or_default)
 }
 
@@ -711,7 +713,10 @@ pub(super) fn completed_task_ids(session: &TeamSession) -> BTreeSet<u64> {
         .collect()
 }
 
-pub(super) fn refresh_unblocked_tasks(session: &mut TeamSession, done_ids: &BTreeSet<u64>) -> Vec<u64> {
+pub(super) fn refresh_unblocked_tasks(
+    session: &mut TeamSession,
+    done_ids: &BTreeSet<u64>,
+) -> Vec<u64> {
     let now = now_ms();
     let mut changed = false;
     let mut unblocked_task_ids = Vec::new();
@@ -827,7 +832,10 @@ pub(super) fn task_wake_is_still_valid(
         && task.owner.as_deref().map(agent_key).as_deref() == Some(owner_key.as_str())
 }
 
-pub(super) fn task_wake_ids_for_agent(session: &TeamSession, agent_key_value: &str) -> BTreeSet<u64> {
+pub(super) fn task_wake_ids_for_agent(
+    session: &TeamSession,
+    agent_key_value: &str,
+) -> BTreeSet<u64> {
     session
         .pending_task_wakes
         .iter()
@@ -842,7 +850,10 @@ pub(super) fn remove_task_wakes_for_task(session: &mut TeamSession, task_id: u64
         .retain(|wake| wake.task_id != task_id);
 }
 
-pub(super) fn in_progress_task_id_for_agent(session: &TeamSession, agent_key_value: &str) -> Option<u64> {
+pub(super) fn in_progress_task_id_for_agent(
+    session: &TeamSession,
+    agent_key_value: &str,
+) -> Option<u64> {
     session
         .tasks
         .iter()

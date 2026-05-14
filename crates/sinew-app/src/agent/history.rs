@@ -145,7 +145,10 @@ pub(super) fn repair_missing_tool_results(history: &mut Vec<ChatMessage>) {
     }
 }
 
-pub(super) fn append_interrupted_tool_results(assistant: &ChatMessage, tool_results: &mut Vec<Part>) {
+pub(super) fn append_interrupted_tool_results(
+    assistant: &ChatMessage,
+    tool_results: &mut Vec<Part>,
+) {
     let completed = tool_results
         .iter()
         .filter_map(|part| match part {

@@ -119,7 +119,10 @@ pub(super) fn plan_turn_policy(
     }
 }
 
-pub(super) fn plan_estimate_mode(current: &PlanWorkflowState, requested_mode: AgentMode) -> AgentMode {
+pub(super) fn plan_estimate_mode(
+    current: &PlanWorkflowState,
+    requested_mode: AgentMode,
+) -> AgentMode {
     match current {
         PlanWorkflowState::Idle => requested_mode,
         PlanWorkflowState::PlanningQuestions | PlanWorkflowState::PlanReady { .. } => {
