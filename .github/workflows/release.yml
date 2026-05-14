@@ -84,14 +84,6 @@ jobs:
             os: macos-14
             rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
             tauri_args: "--target universal-apple-darwin"
-          - name: linux-x86_64
-            os: ubuntu-22.04
-            rust_targets: "x86_64-unknown-linux-gnu"
-            tauri_args: ""
-          - name: windows-x86_64
-            os: windows-latest
-            rust_targets: "x86_64-pc-windows-msvc"
-            tauri_args: ""
     runs-on: ${{ matrix.platform.os }}
     steps:
       - uses: actions/checkout@v4
