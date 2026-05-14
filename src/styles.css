@@ -540,8 +540,9 @@ textarea {
 }
 
 /* ── Auto-updater badge ─────────────────────────────────────────────── */
-/* Sits between the titlebar actions and the brand block, only renders   */
-/* when an update is available / downloading / ready / errored.          */
+/* Mirrors the design system: no borders, bg-3/bg-4/bg-5 layering,        */
+/* primary action styled like .composer__send. The pill stays neutral —   */
+/* only the icon picks up a tonal hint to signal state.                   */
 .titlebar__update {
   position: absolute;
   top: 50%;
@@ -555,39 +556,54 @@ textarea {
   align-items: center;
   gap: 6px;
   height: 22px;
-  padding: 0 9px;
+  padding: 0 8px;
   border-radius: var(--r-med);
   font-family: var(--font-ui);
   font-size: var(--fs-xs);
   font-weight: 500;
   letter-spacing: -0.005em;
-  color: var(--text-0);
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
-  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+  color: var(--text-1);
+  background: var(--bg-3);
+  border: none;
+  transition: background 150ms ease, color 150ms ease;
   white-space: nowrap;
   cursor: pointer;
   position: relative;
   overflow: hidden;
 }
 .titlebar__update-pill:hover {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--bg-4);
+  color: var(--text-0);
+}
+/* Icon picks up the tonal hint per state — keeps the pill neutral. */
+.titlebar__update[data-state="available"] .titlebar__update-pill svg {
+  color: var(--accent-hi);
 }
 .titlebar__update[data-state="ready"] .titlebar__update-pill {
-  background: color-mix(in srgb, #22c55e 20%, transparent);
-  border-color: color-mix(in srgb, #22c55e 50%, transparent);
+  background: var(--bg-4);
+  color: var(--text-0);
+}
+.titlebar__update[data-state="ready"] .titlebar__update-pill svg {
+  color: #6ee7a7; /* soft green, same tonal vibe as --danger but on the success side */
 }
 .titlebar__update[data-state="ready"] .titlebar__update-pill:hover {
-  background: color-mix(in srgb, #22c55e 28%, transparent);
+  background: var(--bg-5);
 }
 .titlebar__update[data-state="error"] .titlebar__update-pill {
-  background: color-mix(in srgb, #ef4444 18%, transparent);
-  border-color: color-mix(in srgb, #ef4444 45%, transparent);
-  color: var(--text-0);
+  background: rgba(245, 115, 127, 0.14);
+  color: var(--danger);
+}
+.titlebar__update[data-state="error"] .titlebar__update-pill svg {
+  color: var(--danger);
+}
+.titlebar__update[data-state="error"] .titlebar__update-pill:hover {
+  background: rgba(245, 115, 127, 0.22);
 }
 .titlebar__update[data-state="downloading"] .titlebar__update-pill {
   cursor: default;
+}
+.titlebar__update[data-state="downloading"] .titlebar__update-pill svg {
+  color: var(--accent-hi);
 }
 .titlebar__update-label {
   pointer-events: none;
@@ -598,13 +614,13 @@ textarea {
   right: 0;
   bottom: 0;
   height: 2px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-5);
   pointer-events: none;
 }
 .titlebar__update-bar-fill {
   display: block;
   height: 100%;
-  background: var(--accent-hi);
+  background: var(--accent);
   width: 0%;
   transition: width 120ms linear;
 }
@@ -620,11 +636,11 @@ textarea {
   right: 0;
   width: 320px;
   max-width: calc(100vw - 32px);
-  background: var(--bg-2, #14151a);
-  border: 1px solid var(--bg-4, #22242b);
-  border-radius: var(--r-lg, 10px);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
-  padding: 14px 14px 12px;
+  background: var(--bg-3);
+  border: none;
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-elevated);
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -646,19 +662,19 @@ textarea {
   font-size: var(--fs-sm);
 }
 .titlebar__update-popover-sub {
-  color: var(--text-2, #8a8d96);
+  color: var(--text-3);
   font-size: 11px;
 }
 .titlebar__update-popover-notes {
   max-height: 180px;
   overflow-y: auto;
   padding: 8px 10px;
-  background: var(--bg-1);
-  border: 1px solid var(--bg-3);
-  border-radius: var(--r-med, 6px);
+  background: var(--bg-2);
+  border: none;
+  border-radius: var(--r-small);
   font-size: 11.5px;
   line-height: 1.45;
-  color: var(--text-1);
+  color: var(--text-2);
 }
 .titlebar__update-popover-notes p {
   margin: 0 0 6px;
@@ -669,39 +685,38 @@ textarea {
 .titlebar__update-popover-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 4px;
 }
 .titlebar__update-popover-btn {
   height: 26px;
   padding: 0 12px;
-  border-radius: var(--r-med, 6px);
+  border-radius: var(--r-med);
+  border: none;
   font-family: var(--font-ui);
   font-size: var(--fs-xs);
   font-weight: 500;
+  letter-spacing: -0.005em;
   cursor: pointer;
-  transition: background 150ms ease, color 150ms ease;
+  transition: background 140ms ease, color 140ms ease;
 }
 .titlebar__update-popover-btn:disabled {
-  opacity: 0.55;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 .titlebar__update-popover-btn--ghost {
   background: transparent;
-  color: var(--text-1);
-  border: 1px solid var(--bg-4, #22242b);
+  color: var(--text-2);
 }
 .titlebar__update-popover-btn--ghost:hover:not(:disabled) {
-  background: var(--bg-3);
+  background: var(--bg-4);
   color: var(--text-0);
 }
 .titlebar__update-popover-btn--primary {
-  background: var(--accent);
-  color: #ffffff;
-  border: 1px solid var(--accent);
+  background: var(--bg-5);
+  color: var(--text-0);
 }
 .titlebar__update-popover-btn--primary:hover:not(:disabled) {
-  background: var(--accent-hi);
-  border-color: var(--accent-hi);
+  background: #2a2c33;
 }
 
 .main {
