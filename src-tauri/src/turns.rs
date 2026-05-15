@@ -148,6 +148,7 @@ pub(super) async fn send_message(
         create_image: Arc::new(CreateImageTool::with_settings(
             workspace_root.clone(),
             tool_settings.image_provider,
+            tool_settings.openai_image_use_subscription,
             tool_settings.openai_image_api_key(),
             tool_settings.nano_banana_api_key(),
         )),

@@ -153,6 +153,7 @@ export type ToolSettings = {
   planModePrompt: string;
   defaultPlanModePrompt: string;
   imageProvider: ImageProvider;
+  openaiImageUseSubscription: boolean;
   openaiImageApiKey: string;
   nanoBananaApiKey: string;
   webSearchProvider: WebSearchProvider;

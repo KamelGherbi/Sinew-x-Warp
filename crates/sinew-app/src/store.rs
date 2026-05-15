@@ -204,6 +204,8 @@ pub struct ToolSettings {
     #[serde(default)]
     pub image_provider: ImageProvider,
     #[serde(default)]
+    pub openai_image_use_subscription: bool,
+    #[serde(default)]
     pub openai_image_api_key: String,
     #[serde(default)]
     pub nano_banana_api_key: String,
@@ -247,6 +249,7 @@ pub struct ToolSettingsView {
     pub plan_mode_prompt: String,
     pub default_plan_mode_prompt: String,
     pub image_provider: ImageProvider,
+    pub openai_image_use_subscription: bool,
     pub openai_image_api_key: String,
     pub nano_banana_api_key: String,
     pub web_search_provider: WebSearchProvider,
@@ -409,11 +412,12 @@ pub fn tool_settings_view(settings: &ToolSettings, catalog: &[ToolDescriptor]) -
         .collect::<HashMap<_, _>>();
     let mut seen = HashSet::new();
 
-    ToolSettingsView {
-        plan_mode_prompt: settings.plan_mode_prompt().to_string(),
-        default_plan_mode_prompt: DEFAULT_PLAN_MODE_PROMPT.to_string(),
-        image_provider: settings.image_provider,
-        openai_image_api_key: settings.openai_image_api_key.clone(),
+        ToolSettingsView {
+            plan_mode_prompt: settings.plan_mode_prompt().to_string(),
+            default_plan_mode_prompt: DEFAULT_PLAN_MODE_PROMPT.to_string(),
+            image_provider: settings.image_provider,
+            openai_image_use_subscription: settings.openai_image_use_subscription,
+            openai_image_api_key: settings.openai_image_api_key.clone(),
         nano_banana_api_key: settings.nano_banana_api_key.clone(),
         web_search_provider: settings.web_search_provider,
         linkup_api_key: settings.linkup_api_key.clone(),

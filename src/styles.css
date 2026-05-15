@@ -2642,6 +2642,37 @@ textarea {
   color: var(--text-0);
   background: var(--bg-0);
 }
+.settings-pane__tool-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: var(--r-card);
+  background: var(--bg-2);
+  min-width: 0;
+}
+.settings-pane__tool-toggle-row[data-disabled="true"] {
+  opacity: 0.7;
+}
+.settings-pane__tool-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-pane__tool-toggle-label {
+  color: var(--text-0);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+.settings-pane__tool-toggle-hint {
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
 .settings-pane__tool-credential {
   display: grid;
   grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
@@ -6097,6 +6128,7 @@ textarea {
   background: transparent;
   border: none;
   flex: 0 0 auto;
+  position: relative;
   transition: background 120ms ease, color 120ms ease;
 }
 .composer__iconbtn:hover {
@@ -6115,6 +6147,32 @@ textarea {
 }
 .composer__compact {
   margin-right: -2px;
+}
+.composer__iconbtn-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translate(-50%, 2px);
+  padding: 4px 8px;
+  border-radius: var(--r-med);
+  background: var(--bg-2);
+  color: var(--text-0);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease, transform 140ms ease;
+  box-shadow: var(--shadow-ambient);
+  z-index: 40;
+}
+.composer__iconbtn:hover:not(:disabled) .composer__iconbtn-tip,
+.composer__iconbtn:focus-visible:not(:disabled) .composer__iconbtn-tip {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .composer__picker {

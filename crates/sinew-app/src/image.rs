@@ -14,12 +14,14 @@ use reqwest::{
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use sinew_core::ToolDescriptor;
+use sinew_openai::{Credential, MODEL_ID as OPENAI_RESPONSES_IMAGE_MODEL};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::store::ImageProvider;
 use crate::tool_run::{FileChange, FileChangeKind, ToolRunImage, ToolRunResult};
 
 const OPENAI_IMAGES_URL: &str = "https://api.openai.com/v1/images/generations";
+const OPENAI_CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 const GPT_IMAGE_MODEL: &str = "gpt-image-2";
 const NANO_BANANA_MODEL: &str = "gemini-3.1-flash-image-preview";
 const NANO_BANANA_URL: &str =
@@ -32,6 +34,7 @@ pub struct CreateImageTool {
     http: reqwest::Client,
     workspace_root: PathBuf,
     image_provider: ImageProvider,
+    openai_image_use_subscription: bool,
     openai_api_key: Option<String>,
     nano_banana_api_key: Option<String>,
     write_lock: Option<Arc<Semaphore>>,
@@ -43,12 +46,13 @@ impl CreateImageTool {
     }
 
     pub fn with_api_key(workspace_root: impl Into<PathBuf>, api_key: Option<String>) -> Self {
-        Self::with_settings(workspace_root, ImageProvider::GptImage2, api_key, None)
+        Self::with_settings(workspace_root, ImageProvider::GptImage2, false, api_key, None)
     }
 
     pub fn with_settings(
         workspace_root: impl Into<PathBuf>,
         image_provider: ImageProvider,
+        openai_image_use_subscription: bool,
         openai_api_key: Option<String>,
         nano_banana_api_key: Option<String>,
     ) -> Self {
@@ -60,6 +64,7 @@ impl CreateImageTool {
                 .unwrap_or_else(|_| reqwest::Client::new()),
             workspace_root: workspace_root.into(),
             image_provider,
+            openai_image_use_subscription,
             openai_api_key: normalize_configured_key(openai_api_key),
             nano_banana_api_key: normalize_configured_key(nano_banana_api_key),
             write_lock: None,
@@ -197,6 +202,20 @@ impl CreateImageTool {
         let background = normalize_background(parsed.background.as_deref())?;
         let moderation = normalize_moderation(parsed.moderation.as_deref())?;
 
+        if self.openai_image_use_subscription {
+            return self
+                .create_gpt_image_with_subscription(
+                    prompt,
+                    size,
+                    quality,
+                    n,
+                    output_format,
+                    background,
+                    moderation,
+                )
+                .await;
+        }
+
         let mut body = Map::new();
         body.insert("model".into(), json!(GPT_IMAGE_MODEL));
         body.insert("prompt".into(), json!(prompt));
@@ -309,6 +328,192 @@ impl CreateImageTool {
         Ok(ToolRunResult::ok_with_images(output, images, file_changes))
     }
 
+    async fn create_gpt_image_with_subscription(
+        &self,
+        prompt: &str,
+        size: &str,
+        quality: &str,
+        n: u8,
+        output_format: &str,
+        background: Option<&str>,
+        moderation: Option<&str>,
+    ) -> Result<ToolRunResult> {
+        let credential = Credential::load_default()?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "OpenAI subscription image generation requires OpenAI to be connected in Settings > Providers."
+            )
+        })?;
+        let bearer = credential.bearer(&self.http).await?;
+        if !bearer.is_oauth {
+            bail!(
+                "OpenAI subscription image generation requires OpenAI OAuth. Connect OpenAI in Settings > Providers."
+            );
+        }
+
+        let mut generated = Vec::new();
+        for _ in 0..n {
+            let mut images = self
+                .request_subscription_image(
+                    &bearer.token,
+                    bearer.account_id.as_deref(),
+                    prompt,
+                    size,
+                    quality,
+                    output_format,
+                    background,
+                    moderation,
+                )
+                .await?;
+            generated.append(&mut images);
+            if generated.len() >= n as usize {
+                break;
+            }
+        }
+        generated.truncate(n as usize);
+
+        let mut file_changes = Vec::new();
+        let _write_permit = self.acquire_write_permit().await?;
+        let images = generated
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                let bytes = decode_image(&item.b64_json, idx + 1)?;
+                let relative_path = self.save_image(&bytes, extension_for(output_format), idx)?;
+                file_changes.push(FileChange {
+                    relative_path: relative_path.clone(),
+                    kind: FileChangeKind::Added,
+                    summary: format!("Added generated image ({} bytes)", bytes.len()),
+                    binary: true,
+                    added_lines: 0,
+                    removed_lines: 0,
+                    truncated: false,
+                    lines: Vec::new(),
+                });
+                Ok(ToolRunImage {
+                    media_type: media_type_for(output_format).to_string(),
+                    data: String::new(),
+                    path: Some(
+                        self.workspace_root
+                            .join(&relative_path)
+                            .display()
+                            .to_string(),
+                    ),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if images.is_empty() {
+            bail!("OpenAI subscription returned no images");
+        }
+
+        let mut output = format!(
+            "model: {GPT_IMAGE_MODEL}\nsource: OpenAI subscription\nimages: {}\nsize: {size}\nquality: {quality}\nformat: {output_format}",
+            images.len()
+        );
+        let request_ids = generated
+            .iter()
+            .filter_map(|item| item.request_id.as_deref())
+            .collect::<Vec<_>>();
+        if !request_ids.is_empty() {
+            output.push_str("\nrequest_id:");
+            for request_id in request_ids {
+                output.push_str(&format!("\n- {request_id}"));
+            }
+        }
+        output.push_str("\nsaved:");
+        for image in &images {
+            if let Some(path) = &image.path {
+                if let Ok(relative) = PathBuf::from(path).strip_prefix(&self.workspace_root) {
+                    output.push_str(&format!("\n- {}", relative.display()));
+                }
+            }
+        }
+        let revised_prompts = generated
+            .iter()
+            .filter_map(|item| item.revised_prompt.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if !revised_prompts.is_empty() {
+            output.push_str("\n\nrevised_prompt:\n");
+            output.push_str(&revised_prompts.join("\n\n---\n\n"));
+        }
+        output.push_str("\n\n[Image attached visually.]");
+
+        Ok(ToolRunResult::ok_with_images(output, images, file_changes))
+    }
+
+    async fn request_subscription_image(
+        &self,
+        access_token: &str,
+        account_id: Option<&str>,
+        prompt: &str,
+        size: &str,
+        quality: &str,
+        output_format: &str,
+        background: Option<&str>,
+        moderation: Option<&str>,
+    ) -> Result<Vec<SubscriptionImageItem>> {
+        let mut image_tool = Map::new();
+        image_tool.insert("type".into(), json!("image_generation"));
+        image_tool.insert("action".into(), json!("generate"));
+        image_tool.insert("output_format".into(), json!(output_format));
+        image_tool.insert("quality".into(), json!(quality));
+        if size != "auto" {
+            image_tool.insert("size".into(), json!(size));
+        }
+        if let Some(background) = background {
+            image_tool.insert("background".into(), json!(background));
+        }
+        if let Some(moderation) = moderation {
+            image_tool.insert("moderation".into(), json!(moderation));
+        }
+
+        let body = json!({
+            "model": OPENAI_RESPONSES_IMAGE_MODEL,
+            "input": prompt,
+            "tools": [Value::Object(image_tool)],
+            "tool_choice": { "type": "image_generation" },
+            "stream": false,
+            "store": false,
+        });
+
+        let mut request = self
+            .http
+            .post(OPENAI_CODEX_RESPONSES_URL)
+            .header(AUTHORIZATION, format!("Bearer {access_token}"))
+            .header("openai-beta", "responses=experimental")
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json");
+        if let Some(account_id) = account_id {
+            request = request.header("chatgpt-account-id", account_id);
+        }
+
+        let response = request
+            .json(&body)
+            .send()
+            .await
+            .context("OpenAI subscription image request failed")?;
+
+        let status = response.status();
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let text = response
+            .text()
+            .await
+            .context("unable to read OpenAI subscription image response")?;
+        if !status.is_success() {
+            bail!(
+                "{}",
+                format_openai_error(status, request_id.as_deref(), &text)
+            );
+        }
+
+        subscription_images_from_response(&text, request_id)
+    }
+
     async fn create_nano_banana(&self, input: Value) -> Result<ToolRunResult> {
         let parsed: NanoBananaInput = serde_json::from_value(input)
             .map_err(|err| anyhow::anyhow!("invalid CreateImage input: {err}"))?;
@@ -327,11 +532,9 @@ impl CreateImageTool {
             }],
             "generationConfig": {
                 "responseModalities": ["IMAGE"],
-                "responseFormat": {
-                    "image": {
-                        "aspectRatio": aspect_ratio,
-                        "imageSize": image_size
-                    }
+                "imageConfig": {
+                    "aspectRatio": aspect_ratio,
+                    "imageSize": image_size
                 },
                 "thinkingConfig": {
                     "thinkingLevel": "High",
@@ -506,6 +709,18 @@ struct ImageGenerationItem {
     b64_json: Option<String>,
     #[serde(default)]
     revised_prompt: Option<String>,
+}
+
+struct SubscriptionImageItem {
+    b64_json: String,
+    revised_prompt: Option<String>,
+    request_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResponsesImageResponse {
+    #[serde(default)]
+    output: Vec<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -707,6 +922,40 @@ fn decode_image(data: &str, idx: usize) -> Result<Vec<u8>> {
     BASE64_STANDARD
         .decode(data)
         .with_context(|| format!("image {idx} returned invalid base64"))
+}
+
+fn subscription_images_from_response(
+    text: &str,
+    request_id: Option<String>,
+) -> Result<Vec<SubscriptionImageItem>> {
+    let payload: ResponsesImageResponse =
+        serde_json::from_str(text).context("invalid OpenAI subscription image response")?;
+    let images = payload
+        .output
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("image_generation_call"))
+        .filter(|item| {
+            item.get("status")
+                .and_then(Value::as_str)
+                .map(|status| status == "completed")
+                .unwrap_or(true)
+        })
+        .filter_map(|item| {
+            let b64_json = item.get("result").and_then(Value::as_str)?;
+            Some(SubscriptionImageItem {
+                b64_json: b64_json.to_string(),
+                revised_prompt: item
+                    .get("revised_prompt")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                request_id: request_id.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    if images.is_empty() {
+        bail!("OpenAI subscription returned no image_generation_call result");
+    }
+    Ok(images)
 }
 
 fn extension_for(output_format: &str) -> &'static str {

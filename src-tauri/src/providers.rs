@@ -908,6 +908,14 @@ pub(super) async fn disconnect_openai_provider(
     }
     delete_default_auth().map_err(error_to_string)?;
     remove_openai_provider(&state.providers)?;
+    let mut tool_settings = state.store.load_tool_settings().map_err(error_to_string)?;
+    if tool_settings.openai_image_use_subscription {
+        tool_settings.openai_image_use_subscription = false;
+        state
+            .store
+            .save_tool_settings(&tool_settings)
+            .map_err(error_to_string)?;
+    }
     Ok(openai_provider_status_from_auth(
         OpenAiAuthStatus::disconnected(),
         "disconnected",

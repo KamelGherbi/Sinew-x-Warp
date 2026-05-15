@@ -47,6 +47,7 @@ const FALLBACK_TOOL_SETTINGS: ToolSettings = {
   planModePrompt: "",
   defaultPlanModePrompt: "",
   imageProvider: "gptImage2",
+  openaiImageUseSubscription: false,
   openaiImageApiKey: "",
   nanoBananaApiKey: "",
   webSearchProvider: "classic",
@@ -263,6 +264,12 @@ export function SettingsPane({ workspacePath }: Props) {
     );
   }, []);
 
+  const updateOpenAiImageUseSubscription = useCallback((openaiImageUseSubscription: boolean) => {
+    setToolSettings((current) =>
+      current ? { ...current, openaiImageUseSubscription } : current,
+    );
+  }, []);
+
   const updateNanoBananaApiKey = useCallback((nanoBananaApiKey: string) => {
     setToolSettings((current) =>
       current ? { ...current, nanoBananaApiKey } : current,
@@ -392,8 +399,9 @@ export function SettingsPane({ workspacePath }: Props) {
   }, [loadConfiguredProviders]);
 
   useEffect(() => {
-    if (section !== "providers") return;
+    if (section !== "providers" && section !== "tools") return;
     if (openAiStatus === null) void loadOpenAiStatus();
+    if (section !== "providers") return;
     if (anthropicStatus === null) void loadAnthropicStatus();
     if (googleStatus === null) void loadGoogleStatus();
     if (kimiStatus === null) void loadKimiStatus();
@@ -411,6 +419,14 @@ export function SettingsPane({ workspacePath }: Props) {
     loadKimiStatus,
     loadOpenRouterStatus,
   ]);
+
+  useEffect(() => {
+    if (openAiStatus === null || openAiStatus.connected) return;
+    setToolSettings((current) => {
+      if (!current?.openaiImageUseSubscription) return current;
+      return { ...current, openaiImageUseSubscription: false };
+    });
+  }, [openAiStatus]);
 
   useEffect(() => {
     const openAiConnecting = openAiStatus?.connectionState === "connecting";
@@ -1099,10 +1115,12 @@ export function SettingsPane({ workspacePath }: Props) {
             onUpdate={updateTool}
             onPlanModePromptChange={updatePlanModePrompt}
             onImageProviderChange={updateImageProvider}
+            onOpenAiImageUseSubscriptionChange={updateOpenAiImageUseSubscription}
             onOpenAiImageApiKeyChange={updateOpenAiImageApiKey}
             onNanoBananaApiKeyChange={updateNanoBananaApiKey}
             onWebSearchProviderChange={updateWebSearchProvider}
             onLinkupApiKeyChange={updateLinkupApiKey}
+            openAiStatus={openAiStatus}
           />
         ) : section === "mcp" ? (
           <McpSection
@@ -1821,10 +1839,12 @@ type ToolsSectionProps = {
   onUpdate: (name: string, patch: Partial<ToolConfig>) => void;
   onPlanModePromptChange: (value: string) => void;
   onImageProviderChange: (value: ImageProvider) => void;
+  onOpenAiImageUseSubscriptionChange: (value: boolean) => void;
   onOpenAiImageApiKeyChange: (value: string) => void;
   onNanoBananaApiKeyChange: (value: string) => void;
   onWebSearchProviderChange: (value: WebSearchProvider) => void;
   onLinkupApiKeyChange: (value: string) => void;
+  openAiStatus: OpenAiProviderStatus | null;
 };
 
 const TOOL_GROUPS = [
@@ -1849,19 +1869,27 @@ function ToolsSection({
   onUpdate,
   onPlanModePromptChange,
   onImageProviderChange,
+  onOpenAiImageUseSubscriptionChange,
   onOpenAiImageApiKeyChange,
   onNanoBananaApiKeyChange,
   onWebSearchProviderChange,
   onLinkupApiKeyChange,
+  openAiStatus,
 }: ToolsSectionProps) {
   const tools = settings?.tools ?? [];
   const planModePrompt = settings?.planModePrompt ?? "";
   const defaultPlanModePrompt = settings?.defaultPlanModePrompt ?? "";
   const imageProvider = settings?.imageProvider ?? "gptImage2";
+  const openaiImageUseSubscription = settings?.openaiImageUseSubscription ?? false;
   const openaiImageApiKey = settings?.openaiImageApiKey ?? "";
   const nanoBananaApiKey = settings?.nanoBananaApiKey ?? "";
   const webSearchProvider = settings?.webSearchProvider ?? "classic";
   const linkupApiKey = settings?.linkupApiKey ?? "";
+  const openAiConnected = openAiStatus?.connected === true;
+  const subscriptionActive =
+    imageProvider === "gptImage2" && openAiConnected && openaiImageUseSubscription;
+  const showImageKeyField =
+    imageProvider === "nanoBanana2" || !subscriptionActive;
   const activeImageKey =
     imageProvider === "nanoBanana2" ? nanoBananaApiKey : openaiImageApiKey;
   const hasImageTool = tools.some((tool) => tool.name === "CreateImage");
@@ -1951,20 +1979,57 @@ function ToolsSection({
                   Nano Banana 2
                 </button>
               </div>
-              <ApiKeyField
-                label={
-                  imageProvider === "nanoBanana2"
-                    ? "Gemini API key"
-                    : "OpenAI API key"
-                }
-                value={activeImageKey}
-                placeholder={imageProvider === "nanoBanana2" ? "AIza..." : "sk-..."}
-                onChange={
-                  imageProvider === "nanoBanana2"
-                    ? onNanoBananaApiKeyChange
-                    : onOpenAiImageApiKeyChange
-                }
-              />
+              {imageProvider === "gptImage2" && (
+                <div
+                  className="settings-pane__tool-toggle-row"
+                  data-disabled={openAiConnected ? "false" : "true"}
+                >
+                  <div className="settings-pane__tool-toggle-text">
+                    <span className="settings-pane__tool-toggle-label">
+                      Use OpenAI subscription
+                    </span>
+                    <span className="settings-pane__tool-toggle-hint">
+                      {openAiConnected
+                        ? "Authenticate image requests with your connected OpenAI account instead of an API key."
+                        : "Connect OpenAI in Settings → Providers to use your subscription."}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="settings-pane__switch"
+                    role="switch"
+                    aria-checked={subscriptionActive}
+                    aria-label={
+                      subscriptionActive
+                        ? "Disable OpenAI subscription mode"
+                        : "Enable OpenAI subscription mode"
+                    }
+                    data-on={subscriptionActive ? "true" : "false"}
+                    disabled={!openAiConnected}
+                    onClick={() =>
+                      onOpenAiImageUseSubscriptionChange(!openaiImageUseSubscription)
+                    }
+                  >
+                    <span className="settings-pane__switch-thumb" />
+                  </button>
+                </div>
+              )}
+              {showImageKeyField && (
+                <ApiKeyField
+                  label={
+                    imageProvider === "nanoBanana2"
+                      ? "Gemini API key"
+                      : "OpenAI API key"
+                  }
+                  value={activeImageKey}
+                  placeholder={imageProvider === "nanoBanana2" ? "AIza..." : "sk-..."}
+                  onChange={
+                    imageProvider === "nanoBanana2"
+                      ? onNanoBananaApiKeyChange
+                      : onOpenAiImageApiKeyChange
+                  }
+                />
+              )}
             </section>
           )}
           {hasWebSearchTool && (
@@ -3343,6 +3408,7 @@ function normalizeToolSettings(settings: ToolSettings): ToolSettings {
   const planModePrompt = settings.planModePrompt ?? defaultPlanModePrompt;
   return {
     imageProvider,
+    openaiImageUseSubscription: settings.openaiImageUseSubscription === true,
     planModePrompt,
     defaultPlanModePrompt,
     openaiImageApiKey: settings.openaiImageApiKey ?? "",

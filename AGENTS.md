@@ -7,7 +7,6 @@ Code map:
 ├── Cargo.lock
 ├── Cargo.toml
 ├── index.html
-├── landing.html
 ├── LICENSE
 ├── package-lock.json
 ├── package.json
@@ -16,6 +15,12 @@ Code map:
 ├── tsconfig.node.json
 ├── vite.config.ts
 ├── .github
+│   ├── assets
+│   │   ├── architecture.png
+│   │   ├── harness.png
+│   │   ├── hero.png
+│   │   ├── screenshot.png
+│   │   └── swarm.png
 │   └── workflows
 │       └── release.yml
 ├── crates

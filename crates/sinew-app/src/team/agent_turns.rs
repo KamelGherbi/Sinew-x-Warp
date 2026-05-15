@@ -79,6 +79,7 @@ impl TeamTool {
                 CreateImageTool::with_settings(
                     self.workspace_root.clone(),
                     self.tool_settings.image_provider,
+                    self.tool_settings.openai_image_use_subscription,
                     self.tool_settings.openai_image_api_key(),
                     self.tool_settings.nano_banana_api_key(),
                 )

@@ -105,16 +105,12 @@ impl SubAgentTool {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "task": {
+                        "prompt": {
                             "type": "string",
-                            "description": "The concrete task to delegate to this sub-agent."
-                        },
-                        "context": {
-                            "type": "string",
-                            "description": "Optional focused context, constraints, or findings the sub-agent should know before working."
+                            "description": "The full free-form message to send to the sub-agent."
                         }
                     },
-                    "required": ["task"],
+                    "required": ["prompt"],
                     "additionalProperties": false
                 }),
             })
@@ -164,9 +160,9 @@ impl SubAgentTool {
                 return ToolRunResult::err(format!("invalid sub-agent input: {err}"), Vec::new())
             }
         };
-        let task = parsed.task.trim();
-        if task.is_empty() {
-            return ToolRunResult::err("task is required", Vec::new());
+        let prompt = parsed.prompt.trim();
+        if prompt.is_empty() {
+            return ToolRunResult::err("prompt is required", Vec::new());
         }
 
         let Some(provider) = self.providers.get(&agent.model.provider).cloned() else {
@@ -185,7 +181,7 @@ impl SubAgentTool {
             );
         }
 
-        let initial_message = subagent_task_message(task, parsed.context.as_deref());
+        let initial_message = prompt.to_string();
         let (child_cmd_tx, child_cmd_rx) = mpsc::unbounded_channel();
         self.cancel.register(child_cmd_tx);
         let child_mode = if mode == AgentMode::Goal {
@@ -219,6 +215,7 @@ impl SubAgentTool {
             create_image: Arc::new(CreateImageTool::with_settings(
                 self.workspace_root.clone(),
                 self.tool_settings.image_provider,
+                self.tool_settings.openai_image_use_subscription,
                 self.tool_settings.openai_image_api_key(),
                 self.tool_settings.nano_banana_api_key(),
             )),
@@ -273,17 +270,7 @@ impl SubAgentTool {
 
 #[derive(Debug, Deserialize)]
 struct SubAgentInput {
-    task: String,
-    context: Option<String>,
-}
-
-fn subagent_task_message(task: &str, context: Option<&str>) -> String {
-    let mut text = format!("Task:\n{task}");
-    if let Some(context) = context.map(str::trim).filter(|value| !value.is_empty()) {
-        text.push_str("\n\nContext:\n");
-        text.push_str(context);
-    }
-    text
+    prompt: String,
 }
 
 pub fn subagent_system_prompt(base: &str, agent: &SubAgentConfig) -> String {

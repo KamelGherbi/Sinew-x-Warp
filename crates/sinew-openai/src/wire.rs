@@ -6,8 +6,6 @@ pub struct ResponsesRequest<'a> {
     pub model: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub previous_response_id: Option<&'a str>,
     pub input: Vec<InputItem<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<WireTool<'a>>,

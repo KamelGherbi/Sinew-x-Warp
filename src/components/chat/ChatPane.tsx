@@ -3035,10 +3035,12 @@ export function ChatPane({
                   history.length === 0 ||
                   !modelEntry
                 }
-                title="Compact context"
                 aria-label="Compact context"
               >
                 <Icon icon="solar:archive-linear" width={16} height={16} />
+                <span className="composer__iconbtn-tip" role="tooltip" aria-hidden="true">
+                  Compaction
+                </span>
               </button>
               <ContextMeter state={visibleContextEstimate} />
               {view.status === "streaming" ? (
@@ -3804,10 +3806,10 @@ function subAgentTaskFromToolBlock(
   const value =
     typeof input?.description === "string" && input.description.trim()
       ? input.description
-      : typeof input?.task === "string" && input.task.trim()
-        ? input.task
-        : typeof input?.prompt === "string"
-          ? input.prompt
+      : typeof input?.prompt === "string" && input.prompt.trim()
+        ? input.prompt
+        : typeof input?.task === "string"
+          ? input.task
           : "";
   return value.trim() || undefined;
 }
@@ -4084,10 +4086,10 @@ function subAgentInitialMessageFromToolBlock(
     if (prompt && description) return `${description}\n\n${prompt}`;
     return prompt || description || undefined;
   }
-  const task = typeof input?.task === "string" ? input.task.trim() : "";
-  if (!task) return undefined;
-  const context = typeof input?.context === "string" ? input.context.trim() : "";
-  return context ? `Task:\n${task}\n\nContext:\n${context}` : `Task:\n${task}`;
+  const prompt = typeof input?.prompt === "string" ? input.prompt.trim() : "";
+  if (prompt) return prompt;
+  const legacyTask = typeof input?.task === "string" ? input.task.trim() : "";
+  return legacyTask || undefined;
 }
 
 function parseJsonRecord(value?: string): Record<string, unknown> | null {
