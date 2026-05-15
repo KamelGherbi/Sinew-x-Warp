@@ -4,6 +4,8 @@ use serde_json::Value;
 #[derive(Debug, Serialize)]
 pub struct ChatCompletionsRequest<'a> {
     pub model: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
     pub messages: Vec<WireMessage<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<WireTool<'a>>,
@@ -16,6 +18,14 @@ pub struct ChatCompletionsRequest<'a> {
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<StreamOptions>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct CacheControl {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,7 +47,7 @@ pub struct ReasoningConfig {
 pub enum WireMessage<'a> {
     System {
         role: &'static str,
-        content: &'a str,
+        content: WireContent,
     },
     User {
         role: &'static str,
@@ -69,8 +79,14 @@ pub enum WireContent {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WireContentBlock {
-    Text { text: String },
-    ImageUrl { image_url: WireImageUrl },
+    Text {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    ImageUrl {
+        image_url: WireImageUrl,
+    },
 }
 
 #[derive(Debug, Serialize)]

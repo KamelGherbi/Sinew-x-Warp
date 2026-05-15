@@ -19,6 +19,7 @@ const BASE_URL: &str = "https://openrouter.ai/api/v1";
 const USER_AGENT: &str = "Sinew/0.1";
 const APP_REFERER: &str = "https://github.com/Paseru/sinew";
 const APP_TITLE: &str = "Sinew";
+const CACHE_BREAKPOINTS: usize = 4;
 
 #[derive(Clone)]
 pub struct OpenRouterConfig {
@@ -137,23 +138,7 @@ impl Provider for OpenRouterProvider {
             )));
         }
 
-        let body = wire::ChatCompletionsRequest {
-            model: &request.model.name,
-            messages: to_wire_messages(&request, caps.supports_images)?,
-            tools: request.tools.iter().map(to_wire_tool).collect(),
-            max_tokens: Some(
-                request
-                    .max_output_tokens
-                    .unwrap_or(caps.max_output_tokens)
-                    .min(caps.max_output_tokens),
-            ),
-            temperature: request.temperature,
-            reasoning: reasoning_config(caps.supports_thinking, request.effective_effort()),
-            stream: true,
-            stream_options: Some(wire::StreamOptions {
-                include_usage: true,
-            }),
-        };
+        let body = build_chat_request(&request, &caps)?;
 
         let response = self
             .post("/chat/completions")
@@ -166,6 +151,72 @@ impl Provider for OpenRouterProvider {
         }
 
         Ok(map_stream(response.bytes_stream(), request.model.name))
+    }
+}
+
+fn build_chat_request<'a>(
+    request: &'a ProviderRequest,
+    caps: &ModelCapabilities,
+) -> Result<wire::ChatCompletionsRequest<'a>> {
+    let cache_mode = cache_mode_for_model(&request.model.name);
+    Ok(wire::ChatCompletionsRequest {
+        model: &request.model.name,
+        cache_control: top_level_cache_control(cache_mode),
+        messages: to_wire_messages(request, caps.supports_images, cache_mode)?,
+        tools: request.tools.iter().map(to_wire_tool).collect(),
+        max_tokens: Some(
+            request
+                .max_output_tokens
+                .unwrap_or(caps.max_output_tokens)
+                .min(caps.max_output_tokens),
+        ),
+        temperature: request.temperature,
+        reasoning: reasoning_config(caps.supports_thinking, request.effective_effort()),
+        stream: true,
+        stream_options: Some(wire::StreamOptions {
+            include_usage: true,
+        }),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CacheMode {
+    None,
+    AnthropicTopLevel,
+    ExplicitBreakpoints,
+}
+
+fn cache_mode_for_model(model: &str) -> CacheMode {
+    let model = model.trim().to_ascii_lowercase();
+    if model.starts_with("anthropic/") {
+        return CacheMode::AnthropicTopLevel;
+    }
+    if model.starts_with("google/gemini") || explicit_alibaba_cache_model(&model) {
+        return CacheMode::ExplicitBreakpoints;
+    }
+    CacheMode::None
+}
+
+fn explicit_alibaba_cache_model(model: &str) -> bool {
+    model.starts_with("deepseek/deepseek-v3.2")
+        || matches!(
+            model,
+            "qwen/qwen3-max"
+                | "qwen/qwen-plus"
+                | "qwen/qwen3.6-plus"
+                | "qwen/qwen3-coder-plus"
+                | "qwen/qwen3-coder-flash"
+        )
+}
+
+fn top_level_cache_control(mode: CacheMode) -> Option<wire::CacheControl> {
+    matches!(mode, CacheMode::AnthropicTopLevel).then(cache_control)
+}
+
+fn cache_control() -> wire::CacheControl {
+    wire::CacheControl {
+        kind: "ephemeral",
+        ttl: None,
     }
 }
 
@@ -203,8 +254,11 @@ fn to_wire_tool(tool: &ToolDescriptor) -> wire::WireTool<'_> {
 fn to_wire_messages<'a>(
     request: &'a ProviderRequest,
     supports_images: bool,
+    cache_mode: CacheMode,
 ) -> Result<Vec<wire::WireMessage<'a>>> {
     let mut messages = Vec::new();
+    let explicit_cache = matches!(cache_mode, CacheMode::ExplicitBreakpoints);
+    let mut cache_budget = if explicit_cache { CACHE_BREAKPOINTS } else { 0 };
     if let Some(system) = request
         .system_prompt
         .as_deref()
@@ -212,25 +266,137 @@ fn to_wire_messages<'a>(
     {
         messages.push(wire::WireMessage::System {
             role: "system",
-            content: system,
+            content: text_content(system, take_cache_breakpoint(&mut cache_budget, true)),
         });
     }
 
-    for message in &request.transcript {
+    let stable_message_count = request
+        .cache_stable_message_count
+        .unwrap_or(request.transcript.len())
+        .min(request.transcript.len());
+    let cached_messages = if explicit_cache {
+        cache_message_indices(&request.transcript[..stable_message_count], cache_budget)
+    } else {
+        Vec::new()
+    };
+
+    for (index, message) in request.transcript.iter().enumerate() {
+        let cache = cached_messages.contains(&index);
         match message.role {
-            Role::User => push_user_messages(message, &mut messages, supports_images),
-            Role::Assistant => push_assistant_message(message, &mut messages),
+            Role::User => push_user_messages(message, &mut messages, supports_images, cache),
+            Role::Assistant => push_assistant_message(message, &mut messages, cache),
         }
     }
 
     Ok(messages)
 }
 
+fn text_content(text: &str, cache: bool) -> wire::WireContent {
+    if cache {
+        wire::WireContent::Blocks(vec![wire::WireContentBlock::Text {
+            text: text.to_string(),
+            cache_control: Some(cache_control()),
+        }])
+    } else {
+        wire::WireContent::Text(text.to_string())
+    }
+}
+
+fn take_cache_breakpoint(budget: &mut usize, condition: bool) -> bool {
+    if !condition || *budget == 0 {
+        return false;
+    }
+    *budget -= 1;
+    true
+}
+
+fn cache_message_indices(history: &[ChatMessage], limit: usize) -> Vec<usize> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let mut indices = history
+        .iter()
+        .enumerate()
+        .rev()
+        .filter_map(|(index, message)| {
+            message
+                .parts
+                .iter()
+                .any(explicit_cacheable_part)
+                .then_some(index)
+        })
+        .take(limit)
+        .collect::<Vec<_>>();
+    indices.reverse();
+    indices
+}
+
+fn explicit_cacheable_part(part: &Part) -> bool {
+    if part_is_ui_only(part) {
+        return false;
+    }
+    match part {
+        Part::Text { text, .. } => !text.is_empty(),
+        Part::ToolResult { content, .. } => !content.is_empty(),
+        Part::Image { .. } | Part::Thinking { .. } | Part::ToolCall { .. } => false,
+    }
+}
+
+fn mark_last_cacheable_message_content(messages: &mut [wire::WireMessage<'_>]) -> bool {
+    for message in messages.iter_mut().rev() {
+        let content = match message {
+            wire::WireMessage::System { content, .. }
+            | wire::WireMessage::User { content, .. }
+            | wire::WireMessage::Tool { content, .. } => Some(content),
+            wire::WireMessage::Assistant { content, .. } => content.as_mut(),
+        };
+        if let Some(content) = content {
+            if mark_content_cache_control(content) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn mark_content_cache_control(content: &mut wire::WireContent) -> bool {
+    match content {
+        wire::WireContent::Text(text) => {
+            if text.is_empty() {
+                return false;
+            }
+            *content = wire::WireContent::Blocks(vec![wire::WireContentBlock::Text {
+                text: std::mem::take(text),
+                cache_control: Some(cache_control()),
+            }]);
+            true
+        }
+        wire::WireContent::Blocks(blocks) => {
+            for block in blocks.iter_mut().rev() {
+                if let wire::WireContentBlock::Text {
+                    text,
+                    cache_control: block_cache_control,
+                } = block
+                {
+                    if !text.is_empty() {
+                        *block_cache_control = Some(cache_control());
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+    }
+}
+
 fn push_user_messages<'a>(
     message: &'a ChatMessage,
     messages: &mut Vec<wire::WireMessage<'a>>,
     supports_images: bool,
+    cache: bool,
 ) {
+    let start = messages.len();
     let mut builder = ContentBuilder::new(supports_images);
     for part in &message.parts {
         if part_is_ui_only(part) {
@@ -268,6 +434,9 @@ fn push_user_messages<'a>(
         }
     }
     flush_user_builder(&mut builder, messages);
+    if cache {
+        mark_last_cacheable_message_content(&mut messages[start..]);
+    }
 }
 
 fn flush_user_builder<'a>(builder: &mut ContentBuilder, messages: &mut Vec<wire::WireMessage<'a>>) {
@@ -279,7 +448,11 @@ fn flush_user_builder<'a>(builder: &mut ContentBuilder, messages: &mut Vec<wire:
     }
 }
 
-fn push_assistant_message<'a>(message: &'a ChatMessage, messages: &mut Vec<wire::WireMessage<'a>>) {
+fn push_assistant_message<'a>(
+    message: &'a ChatMessage,
+    messages: &mut Vec<wire::WireMessage<'a>>,
+    cache: bool,
+) {
     let mut text = String::new();
     let mut reasoning = String::new();
     let mut tool_calls = Vec::new();
@@ -309,7 +482,12 @@ fn push_assistant_message<'a>(message: &'a ChatMessage, messages: &mut Vec<wire:
         return;
     }
 
-    let content = (!text.is_empty()).then_some(wire::WireContent::Text(text));
+    let mut content = (!text.is_empty()).then_some(wire::WireContent::Text(text));
+    if cache {
+        if let Some(content) = &mut content {
+            mark_content_cache_control(content);
+        }
+    }
     let reasoning = (!reasoning.is_empty()).then_some(reasoning);
     messages.push(wire::WireMessage::Assistant {
         role: "assistant",
@@ -342,6 +520,7 @@ impl ContentBuilder {
         if self.has_media {
             self.blocks.push(wire::WireContentBlock::Text {
                 text: text.to_string(),
+                cache_control: None,
             });
         } else {
             self.text.push_str(text);
@@ -361,6 +540,7 @@ impl ContentBuilder {
             if !self.text.is_empty() {
                 self.blocks.push(wire::WireContentBlock::Text {
                     text: std::mem::take(&mut self.text),
+                    cache_control: None,
                 });
             }
         }
@@ -703,4 +883,89 @@ async fn read_http_error(response: reqwest::Response) -> AppError {
 #[allow(dead_code)]
 fn _capabilities_for_catalog(model: &OpenRouterCatalogModel) -> ModelCapabilities {
     model_info::capabilities_from_catalog_model(model)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use sinew_core::{ChatMessage, ModelCapabilities, ModelRef, ProviderRequest};
+
+    use super::{build_chat_request, cache_mode_for_model, model_info, CacheMode};
+
+    fn caps(model: &str) -> ModelCapabilities {
+        model_info::capabilities_from_parts(model, 128_000, 8_192, false, false, true)
+    }
+
+    #[test]
+    fn anthropic_models_use_top_level_cache_control() {
+        let request = ProviderRequest::new(
+            ModelRef::new(model_info::PROVIDER_ID, "anthropic/claude-sonnet-4.6"),
+            vec![ChatMessage::user_text("hello")],
+        )
+        .with_system("stable system")
+        .with_cache_stable_message_count(1);
+        let body = build_chat_request(&request, &caps(&request.model.name)).unwrap();
+        let value = serde_json::to_value(&body).unwrap();
+
+        assert_eq!(value["cache_control"], json!({ "type": "ephemeral" }));
+        assert_eq!(value["messages"][0]["content"], "stable system");
+        assert_eq!(value["messages"][1]["content"], "hello");
+    }
+
+    #[test]
+    fn explicit_cache_models_mark_only_stable_messages() {
+        let request = ProviderRequest::new(
+            ModelRef::new(model_info::PROVIDER_ID, "google/gemini-2.5-pro"),
+            vec![
+                ChatMessage::user_text("stable reference"),
+                ChatMessage::user_text("current question"),
+            ],
+        )
+        .with_cache_stable_message_count(1);
+        let body = build_chat_request(&request, &caps(&request.model.name)).unwrap();
+        let value = serde_json::to_value(&body).unwrap();
+
+        assert!(value.get("cache_control").is_none());
+        assert_eq!(
+            value["messages"][0]["content"],
+            json!([
+                {
+                    "type": "text",
+                    "text": "stable reference",
+                    "cache_control": { "type": "ephemeral" }
+                }
+            ])
+        );
+        assert_eq!(value["messages"][1]["content"], "current question");
+    }
+
+    #[test]
+    fn automatic_cache_models_do_not_emit_cache_control() {
+        let request = ProviderRequest::new(
+            ModelRef::new(model_info::PROVIDER_ID, "openai/gpt-5"),
+            vec![ChatMessage::user_text("hello")],
+        )
+        .with_cache_stable_message_count(1);
+        let body = build_chat_request(&request, &caps(&request.model.name)).unwrap();
+        let value = serde_json::to_value(&body).unwrap();
+
+        assert!(value.get("cache_control").is_none());
+        assert_eq!(value["messages"][0]["content"], "hello");
+    }
+
+    #[test]
+    fn alibaba_cache_detection_avoids_unsupported_snapshots() {
+        assert_eq!(
+            cache_mode_for_model("qwen/qwen3-coder-plus"),
+            CacheMode::ExplicitBreakpoints
+        );
+        assert_eq!(
+            cache_mode_for_model("deepseek/deepseek-v3.2"),
+            CacheMode::ExplicitBreakpoints
+        );
+        assert_eq!(
+            cache_mode_for_model("qwen/qwen3.5-plus-02-15"),
+            CacheMode::None
+        );
+    }
 }

@@ -1915,9 +1915,7 @@ textarea {
   padding: 18px;
   border: 1px solid var(--line-1);
   border-radius: var(--r-med);
-  background:
-    linear-gradient(135deg, rgba(255,255,255,0.035), rgba(255,255,255,0)),
-    var(--bg-1);
+  background: var(--bg-1);
 }
 
 .settings-pane__provider-main {
@@ -2024,45 +2022,17 @@ textarea {
 
 .settings-pane__provider-detail {
   display: grid;
-  gap: 12px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line-1);
-}
-
-.settings-pane__openrouter-key {
-  max-width: 520px;
-}
-
-.settings-pane__secret-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.settings-pane__secret-row input {
-  flex: 1 1 auto;
-}
-
-.settings-pane__openrouter-search,
-.settings-pane__openrouter-list {
-  display: grid;
   gap: 8px;
-  max-width: 620px;
 }
 
 .settings-pane__openrouter-results,
 .settings-pane__openrouter-list {
-  padding: 8px;
+  display: grid;
+  gap: 0;
+  background: var(--bg-2);
   border: 1px solid var(--line-1);
   border-radius: var(--r-med);
-  background: rgba(255,255,255,0.018);
-}
-
-.settings-pane__openrouter-list-head {
-  color: var(--text-3);
-  font-family: var(--font-ui);
-  font-size: var(--fs-xs);
-  font-weight: 600;
+  overflow: hidden;
 }
 
 .settings-pane__openrouter-row {
@@ -2071,7 +2041,7 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 6px 0;
+  padding: 6px 10px;
   border-top: 1px solid var(--line-1);
   color: var(--text-1);
   font-family: var(--font-ui);
@@ -2080,7 +2050,6 @@ textarea {
 
 .settings-pane__openrouter-row:first-child {
   border-top: 0;
-  padding-top: 0;
 }
 
 .settings-pane__openrouter-row > span:first-child {
@@ -2091,16 +2060,11 @@ textarea {
 }
 
 .settings-pane__openrouter-added,
-.settings-pane__openrouter-hint,
-.settings-pane__openrouter-empty {
+.settings-pane__openrouter-hint {
+  padding: 4px 10px;
   color: var(--text-3);
   font-family: var(--font-ui);
   font-size: var(--fs-xs);
-}
-
-.settings-pane__openrouter-empty {
-  padding: 2px 0;
-  line-height: 1.45;
 }
 
 /* ----- MCP editor card ----- */

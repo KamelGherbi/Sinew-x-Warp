@@ -1647,6 +1647,8 @@ function OpenRouterProviderCard({
         error: null,
       });
       onChanged();
+      setQuery("");
+      setSearchError(null);
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -1686,39 +1688,14 @@ function OpenRouterProviderCard({
             </span>
           </div>
           <p>Use any OpenRouter model with your own API key.</p>
-          {connected && (
-            <div className="settings-pane__provider-meta">
-              <span>
-                {models.length} model{models.length === 1 ? "" : "s"} added
-              </span>
-            </div>
-          )}
           {error && <div className="settings-pane__provider-error">{error}</div>}
-        </div>
-        <div className="settings-pane__provider-actions">
-          {connected ? (
-            <button
-              type="button"
-              className="settings-pane__btn"
-              onClick={onDisconnect}
-              disabled={busy}
-              title="Remove the saved API key"
-            >
-              <Icon icon="solar:trash-bin-trash-linear" width={13} height={13} />
-              <span>{busy ? "Removing..." : "Remove key"}</span>
-            </button>
-          ) : (
-            <span className="settings-pane__openrouter-hint">
-              {loading ? "Refreshing…" : validating ? "Validating…" : "Paste a key to connect"}
-            </span>
-          )}
         </div>
       </div>
 
       <div className="settings-pane__provider-detail">
-        <label className="settings-pane__field settings-pane__openrouter-key">
-          <span>API key</span>
-          <div className="settings-pane__secret-row">
+        <label className="settings-pane__tool-credential">
+          <span className="settings-pane__tool-credential-label">API key</span>
+          <div className="settings-pane__tool-credential-field">
             <input
               type={revealed ? "text" : "password"}
               value={apiKey}
@@ -1727,47 +1704,57 @@ function OpenRouterProviderCard({
               autoComplete="off"
               spellCheck={false}
             />
-            <button
-              type="button"
-              className="settings-pane__icon-btn"
-              onClick={() => setRevealed((value) => !value)}
-              title={revealed ? "Hide API key" : "Reveal API key"}
-              aria-label={revealed ? "Hide API key" : "Reveal API key"}
-            >
-              <Icon
-                icon={revealed ? "solar:eye-closed-linear" : "solar:eye-linear"}
-                width={14}
-                height={14}
-              />
-            </button>
+            <div className="settings-pane__tool-credential-actions">
+              <button
+                type="button"
+                className="settings-pane__icon-btn"
+                onClick={() => setRevealed((value) => !value)}
+                title={revealed ? "Hide key" : "Show key"}
+                aria-label={revealed ? "Hide key" : "Show key"}
+              >
+                <Icon
+                  icon={revealed ? "solar:eye-closed-linear" : "solar:eye-linear"}
+                  width={13}
+                  height={13}
+                />
+              </button>
+              {connected && (
+                <button
+                  type="button"
+                  className="settings-pane__icon-btn"
+                  onClick={onDisconnect}
+                  disabled={busy}
+                  title="Remove API key"
+                  aria-label="Remove API key"
+                >
+                  <Icon icon="solar:trash-bin-trash-linear" width={13} height={13} />
+                </button>
+              )}
+            </div>
           </div>
         </label>
 
-        <div className="settings-pane__openrouter-search">
-          <label className="settings-pane__field">
-            <span>Search models</span>
+        <label className="settings-pane__tool-credential">
+          <span className="settings-pane__tool-credential-label">Search</span>
+          <div className="settings-pane__tool-credential-field">
             <input
+              type="text"
               value={query}
               disabled={!searchEnabled}
-              placeholder={searchEnabled ? "Type a model name…" : "Save a valid key to enable search"}
+              placeholder={searchEnabled ? "Type a model name…" : "Save a valid key first"}
               onChange={(event) => setQuery(event.target.value)}
             />
-          </label>
+          </div>
+        </label>
+
+        {searchEnabled && query.trim() !== "" && (
           <div className="settings-pane__openrouter-results" aria-live="polite">
-            {!searchEnabled ? (
-              <div className="settings-pane__openrouter-empty">
-                Search is available once a valid key is saved.
-              </div>
-            ) : !query.trim() ? (
-              <div className="settings-pane__openrouter-empty">
-                Search the OpenRouter catalog to add models.
-              </div>
-            ) : searching ? (
-              <div className="settings-pane__openrouter-empty">Searching…</div>
+            {searching ? (
+              <div className="settings-pane__openrouter-hint">Searching…</div>
             ) : searchError ? (
               <div className="settings-pane__provider-error">{searchError}</div>
             ) : results.length === 0 ? (
-              <div className="settings-pane__openrouter-empty">No matching model.</div>
+              <div className="settings-pane__openrouter-hint">No matching model.</div>
             ) : (
               results.map((model) => {
                 const added = modelIds.has(model.id);
@@ -1776,7 +1763,7 @@ function OpenRouterProviderCard({
                   <div key={model.id} className="settings-pane__openrouter-row">
                     <span title={model.id}>{label}</span>
                     {added ? (
-                      <span className="settings-pane__openrouter-added">Already added</span>
+                      <span className="settings-pane__openrouter-added">Added</span>
                     ) : (
                       <button
                         type="button"
@@ -1793,16 +1780,11 @@ function OpenRouterProviderCard({
               })
             )}
           </div>
-        </div>
+        )}
 
-        <div className="settings-pane__openrouter-list">
-          <div className="settings-pane__openrouter-list-head">
-            <span>Added models</span>
-          </div>
-          {models.length === 0 ? (
-            <div className="settings-pane__openrouter-empty">No models added yet.</div>
-          ) : (
-            models.map((model) => {
+        {models.length > 0 && (
+          <div className="settings-pane__openrouter-list">
+            {models.map((model) => {
               const label = sanitizeOpenRouterName(model.name) || model.id;
               return (
                 <div key={model.id} className="settings-pane__openrouter-row">
@@ -1819,9 +1801,9 @@ function OpenRouterProviderCard({
                   </button>
                 </div>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        )}
       </div>
     </section>
   );
