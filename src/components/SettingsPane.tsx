@@ -692,6 +692,25 @@ export function SettingsPane({ workspacePath }: Props) {
     }
   }, [jsonText]);
 
+  const probeMcp = useCallback(async () => {
+    setProbing(true);
+    setStatus(null);
+    try {
+      const nextProbes = await api.probeMcpTools();
+      setProbes(nextProbes);
+      const failures = nextProbes.filter((probe) => probe.enabled && !probe.ok).length;
+      setStatus(
+        failures
+          ? `${failures} server${failures === 1 ? "" : "s"} failed`
+          : "Probe complete",
+      );
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setProbing(false);
+    }
+  }, []);
+
   const toggleEnabled = useCallback(
     (id: string) => {
       if (parseError) return;
@@ -1133,6 +1152,7 @@ export function SettingsPane({ workspacePath }: Props) {
             jsonText={jsonText}
             onJsonChange={(value) => setJsonText(value)}
             onSave={() => void saveAndDetect()}
+            onProbe={() => void probeMcp()}
             servers={settings.servers}
             probes={probes}
             onSelectServer={setSelectedServerId}
@@ -2228,6 +2248,7 @@ type McpSectionProps = {
   jsonText: string;
   onJsonChange: (value: string) => void;
   onSave: () => void;
+  onProbe: () => void;
   servers: McpServerConfig[];
   probes: McpServerProbe[];
   onSelectServer: (id: string) => void;
@@ -2248,6 +2269,7 @@ function McpSection({
   jsonText,
   onJsonChange,
   onSave,
+  onProbe,
   servers,
   probes,
   onSelectServer,
@@ -2258,6 +2280,7 @@ function McpSection({
   onMount,
 }: McpSectionProps) {
   const detailOpen = Boolean(selectedServer);
+  const hasEnabledServer = servers.some((server) => server.enabled);
 
   return (
     <>
@@ -2279,9 +2302,22 @@ function McpSection({
           <button
             type="button"
             className="settings-pane__btn"
+            onClick={onProbe}
+            disabled={loading || saving || probing || !hasEnabledServer}
+          >
+            <Icon
+              icon={probing ? "solar:refresh-linear" : "solar:play-circle-linear"}
+              width={13}
+              height={13}
+            />
+            <span>{probing ? "Probing…" : "Probe now"}</span>
+          </button>
+          <button
+            type="button"
+            className="settings-pane__btn"
             data-primary="true"
             onClick={onSave}
-            disabled={loading || saving || !dirty}
+            disabled={loading || saving || probing || !dirty}
           >
             <Icon
               icon={saving ? "solar:refresh-linear" : "solar:diskette-linear"}
