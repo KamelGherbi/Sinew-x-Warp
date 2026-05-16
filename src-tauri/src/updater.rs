@@ -33,6 +33,13 @@ pub struct UpdateInfo {
     pub notes: Option<String>,
     /// RFC-3339 publish date, if the manifest provided one.
     pub date: Option<String>,
+    /// True for this fork/custom build. Official upstream updates should not be
+    /// installed over it because they would replace the customized app bundle.
+    pub custom_build: bool,
+    /// True when installing the discovered update is intentionally blocked.
+    pub update_protected: bool,
+    /// Human-readable reason shown by the frontend when an update is blocked.
+    pub protection_reason: Option<String>,
 }
 
 /// Stores the last `Update` returned by a successful `check()` so that
@@ -55,6 +62,8 @@ impl UpdaterState {
 
 const PROGRESS_EVENT: &str = "updater://progress";
 const FINISHED_EVENT: &str = "updater://finished";
+const CUSTOM_BUILD: bool = true;
+const CUSTOM_BUILD_PROTECTION_REASON: &str = "This is a custom Sinew build. Installing the official upstream update would replace your custom changes. Merge the new release into your fork and rebuild from your custom source instead.";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +99,9 @@ pub async fn updater_check(
                     // `OffsetDateTime`'s Display impl yields an ISO-8601 ish
                     // representation already; that's plenty for the UI.
                     date: update.date.map(|d| d.to_string()),
+                    custom_build: CUSTOM_BUILD,
+                    update_protected: CUSTOM_BUILD,
+                    protection_reason: CUSTOM_BUILD.then(|| CUSTOM_BUILD_PROTECTION_REASON.into()),
                 };
                 if let Ok(mut guard) = pending.lock() {
                     *guard = Some(update);
@@ -106,6 +118,9 @@ pub async fn updater_check(
                     version: None,
                     notes: None,
                     date: None,
+                    custom_build: CUSTOM_BUILD,
+                    update_protected: false,
+                    protection_reason: None,
                 })
             }
             Err(err) => Err(format!("update check failed: {err}")),
@@ -121,6 +136,9 @@ pub async fn updater_check(
             version: None,
             notes: None,
             date: None,
+            custom_build: CUSTOM_BUILD,
+            update_protected: false,
+            protection_reason: None,
         })
     }
 }
@@ -139,6 +157,10 @@ pub async fn updater_download_and_install(
 ) -> Result<(), String> {
     #[cfg(desktop)]
     {
+        if CUSTOM_BUILD {
+            return Err(CUSTOM_BUILD_PROTECTION_REASON.into());
+        }
+
         let pending = state.pending.clone();
 
         // Pull the cached Update or refresh.

@@ -11,9 +11,13 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Icon } from "@iconify/react";
 import { api } from "../lib/ipc";
 import { modelRefWithThinking, thinkingFromRef } from "../lib/models";
+import { workspaceSessionKey } from "../lib/sessions";
 import { Splitter } from "./Splitter";
 import { FileTree, type FileTreeHandle } from "./FileTree";
-import { ConversationList } from "./ConversationList";
+import {
+  ConversationList,
+  type ConversationListProject,
+} from "./ConversationList";
 import { EditorPane } from "./EditorPane";
 import { SettingsPane } from "./SettingsPane";
 import { TerminalPanel } from "./TerminalPanel";
@@ -37,12 +41,36 @@ import type {
   WorkspaceBootstrap,
   WorkspaceEntry,
   WorkspaceFileChangedPayload,
+  WorkspaceSession,
 } from "../types";
 
 type Props = {
   bootstrap: WorkspaceBootstrap;
   onSwitchWorkspace: () => void;
   onBootstrapReplace: (b: WorkspaceBootstrap) => void;
+  sessions?: WorkspaceSession[];
+  activeSessionKey?: string | null;
+  onSelectSession?: (
+    workspacePath: string,
+    conversationId: string,
+  ) => void | Promise<void>;
+  onOpenWorkspace?: () => void;
+  onOpenProject?: () => void;
+  onBackToWelcome?: () => void;
+  onCreateConversationSession?: (workspacePath?: string) => void | Promise<void>;
+  onRenameConversationSession?: (
+    workspacePath: string,
+    conversationId: string,
+    title: string,
+  ) => void | Promise<void>;
+  onDeleteConversationSession?: (
+    workspacePath: string,
+    conversationId: string,
+  ) => void | Promise<void>;
+  onWorkspaceConversationsReplace?: (
+    workspacePath: string,
+    conversations: ConversationSummary[],
+  ) => void;
 };
 
 const INITIAL_LEFT = 280;
@@ -55,15 +83,29 @@ const MIN_TERMINAL_HEIGHT = 140;
 const MAX_TERMINAL_RATIO = 0.92;
 const TERMINAL_OPEN_EVENT = "terminal-open-requested";
 const SEND_BUSY_RETRY_DELAYS_MS = [160, 320, 640, 1000, 1400];
+const EMPTY_STREAMING_IDS: ReadonlySet<string> = new Set<string>();
+const LAYOUT_VIEW_MODE_KEY = "sinew.layout.viewMode";
 const COMPACTION_CONTINUATION_PROMPT =
   "Continue from the compacted context. Do not repeat completed work. Pick up exactly where you left off and proceed with the next useful step.";
 const GOAL_COMPACTION_CONTINUATION_PROMPT =
   "Continue working toward the active goal from the compacted context. Do not repeat completed work. If the goal is now truly complete, audit it and call update_goal with status complete.";
 
+type ViewMode = "chat" | "editor" | "all";
+
 export function Workspace({
   bootstrap,
   onSwitchWorkspace,
   onBootstrapReplace,
+  sessions,
+  activeSessionKey,
+  onSelectSession,
+  onOpenWorkspace,
+  onOpenProject,
+  onBackToWelcome: _onBackToWelcome,
+  onCreateConversationSession,
+  onRenameConversationSession,
+  onDeleteConversationSession,
+  onWorkspaceConversationsReplace,
 }: Props) {
   const workspacePath = bootstrap.workspace.path;
 
@@ -76,14 +118,18 @@ export function Workspace({
   const [, setGlobalModeModelSettings] = useState(
     bootstrap.modeModelSettings,
   );
-  const [streamingConversationIds, setStreamingConversationIds] = useState<
-    Set<string>
-  >(() => new Set());
-  const [streamingModelsByConversation, setStreamingModelsByConversation] =
+  const [streamingConversationIdsByWorkspace, setStreamingConversationIdsByWorkspace] =
+    useState<Map<string, Set<string>>>(() => new Map());
+  const [streamingModelsBySession, setStreamingModelsBySession] =
     useState<Map<string, SavedConversation["model"]>>(() => new Map());
   const activeConvIdRef = useRef(bootstrap.activeConversation.id);
   const workspacePathRef = useRef(workspacePath);
   const navigationSeqRef = useRef(0);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => loadLayoutViewMode());
+
+  useEffect(() => {
+    saveLayoutViewMode(viewMode);
+  }, [viewMode]);
 
   useEffect(() => {
     activeConvIdRef.current = activeConv.id;
@@ -104,39 +150,73 @@ export function Workspace({
 
   useEffect(() => {
     navigationSeqRef.current += 1;
-    setStreamingConversationIds(new Set());
-    setStreamingModelsByConversation(new Map());
   }, [workspacePath]);
 
-  const markConversationStreaming = useCallback((id: string, active: boolean) => {
-    if (!id) return;
-    setStreamingConversationIds((prev) => {
-      if (prev.has(id) === active) return prev;
-      const next = new Set(prev);
-      if (active) {
-        next.add(id);
-      } else {
-        next.delete(id);
-      }
-      return next;
-    });
-    if (!active) {
-      setStreamingModelsByConversation((prev) => {
-        if (!prev.has(id)) return prev;
+  const streamingConversationIds = useMemo<ReadonlySet<string>>(
+    () => streamingConversationIdsByWorkspace.get(workspacePath) ?? EMPTY_STREAMING_IDS,
+    [streamingConversationIdsByWorkspace, workspacePath],
+  );
+
+  const markConversationStreaming = useCallback(
+    (workspacePathOrId: string, conversationIdOrActive: string | boolean, maybeActive?: boolean) => {
+      const targetWorkspacePath =
+        typeof maybeActive === "boolean" ? workspacePathOrId : workspacePathRef.current;
+      const id =
+        typeof maybeActive === "boolean"
+          ? String(conversationIdOrActive)
+          : workspacePathOrId;
+      const active =
+        typeof maybeActive === "boolean" ? maybeActive : Boolean(conversationIdOrActive);
+      if (!targetWorkspacePath || !id) return;
+
+      setStreamingConversationIdsByWorkspace((prev) => {
+        const current = prev.get(targetWorkspacePath) ?? EMPTY_STREAMING_IDS;
+        if (current.has(id) === active) return prev;
+        const nextIds = new Set(current);
+        if (active) {
+          nextIds.add(id);
+        } else {
+          nextIds.delete(id);
+        }
         const next = new Map(prev);
-        next.delete(id);
+        if (nextIds.size > 0) {
+          next.set(targetWorkspacePath, nextIds);
+        } else {
+          next.delete(targetWorkspacePath);
+        }
         return next;
       });
-    }
-  }, []);
+
+      if (!active) {
+        const sessionKey = workspaceSessionKey(targetWorkspacePath, id);
+        setStreamingModelsBySession((prev) => {
+          if (!prev.has(sessionKey)) return prev;
+          const next = new Map(prev);
+          next.delete(sessionKey);
+          return next;
+        });
+      }
+    },
+    [],
+  );
 
   const markConversationStreamingModel = useCallback(
-    (id: string, model: SavedConversation["model"], thinking: ThinkingLevel) => {
-      if (!id) return;
+    (
+      workspacePathOrId: string,
+      conversationIdOrModel: string | SavedConversation["model"],
+      modelOrThinking: SavedConversation["model"] | ThinkingLevel,
+      maybeThinking?: ThinkingLevel,
+    ) => {
+      const targetWorkspacePath = maybeThinking ? workspacePathOrId : workspacePathRef.current;
+      const id = maybeThinking ? String(conversationIdOrModel) : workspacePathOrId;
+      const model = (maybeThinking ? modelOrThinking : conversationIdOrModel) as SavedConversation["model"];
+      const thinking = (maybeThinking ?? modelOrThinking) as ThinkingLevel;
+      if (!targetWorkspacePath || !id) return;
       const selected = modelRefWithThinking(model, thinking);
-      setStreamingModelsByConversation((prev) => {
+      const sessionKey = workspaceSessionKey(targetWorkspacePath, id);
+      setStreamingModelsBySession((prev) => {
         const next = new Map(prev);
-        next.set(id, selected);
+        next.set(sessionKey, selected);
         return next;
       });
     },
@@ -164,14 +244,19 @@ export function Workspace({
         if (loaded.id !== id || loaded.workspaceId !== workspacePath) return;
         activeConvIdRef.current = loaded.id;
         setActiveConv(loaded);
+        onSelectSession?.(workspacePath, id);
       } catch (err) {
         console.error(err);
       }
     },
-    [workspacePath, activeConv.id],
+    [workspacePath, activeConv.id, onSelectSession],
   );
 
   const createConversation = useCallback(async () => {
+    if (onCreateConversationSession) {
+      await onCreateConversationSession(workspacePath);
+      return;
+    }
     const seq = ++navigationSeqRef.current;
     try {
       const next = await api.createConversation(workspacePath);
@@ -181,21 +266,23 @@ export function Workspace({
       setConversations(next.conversations);
       setActiveConv(next.activeConversation);
       setGlobalModeModelSettings(next.modeModelSettings);
+      onBootstrapReplace(next);
     } catch (err) {
       console.error(err);
     }
-  }, [workspacePath]);
+  }, [workspacePath, onBootstrapReplace, onCreateConversationSession]);
 
   const renameConversation = useCallback(
     async (id: string, title: string) => {
       try {
         const next = await api.renameConversation(workspacePath, id, title);
         setConversations(next);
+        onWorkspaceConversationsReplace?.(workspacePath, next);
       } catch (err) {
         console.error(err);
       }
     },
-    [workspacePath],
+    [workspacePath, onWorkspaceConversationsReplace],
   );
 
   const refreshConversationAfterMessageStart = useCallback(
@@ -205,6 +292,7 @@ export function Workspace({
         api.listConversations(workspaceAtRequest),
       ]);
       if (workspacePathRef.current !== workspaceAtRequest) return;
+      onWorkspaceConversationsReplace?.(workspaceAtRequest, summaries);
 
       startTransition(() => {
         if (
@@ -219,7 +307,7 @@ export function Workspace({
         setConversations(summaries);
       });
     },
-    [],
+    [onWorkspaceConversationsReplace],
   );
 
   const applyOptimisticConversationTitle = useCallback(
@@ -248,6 +336,10 @@ export function Workspace({
   const deleteConversation = useCallback(
     async (id: string) => {
       if (streamingConversationIds.has(id)) return;
+      if (onDeleteConversationSession) {
+        await onDeleteConversationSession(workspacePath, id);
+        return;
+      }
       const seq = ++navigationSeqRef.current;
       try {
         const next = await api.deleteConversation(workspacePath, id);
@@ -265,14 +357,13 @@ export function Workspace({
         }
       }
     },
-    [workspacePath, onBootstrapReplace, streamingConversationIds],
+    [workspacePath, onBootstrapReplace, streamingConversationIds, onDeleteConversationSession],
   );
 
   // ---------------- Editor tabs ----------------
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activeTabIndex, setActiveTabIndex] = useState<number>(-1);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsActive, setSettingsActive] = useState(false);
   const [fileTreeRefreshToken, setFileTreeRefreshToken] = useState(0);
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
   const [pendingRootCreate, setPendingRootCreate] = useState<
@@ -427,6 +518,7 @@ export function Workspace({
       reveal?: Omit<EditorRevealTarget, "id" | "relativePath">,
     ) => {
       if (entry.kind !== "file") return;
+      setViewMode("all");
       const queueReveal = () => {
         if (!reveal) return;
         setEditorRevealTarget({
@@ -440,7 +532,6 @@ export function Workspace({
       );
       if (existing >= 0) {
         setActiveTabIndex(existing);
-        setSettingsActive(false);
         queueReveal();
         return;
       }
@@ -458,12 +549,10 @@ export function Workspace({
           );
           if (existingIndex >= 0) {
             setActiveTabIndex(existingIndex);
-            setSettingsActive(false);
             return prev;
           }
           const next = [...prev, newTab];
           setActiveTabIndex(next.length - 1);
-          setSettingsActive(false);
           return next;
         });
         queueReveal();
@@ -476,18 +565,27 @@ export function Workspace({
 
   const activateFileTab = useCallback((index: number) => {
     setActiveTabIndex(index);
-    setSettingsActive(false);
   }, []);
 
   const openSettings = useCallback(() => {
     setSettingsOpen(true);
-    setSettingsActive(true);
   }, []);
 
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
-    setSettingsActive(false);
   }, []);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeSettings();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [closeSettings, settingsOpen]);
 
   const openChatFile = useCallback(
     (rawPath: string) => {
@@ -526,7 +624,6 @@ export function Workspace({
       );
       if (existing >= 0) {
         setActiveTabIndex(existing);
-        setSettingsActive(false);
         queueReveal();
         return;
       }
@@ -545,12 +642,10 @@ export function Workspace({
           );
           if (existingIndex >= 0) {
             setActiveTabIndex(existingIndex);
-            setSettingsActive(false);
             return prev;
           }
           const next = [...prev, newTab];
           setActiveTabIndex(next.length - 1);
-          setSettingsActive(false);
           return next;
         });
         queueReveal();
@@ -739,7 +834,6 @@ export function Workspace({
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
-        if (settingsActive) return;
         if (activeTabIndex >= 0) void saveTab(activeTabIndex);
         return;
       }
@@ -754,12 +848,12 @@ export function Workspace({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeTabIndex, saveTab, settingsActive]);
+  }, [activeTabIndex, saveTab]);
 
   // ---------------- Event subscriptions ----------------
 
   const agentSubsRef = useRef<
-    Set<(conversationId: string, event: AgentEvent) => void>
+    Set<(conversationId: string, event: AgentEvent, workspacePath: string) => void>
   >(new Set());
 
   useEffect(() => {
@@ -770,14 +864,9 @@ export function Workspace({
         "agent-event",
         (event) => {
           const payload = event.payload;
-          if (
-            payload.workspaceId &&
-            payload.workspaceId !== workspacePathRef.current
-          ) {
-            return;
-          }
+          const payloadWorkspacePath = payload.workspaceId ?? workspacePathRef.current;
           for (const handler of agentSubsRef.current) {
-            handler(payload.conversationId, payload.event);
+            handler(payload.conversationId, payload.event, payloadWorkspacePath);
           }
         },
       );
@@ -795,31 +884,45 @@ export function Workspace({
 
   const subscribeEvents = useCallback(
     (handler: (conversationId: string, event: AgentEvent) => void) => {
-      agentSubsRef.current.add(handler);
+      const scopedHandler = (
+        conversationId: string,
+        event: AgentEvent,
+        eventWorkspacePath: string,
+      ) => {
+        if (eventWorkspacePath !== workspacePathRef.current) return;
+        handler(conversationId, event);
+      };
+      agentSubsRef.current.add(scopedHandler);
       return () => {
-        agentSubsRef.current.delete(handler);
+        agentSubsRef.current.delete(scopedHandler);
       };
     },
     [],
   );
 
   useEffect(() => {
-    const handler = async (conversationId: string, event: AgentEvent) => {
+    const handler = async (
+      conversationId: string,
+      event: AgentEvent,
+      eventWorkspacePath: string,
+    ) => {
+      const isActiveWorkspace = eventWorkspacePath === workspacePathRef.current;
       const fileChanges = fileChangesFromAgentEvent(event);
-      if (fileChanges.length > 0) {
+      if (isActiveWorkspace && fileChanges.length > 0) {
         refreshChangedFiles(fileChanges);
       }
 
       if (event.type === "turn_started") {
-        markConversationStreaming(conversationId, true);
+        markConversationStreaming(eventWorkspacePath, conversationId, true);
         return;
       }
       if (event.type !== "turn_finished") {
         return;
       }
-      markConversationStreaming(conversationId, false);
-      const workspaceAtRequest = workspacePathRef.current;
-      const shouldLoadActive = conversationId === activeConvIdRef.current;
+      markConversationStreaming(eventWorkspacePath, conversationId, false);
+      const workspaceAtRequest = eventWorkspacePath;
+      const shouldLoadActive =
+        isActiveWorkspace && conversationId === activeConvIdRef.current;
       try {
         const summariesPromise = api.listConversations(workspaceAtRequest);
         const loadedPromise =
@@ -830,6 +933,8 @@ export function Workspace({
           loadedPromise,
           summariesPromise,
         ]);
+        onWorkspaceConversationsReplace?.(workspaceAtRequest, summaries);
+        if (!isActiveWorkspace) return;
         startTransition(() => {
           if (workspacePathRef.current !== workspaceAtRequest) return;
           if (
@@ -850,7 +955,7 @@ export function Workspace({
     return () => {
       agentSubsRef.current.delete(handler);
     };
-  }, [markConversationStreaming, refreshChangedFiles]);
+  }, [markConversationStreaming, onWorkspaceConversationsReplace, refreshChangedFiles]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1371,7 +1476,7 @@ export function Workspace({
   );
 
   const activeFilePath =
-    !settingsActive && activeTabIndex >= 0 && tabs[activeTabIndex]
+    activeTabIndex >= 0 && tabs[activeTabIndex]
       ? tabs[activeTabIndex].relativePath
       : null;
   const terminalVisible = terminalAvailable && terminalOpen;
@@ -1379,17 +1484,186 @@ export function Workspace({
     activeConv.id,
   );
   const activeStreamingModel = activeConversationIsStreaming
-    ? streamingModelsByConversation.get(activeConv.id) ?? activeConv.model
+    ? streamingModelsBySession.get(workspaceSessionKey(workspacePath, activeConv.id)) ?? activeConv.model
     : null;
   const chatModeModelSettings = activeConv.modeModelSettings;
+  const effectiveActiveSessionKey =
+    activeSessionKey ?? workspaceSessionKey(workspacePath, activeConv.id);
+  const openProjectPicker = onOpenProject ?? onOpenWorkspace ?? onSwitchWorkspace;
+  const sidebarVisible = true;
+  const effectiveCenterVisible = viewMode !== "chat";
+  const chatVisible = viewMode !== "editor";
+  const chatExpanded = viewMode === "chat";
+  const detachedTerminal = !effectiveCenterVisible;
+  const titlebarActionsStyle = {
+    left: sidebarVisible ? leftWidth : 8,
+    right: chatVisible && !chatExpanded ? rightWidth : 180,
+  };
+  const conversationProjects = useMemo<ConversationListProject[] | undefined>(() => {
+    if (!sessions) return undefined;
+
+    const projects = new Map<
+      string,
+      {
+        key: string;
+        name: string;
+        path: string;
+        conversations: ConversationListProject["conversations"];
+        streamingIds: Set<string>;
+      }
+    >();
+
+    const seenConversationKeys = new Set<string>();
+
+    const ensureProject = (workspace: WorkspaceBootstrap["workspace"]) => {
+      const project =
+        projects.get(workspace.path) ??
+        {
+          key: workspace.path,
+          name: workspace.name,
+          path: workspace.path,
+          conversations: [],
+          streamingIds: new Set<string>(),
+        };
+      projects.set(workspace.path, project);
+      return project;
+    };
+
+    for (const session of sessions) {
+      const sessionWorkspace = session.bootstrap.workspace;
+      const sessionConversation =
+        session.key === effectiveActiveSessionKey
+          ? activeConv
+          : session.bootstrap.activeConversation;
+      const sessionConversations =
+        sessionWorkspace.path === workspacePath
+          ? conversations
+          : session.bootstrap.conversations;
+      const summary = sessionConversations.find(
+        (conversation) => conversation.id === sessionConversation.id,
+      );
+      const project = ensureProject(sessionWorkspace);
+      const conversationKey = workspaceSessionKey(
+        sessionWorkspace.path,
+        sessionConversation.id,
+      );
+      seenConversationKeys.add(conversationKey);
+
+      project.conversations.push({
+        id: sessionConversation.id,
+        title: summary?.title ?? sessionConversation.title,
+        updatedAtMs: summary?.updatedAtMs ?? 0,
+        sessionKey: session.key,
+      });
+
+      for (const id of streamingConversationIdsByWorkspace.get(sessionWorkspace.path) ?? EMPTY_STREAMING_IDS) {
+        project.streamingIds.add(id);
+      }
+    }
+
+    for (const session of sessions) {
+      const sessionWorkspace = session.bootstrap.workspace;
+      const sessionConversations =
+        sessionWorkspace.path === workspacePath
+          ? conversations
+          : session.bootstrap.conversations;
+      const project = ensureProject(sessionWorkspace);
+      for (const conversation of sessionConversations) {
+        const conversationKey = workspaceSessionKey(
+          sessionWorkspace.path,
+          conversation.id,
+        );
+        if (seenConversationKeys.has(conversationKey)) continue;
+        seenConversationKeys.add(conversationKey);
+        project.conversations.push(conversation);
+      }
+    }
+
+    return Array.from(projects.values()).map((project) => ({
+      ...project,
+      conversations: sortConversationSummaries(project.conversations),
+    }));
+  }, [
+    activeConv,
+    conversations,
+    effectiveActiveSessionKey,
+    sessions,
+    streamingConversationIdsByWorkspace,
+    workspacePath,
+  ]);
+
+  const selectConversationFromList = useCallback(
+    (id: string, targetWorkspacePath?: string, sessionKey?: string) => {
+      if (
+        sessionKey &&
+        sessionKey !== effectiveActiveSessionKey &&
+        onSelectSession
+      ) {
+        void onSelectSession(targetWorkspacePath ?? workspacePath, id);
+        return;
+      }
+      if (targetWorkspacePath && targetWorkspacePath !== workspacePath) {
+        if (onSelectSession) {
+          void onSelectSession(targetWorkspacePath, id);
+        }
+        return;
+      }
+      void selectConversation(id);
+    },
+    [
+      effectiveActiveSessionKey,
+      onSelectSession,
+      selectConversation,
+      workspacePath,
+    ],
+  );
+
+  const renameConversationFromList = useCallback(
+    (id: string, title: string, targetWorkspacePath?: string) => {
+      if (targetWorkspacePath && targetWorkspacePath !== workspacePath) {
+        if (onRenameConversationSession) {
+          void onRenameConversationSession(targetWorkspacePath, id, title);
+        } else {
+          void api
+            .renameConversation(targetWorkspacePath, id, title)
+            .then((next) => onWorkspaceConversationsReplace?.(targetWorkspacePath, next))
+            .catch((err) => console.error(err));
+        }
+        return;
+      }
+      if (onRenameConversationSession) {
+        void onRenameConversationSession(workspacePath, id, title);
+        return;
+      }
+      void renameConversation(id, title);
+    },
+    [onRenameConversationSession, onWorkspaceConversationsReplace, renameConversation, workspacePath],
+  );
+
+  const deleteConversationFromList = useCallback(
+    (id: string, targetWorkspacePath?: string) => {
+      if (targetWorkspacePath && targetWorkspacePath !== workspacePath) {
+        if (onDeleteConversationSession) {
+          void onDeleteConversationSession(targetWorkspacePath, id);
+        }
+        return;
+      }
+      void deleteConversation(id);
+    },
+    [deleteConversation, onDeleteConversationSession, workspacePath],
+  );
 
   return (
-    <div className="workspace">
+    <div
+      className="workspace"
+      data-center-visible={effectiveCenterVisible ? "true" : "false"}
+      data-view={viewMode}
+    >
       <div className="titlebar" data-tauri-drag-region>
         <div
           className="titlebar__actions"
           data-tauri-drag-region
-          style={{ left: leftWidth, right: rightWidth }}
+          style={titlebarActionsStyle}
         >
           <button
             className="titlebar__btn"
@@ -1410,22 +1684,49 @@ export function Workspace({
           </button>
           <button
             className="titlebar__btn"
-            data-on={settingsActive ? "true" : "false"}
-            onClick={openSettings}
-            title="Settings"
+            data-on={viewMode === "chat" ? "true" : "false"}
+            onClick={() => setViewMode("chat")}
+            title="Chat view"
           >
-            <Icon icon="solar:settings-linear" width={12} height={12} />
-            Settings
+            <Icon icon="solar:chat-round-dots-linear" width={12} height={12} />
+            Chat
           </button>
           <button
             className="titlebar__btn"
-            onClick={onSwitchWorkspace}
-            title="Switch workspace"
+            data-on={viewMode === "editor" ? "true" : "false"}
+            onClick={() => setViewMode("editor")}
+            title="Editor view"
+          >
+            <Icon icon="solar:code-square-linear" width={12} height={12} />
+            Editor
+          </button>
+          <button
+            className="titlebar__btn"
+            data-on={viewMode === "all" ? "true" : "false"}
+            onClick={() => setViewMode("all")}
+            title="All view"
+          >
+            <Icon icon="solar:widget-5-linear" width={12} height={12} />
+            All
+          </button>
+          <button
+            className="titlebar__btn"
+            onClick={openProjectPicker}
+            title={onOpenProject || onOpenWorkspace ? "Open project" : "Switch workspace"}
           >
             <Icon icon="solar:folder-with-files-linear" width={12} height={12} />
-            Switch
+            {onOpenProject || onOpenWorkspace ? "Open" : "Switch"}
           </button>
         </div>
+        <button
+          className="titlebar__btn titlebar__settings-right"
+          data-on={settingsOpen ? "true" : "false"}
+          onClick={openSettings}
+          title="Settings"
+        >
+          <Icon icon="solar:settings-linear" width={12} height={12} />
+          Settings
+        </button>
         <div className="titlebar__brand" data-tauri-drag-region>
           <span className="titlebar__brand-mark">
             <SinewMark size={11} />
@@ -1435,7 +1736,11 @@ export function Workspace({
         <UpdateBadge />
       </div>
 
-      <div className="main">
+      <div
+        className="main"
+        data-center-visible={effectiveCenterVisible ? "true" : "false"}
+        data-view={viewMode}
+      >
         <div
           className="sidebar"
           style={{ width: leftWidth, flex: `0 0 ${leftWidth}px` }}
@@ -1528,16 +1833,21 @@ export function Workspace({
             conversations={conversations}
             activeId={activeConv.id}
             streamingIds={streamingConversationIds}
-            onSelect={selectConversation}
+            projects={conversationProjects}
+            activeSessionKey={effectiveActiveSessionKey}
+            onSelect={selectConversationFromList}
             onCreate={createConversation}
-            onRename={renameConversation}
-            onDelete={deleteConversation}
+            onRename={renameConversationFromList}
+            onDelete={deleteConversationFromList}
+            onOpenProject={onOpenProject || onOpenWorkspace ? openProjectPicker : undefined}
           />
         </div>
-        <Splitter
-          orientation="vertical"
-          onDelta={(delta) => setLeftWidth((v) => clampColumn(v + delta))}
-        />
+        {effectiveCenterVisible && (
+          <Splitter
+            orientation="vertical"
+            onDelta={(delta) => setLeftWidth((v) => clampColumn(v + delta))}
+          />
+        )}
         <div className="workbench-center">
           <div
             className="editor-shell"
@@ -1551,15 +1861,10 @@ export function Workspace({
               onChange={updateBuffer}
               onSave={saveTab}
               onOpenFile={openChatFile}
-              settingsOpen={settingsOpen}
-              settingsActive={settingsActive}
-              settingsView={<SettingsPane workspacePath={workspacePath} />}
               revealTarget={editorRevealTarget}
-              onSettingsActivate={() => setSettingsActive(true)}
-              onSettingsClose={closeSettings}
             />
           </div>
-          {terminalVisible && !terminalFullHeight && (
+          {!detachedTerminal && terminalVisible && !terminalFullHeight && (
             <Splitter
               orientation="horizontal"
               onDelta={(delta) =>
@@ -1571,20 +1876,20 @@ export function Workspace({
             className="terminal-shell"
             data-full-height={terminalFullHeight ? "true" : "false"}
             style={{
-              display: terminalVisible ? "block" : "none",
-              height: terminalVisible
+              display: !detachedTerminal && terminalVisible ? "block" : "none",
+              height: !detachedTerminal && terminalVisible
                 ? terminalFullHeight
                   ? "auto"
                   : terminalHeight
                 : 0,
-              flex: terminalVisible
+              flex: !detachedTerminal && terminalVisible
                 ? terminalFullHeight
                   ? "1 1 0"
                   : `0 0 ${terminalHeight}px`
                 : "0 0 0",
             }}
           >
-            {terminalAvailable && (
+            {!detachedTerminal && terminalAvailable && (
               <TerminalPanel
                 active={terminalVisible}
                 fullHeight={terminalFullHeight}
@@ -1596,7 +1901,7 @@ export function Workspace({
               />
             )}
           </div>
-          {terminalAvailable && !terminalOpen && (
+          {!detachedTerminal && terminalAvailable && !terminalOpen && (
             <div className="terminal-restore">
               <button
                 type="button"
@@ -1609,43 +1914,132 @@ export function Workspace({
             </div>
           )}
         </div>
-        <Splitter
-          orientation="vertical"
-          onDelta={(delta) => setRightWidth((v) => clampColumn(v - delta))}
-        />
-        <div
-          style={{
-            width: rightWidth,
-            flex: `0 0 ${rightWidth}px`,
-            minWidth: 0,
-            display: "flex",
-          }}
-        >
-          <ChatPane
-            workspacePath={workspacePath}
-            conversationId={activeConv.id}
-            activeModel={activeConv.model}
-            modeModelSettings={chatModeModelSettings}
-            streamingModel={activeStreamingModel}
-            planWorkflow={activeConv.planWorkflow}
-            goalWorkflow={activeConv.goalWorkflow}
-            isStreaming={activeConversationIsStreaming}
-            history={activeConv.history}
-            subscribeEvents={subscribeEvents}
-            onSend={sendMessage}
-            onCompact={compactConversation}
-            onModeChange={changeConversationMode}
-            onModelPreferenceChange={changeConversationModelPreference}
-            onImplementPlanFresh={implementPlanFresh}
-            onStop={stopTurn}
-            onOpenFile={openChatFile}
-            externalDrops={externalDropFeed}
-            dropZoneRef={chatDropZoneRef}
+        {effectiveCenterVisible && chatVisible && (
+          <Splitter
+            orientation="vertical"
+            onDelta={(delta) => setRightWidth((v) => clampColumn(v - delta))}
           />
-        </div>
+        )}
+        {chatVisible && (
+          <div
+            className="chat-stack"
+            data-expanded={chatExpanded ? "true" : "false"}
+            data-terminal-open={detachedTerminal && terminalVisible ? "true" : "false"}
+            style={
+              chatExpanded
+                ? {
+                    flex: "1 1 0",
+                    minWidth: 0,
+                    display: "flex",
+                  }
+                : {
+                    width: rightWidth,
+                    flex: `0 0 ${rightWidth}px`,
+                    minWidth: 0,
+                    display: "flex",
+                  }
+            }
+          >
+          <div
+            className="chat-shell"
+            data-expanded={chatExpanded ? "true" : "false"}
+            data-hidden={detachedTerminal && terminalVisible && terminalFullHeight ? "true" : "false"}
+          >
+            <ChatPane
+              workspacePath={workspacePath}
+              conversationId={activeConv.id}
+              activeModel={activeConv.model}
+              modeModelSettings={chatModeModelSettings}
+              streamingModel={activeStreamingModel}
+              planWorkflow={activeConv.planWorkflow}
+              goalWorkflow={activeConv.goalWorkflow}
+              isStreaming={activeConversationIsStreaming}
+              history={activeConv.history}
+              subscribeEvents={subscribeEvents}
+              onSend={sendMessage}
+              onCompact={compactConversation}
+              onModeChange={changeConversationMode}
+              onModelPreferenceChange={changeConversationModelPreference}
+              onImplementPlanFresh={implementPlanFresh}
+              onStop={stopTurn}
+              onOpenFile={openChatFile}
+              externalDrops={externalDropFeed}
+              dropZoneRef={chatDropZoneRef}
+            />
+          </div>
+          {detachedTerminal && terminalAvailable && terminalVisible && !terminalFullHeight && (
+            <Splitter
+              orientation="horizontal"
+              onDelta={(delta) =>
+                setTerminalHeight((value) => clampTerminal(value - delta))
+              }
+            />
+          )}
+          {detachedTerminal && terminalAvailable && terminalVisible && (
+            <div
+              className="terminal-detached"
+              data-full-height={terminalFullHeight ? "true" : "false"}
+              style={{
+                flex: terminalFullHeight ? "1 1 0" : `0 0 ${terminalHeight}px`,
+                height: terminalFullHeight ? "auto" : terminalHeight,
+              }}
+            >
+              <TerminalPanel
+                active={terminalVisible}
+                fullHeight={terminalFullHeight}
+                workspacePath={workspacePath}
+                onClose={hideTerminal}
+                onCloseLastSession={closeTerminalPanel}
+                onToggleFullHeight={toggleTerminalFullHeight}
+                onOpenTerminalPath={openTerminalPath}
+              />
+            </div>
+          )}
+          </div>
+        )}
       </div>
+      {settingsOpen && (
+        <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="Settings">
+          <div className="settings-overlay__panel">
+            <button
+              type="button"
+              className="settings-overlay__close"
+              onClick={closeSettings}
+              title="Close settings"
+              aria-label="Close settings"
+            >
+              <Icon icon="solar:close-circle-linear" width={18} height={18} />
+            </button>
+            <SettingsPane workspacePath={workspacePath} />
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function loadLayoutViewMode(): ViewMode {
+  try {
+    if (typeof window === "undefined") return "all";
+    const raw = window.localStorage.getItem(LAYOUT_VIEW_MODE_KEY);
+    if (raw === "chat" || raw === "editor" || raw === "all") return raw;
+    const oldChatFocus = window.localStorage.getItem("sinew.layout.chatFocus") === "true";
+    const oldCenterVisible = window.localStorage.getItem("sinew.layout.centerVisible");
+    if (oldChatFocus) return "chat";
+    if (oldCenterVisible === "false") return "chat";
+    return "all";
+  } catch {
+    return "all";
+  }
+}
+
+function saveLayoutViewMode(value: ViewMode): void {
+  try {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(LAYOUT_VIEW_MODE_KEY, value);
+  } catch {
+    // Ignore storage errors; layout controls still work for the session.
+  }
 }
 
 async function sendMessageWithBusyRetry(

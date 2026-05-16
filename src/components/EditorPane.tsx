@@ -7,7 +7,7 @@ import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
 import htmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
 import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "@iconify/react";
 import { languageForPath } from "../lib/language";
 import { fileIcon } from "../lib/fileIcon";
@@ -49,12 +49,7 @@ type Props = {
   onChange: (index: number, value: string) => void;
   onSave: (index: number) => void;
   onOpenFile?: (path: string) => void;
-  settingsOpen?: boolean;
-  settingsActive?: boolean;
-  settingsView?: ReactNode;
   revealTarget?: EditorRevealTarget | null;
-  onSettingsActivate?: () => void;
-  onSettingsClose?: () => void;
 };
 
 export function EditorPane({
@@ -65,12 +60,7 @@ export function EditorPane({
   onChange,
   onSave,
   onOpenFile,
-  settingsOpen = false,
-  settingsActive = false,
-  settingsView,
   revealTarget,
-  onSettingsActivate,
-  onSettingsClose,
 }: Props) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const searchDecorationsRef =
@@ -89,12 +79,12 @@ export function EditorPane({
   const [imageMenu, setImageMenu] = useState<{ x: number; y: number } | null>(
     null,
   );
-  const activeTab: EditorTab | undefined = settingsActive ? undefined : tabs[activeIndex];
+  const activeTab: EditorTab | undefined = tabs[activeIndex];
   // Close the image context menu whenever the user switches tabs or
-  // toggles into the settings view, so it never lingers on the wrong file.
+  // changes the active editor, so it never lingers on the wrong file.
   useEffect(() => {
     setImageMenu(null);
-  }, [activeIndex, settingsActive]);
+  }, [activeIndex]);
 
   const activeIsMarkdown = activeTab
     ? isMarkdownPath(activeTab.relativePath)
@@ -317,7 +307,7 @@ export function EditorPane({
           <div
             key={tab.relativePath}
             className="tab"
-            data-active={!settingsActive && index === activeIndex ? "true" : "false"}
+            data-active={index === activeIndex ? "true" : "false"}
             onClick={() => onActivate(index)}
             title={tab.relativePath}
           >
@@ -338,29 +328,6 @@ export function EditorPane({
             </button>
           </div>
         ))}
-        {settingsOpen && (
-          <div
-            className="tab"
-            data-active={settingsActive ? "true" : "false"}
-            onClick={onSettingsActivate}
-            title="Settings"
-          >
-            <span className="tab__icon">
-              <Icon icon="solar:settings-linear" width={14} height={14} />
-            </span>
-            <span className="tab__name">Settings</span>
-            <button
-              className="tab__close"
-              onClick={(event) => {
-                event.stopPropagation();
-                onSettingsClose?.();
-              }}
-              title="Close tab"
-            >
-              <Icon icon="solar:close-circle-linear" width={13} height={13} />
-            </button>
-          </div>
-        )}
         <div className="tabs__spacer" />
         {activeIsMarkdown && (
           <button
@@ -389,16 +356,7 @@ export function EditorPane({
       </div>
 
       <div className="editor-host">
-        {settingsOpen && (
-          <div
-            className="editor-settings-layer"
-            data-active={settingsActive ? "true" : "false"}
-          >
-            {settingsView}
-          </div>
-        )}
-        {!settingsActive &&
-          (!activeTab ? (
+        {!activeTab ? (
             <div className="editor-empty">
               <span className="editor-empty__mark">
                 <Icon icon="solar:document-text-linear" width={18} height={18} />
@@ -487,7 +445,7 @@ export function EditorPane({
                 {formatBytes(activeTab.doc.size)}
               </small>
             </div>
-          ) : null)}
+          ) : null}
       </div>
     </div>
   );

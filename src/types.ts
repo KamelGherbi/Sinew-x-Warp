@@ -11,6 +11,9 @@ export type UpdateInfo = {
   version: string | null;
   notes: string | null;
   date: string | null;
+  customBuild: boolean;
+  updateProtected: boolean;
+  protectionReason: string | null;
 };
 
 /// Payload of the `updater://progress` event.
@@ -353,6 +356,13 @@ export type WorkspaceBootstrap = {
   conversations: ConversationSummary[];
   activeConversation: SavedConversation;
   modeModelSettings: ModeModelSettings;
+};
+
+export type WorkspaceSession = {
+  key: string;
+  workspacePath: string;
+  conversationId: string;
+  bootstrap: WorkspaceBootstrap;
 };
 
 export type WorkspaceEntry = {

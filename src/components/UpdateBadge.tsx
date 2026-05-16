@@ -136,6 +136,15 @@ export function UpdateBadge() {
   const onInstall = useCallback(async () => {
     const info = lastInfoRef.current;
     if (!info) return;
+    if (info.updateProtected) {
+      setStatus({
+        kind: "error",
+        message:
+          info.protectionReason ??
+          "This update is protected to avoid replacing your custom build.",
+      });
+      return;
+    }
     setStatus({ kind: "downloading", info, downloaded: 0, total: null });
     try {
       await api.installUpdate();
@@ -251,12 +260,21 @@ function UpdatePopover({
     <div className="titlebar__update-popover" role="dialog" aria-label="App update">
       <div className="titlebar__update-popover-head">
         <span className="titlebar__update-popover-title">
-          New version {info.version}
+          {info.updateProtected ? "Official update protected" : "New version"} {info.version}
         </span>
         <span className="titlebar__update-popover-sub">
           You are on {info.currentVersion}
         </span>
       </div>
+      {info.updateProtected && (
+        <div className="titlebar__update-protection">
+          <Icon icon="solar:shield-warning-linear" width={14} height={14} />
+          <span>
+            {info.protectionReason ??
+              "Installing this update would replace your custom Sinew build."}
+          </span>
+        </div>
+      )}
       {notes && (
         <div className="titlebar__update-popover-notes">
           {notes.map((line, i) => (
@@ -277,9 +295,13 @@ function UpdatePopover({
           type="button"
           className="titlebar__update-popover-btn titlebar__update-popover-btn--primary"
           onClick={onInstall}
-          disabled={isDownloading}
+          disabled={isDownloading || info.updateProtected}
         >
-          {isDownloading ? "Downloading…" : "Install & restart"}
+          {isDownloading
+            ? "Downloading…"
+            : info.updateProtected
+              ? "Protected custom build"
+              : "Install & restart"}
         </button>
       </div>
     </div>
@@ -310,7 +332,9 @@ function pillIcon(status: Status): string {
 function pillLabel(status: Status, percent: number | null): string {
   switch (status.kind) {
     case "available":
-      return `New version ${status.info.version ?? ""}`.trim();
+      return status.info.updateProtected
+        ? `Protected update ${status.info.version ?? ""}`.trim()
+        : `New version ${status.info.version ?? ""}`.trim();
     case "downloading":
       return percent !== null ? `Downloading ${percent}%` : "Downloading…";
     case "ready":
@@ -325,7 +349,9 @@ function pillLabel(status: Status, percent: number | null): string {
 function pillTitle(status: Status): string {
   switch (status.kind) {
     case "available":
-      return `Update ${status.info.version} available — click to view and install`;
+      return status.info.updateProtected
+        ? `Update ${status.info.version} available, but protected to keep your custom changes`
+        : `Update ${status.info.version} available — click to view and install`;
     case "downloading":
       return "Downloading the update…";
     case "ready":
