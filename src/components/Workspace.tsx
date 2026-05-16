@@ -381,6 +381,7 @@ export function Workspace({
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activeTabIndex, setActiveTabIndex] = useState<number>(-1);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsActive, setSettingsActive] = useState(false);
   const [fileTreeRefreshToken, setFileTreeRefreshToken] = useState(0);
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
   const [pendingRootCreate, setPendingRootCreate] = useState<
@@ -549,6 +550,7 @@ export function Workspace({
       );
       if (existing >= 0) {
         setActiveTabIndex(existing);
+        setSettingsActive(false);
         queueReveal();
         return;
       }
@@ -566,10 +568,12 @@ export function Workspace({
           );
           if (existingIndex >= 0) {
             setActiveTabIndex(existingIndex);
+            setSettingsActive(false);
             return prev;
           }
           const next = [...prev, newTab];
           setActiveTabIndex(next.length - 1);
+          setSettingsActive(false);
           return next;
         });
         queueReveal();
@@ -582,27 +586,19 @@ export function Workspace({
 
   const activateFileTab = useCallback((index: number) => {
     setActiveTabIndex(index);
+    setSettingsActive(false);
   }, []);
 
   const openSettings = useCallback(() => {
     setSettingsOpen(true);
+    setSettingsActive(true);
+    setViewMode((current) => (current === "chat" ? "all" : current));
   }, []);
 
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
+    setSettingsActive(false);
   }, []);
-
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeSettings();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [closeSettings, settingsOpen]);
 
   const openChatFile = useCallback(
     (rawPath: string) => {
@@ -851,6 +847,7 @@ export function Workspace({
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
+        if (settingsActive) return;
         if (activeTabIndex >= 0) void saveTab(activeTabIndex);
         return;
       }
@@ -865,7 +862,7 @@ export function Workspace({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeTabIndex, saveTab]);
+  }, [activeTabIndex, saveTab, settingsActive]);
 
   // ---------------- Event subscriptions ----------------
 
@@ -1661,7 +1658,7 @@ export function Workspace({
   );
 
   const activeFilePath =
-    activeTabIndex >= 0 && tabs[activeTabIndex]
+    !settingsActive && activeTabIndex >= 0 && tabs[activeTabIndex]
       ? tabs[activeTabIndex].relativePath
       : null;
   const terminalVisible = terminalAvailable && terminalOpen;
@@ -1907,11 +1904,11 @@ export function Workspace({
             {onOpenProject || onOpenWorkspace ? "Open" : "Switch"}
           </button>
         </div>
-        <button
-          className="titlebar__btn titlebar__settings-right"
-          data-on={settingsOpen ? "true" : "false"}
-          onClick={openSettings}
-          title="Settings"
+          <button
+            className="titlebar__btn titlebar__settings-right"
+            data-on={settingsActive ? "true" : "false"}
+            onClick={openSettings}
+            title="Settings"
         >
           <Icon icon="solar:settings-linear" width={12} height={12} />
           Settings
@@ -2051,7 +2048,12 @@ export function Workspace({
               onChange={updateBuffer}
               onSave={saveTab}
               onOpenFile={openChatFile}
+              settingsOpen={settingsOpen}
+              settingsActive={settingsActive}
+              settingsView={<SettingsPane workspacePath={workspacePath} />}
               revealTarget={editorRevealTarget}
+              onSettingsActivate={() => setSettingsActive(true)}
+              onSettingsClose={closeSettings}
             />
           </div>
           {!detachedTerminal && terminalVisible && !terminalFullHeight && (
@@ -2188,22 +2190,6 @@ export function Workspace({
           </div>
         )}
       </div>
-      {settingsOpen && (
-        <div className="settings-overlay" role="dialog" aria-modal="true" aria-label="Settings">
-          <div className="settings-overlay__panel">
-            <button
-              type="button"
-              className="settings-overlay__close"
-              onClick={closeSettings}
-              title="Close settings"
-              aria-label="Close settings"
-            >
-              <Icon icon="solar:close-circle-linear" width={18} height={18} />
-            </button>
-            <SettingsPane workspacePath={workspacePath} />
-          </div>
-        </div>
-      )}
     </div>
   );
 }

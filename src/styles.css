@@ -889,55 +889,6 @@ textarea {
   max-height: none;
 }
 
-.settings-overlay {
-  position: fixed;
-  inset: 32px 0 0;
-  z-index: 60;
-  display: flex;
-  justify-content: center;
-  align-items: stretch;
-  padding: 14px;
-  background: rgba(5, 5, 7, 0.58);
-  backdrop-filter: blur(12px);
-  -webkit-app-region: no-drag;
-}
-.settings-overlay__panel {
-  position: relative;
-  width: min(1180px, 100%);
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  overflow: hidden;
-  border-radius: 14px;
-  background: var(--bg-0);
-  box-shadow:
-    0 24px 80px rgba(0, 0, 0, 0.45),
-    0 0 0 1px rgba(232, 233, 236, 0.08);
-}
-.settings-overlay__panel .settings-pane {
-  flex: 1 1 0;
-}
-.settings-overlay__close {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 2;
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--r-med);
-  color: var(--text-2);
-  background: var(--bg-2);
-  box-shadow: 0 0 0 1px rgba(232, 233, 236, 0.06) inset;
-  transition: background 150ms ease, color 150ms ease;
-}
-.settings-overlay__close:hover {
-  color: var(--text-0);
-  background: var(--bg-4);
-}
-
 .workbench-center {
   flex: 1 1 0;
   min-width: 0;
