@@ -98,6 +98,13 @@ pub(super) struct WorkspaceInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(super) struct ListSessionsInput {
+    pub(super) query: Option<String>,
+    pub(super) limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct WorkspaceEntriesInput {
     pub(super) workspace_path: String,
     pub(super) relative_path: Option<String>,

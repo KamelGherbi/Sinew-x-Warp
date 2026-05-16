@@ -14,6 +14,17 @@ pub(super) async fn list_conversations(
 }
 
 #[tauri::command]
+pub(super) async fn list_sessions(
+    state: State<'_, DesktopState>,
+    input: ListSessionsInput,
+) -> std::result::Result<Vec<SessionSummary>, String> {
+    state
+        .store
+        .list_sessions(input.query.as_deref(), input.limit.unwrap_or(200))
+        .map_err(error_to_string)
+}
+
+#[tauri::command]
 pub(super) async fn create_conversation(
     state: State<'_, DesktopState>,
     input: WorkspaceInput,

@@ -166,6 +166,7 @@ type Props = {
   ) => Promise<void>;
   onStop: () => Promise<void>;
   onOpenFile: (path: string) => void;
+  onOpenSessions?: () => void;
   externalDrops: ExternalDropFeed;
   dropZoneRef: RefObject<HTMLDivElement>;
 };
@@ -360,6 +361,7 @@ export function ChatPane({
   onImplementPlanFresh,
   onStop,
   onOpenFile,
+  onOpenSessions,
   externalDrops,
   dropZoneRef,
 }: Props) {
@@ -1326,6 +1328,18 @@ export function ChatPane({
     if (!value && currentAttachments.length === 0) {
       return;
     }
+    if (
+      currentAttachments.length === 0 &&
+      isSessionCommand(value) &&
+      onOpenSessions
+    ) {
+      setText("");
+      setInlineMentions([]);
+      setRewriteState(null);
+      setEditingQueuedPrompt(null);
+      onOpenSessions();
+      return;
+    }
     if (view.status === "streaming" || isStreaming) {
       const editing =
         editingQueuedPrompt?.conversationId === conversationId
@@ -1403,6 +1417,7 @@ export function ChatPane({
     history.length,
     history,
     onSend,
+    onOpenSessions,
     rewriteState,
     model,
     modelEntry,
@@ -4795,6 +4810,16 @@ function attachmentOnlyMessage(attachments: AttachmentInput[]): string {
   return onlyImages
     ? "Please inspect the attached images."
     : "Please inspect the attached files.";
+}
+
+function isSessionCommand(value: string): boolean {
+  const command = value.trim().toLowerCase();
+  return (
+    command === "/session" ||
+    command === "/sessions" ||
+    command === "/resume" ||
+    command === "/continue"
+  );
 }
 
 function buildQueuedPrompt({

@@ -20,6 +20,7 @@ import {
 } from "./ConversationList";
 import { EditorPane } from "./EditorPane";
 import { SettingsPane } from "./SettingsPane";
+import { SessionSwitcher } from "./SessionSwitcher";
 import { TerminalPanel } from "./TerminalPanel";
 import { SearchPane } from "./SearchPane";
 import { ChatPane, type ExternalDropFeed } from "./chat/ChatPane";
@@ -136,6 +137,8 @@ export function Workspace({
   const workspacePathRef = useRef(workspacePath);
   const navigationSeqRef = useRef(0);
   const [viewMode, setViewMode] = useState<ViewMode>(() => loadLayoutViewMode());
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [sessionsRefreshToken, setSessionsRefreshToken] = useState(0);
 
   useEffect(() => {
     saveLayoutViewMode(viewMode);
@@ -891,11 +894,14 @@ export function Workspace({
         (event) => {
           const payload = event.payload;
           const payloadWorkspacePath = payload.workspaceId ?? workspacePathRef.current;
+          const sequenceKey = workspaceSessionKey(
+            payloadWorkspacePath,
+            payload.conversationId,
+          );
+          if (payload.event.type === "turn_started") {
+            lastAgentEventSequenceByConversationRef.current.delete(sequenceKey);
+          }
           if (typeof payload.sequence === "number") {
-            const sequenceKey = workspaceSessionKey(
-              payloadWorkspacePath,
-              payload.conversationId,
-            );
             const last =
               lastAgentEventSequenceByConversationRef.current.get(
                 sequenceKey,
@@ -1840,6 +1846,61 @@ export function Workspace({
     [deleteConversation, onDeleteConversationSession, workspacePath],
   );
 
+  const openSessionSwitcher = useCallback(() => {
+    setSessionsOpen(true);
+  }, []);
+
+  const closeSessionSwitcher = useCallback(() => {
+    setSessionsOpen(false);
+  }, []);
+
+  const selectSessionFromSwitcher = useCallback(
+    (targetWorkspacePath: string, id: string) => {
+      setSessionsOpen(false);
+      if (onSelectSession) {
+        void onSelectSession(targetWorkspacePath, id);
+        return;
+      }
+      selectConversationFromList(
+        id,
+        targetWorkspacePath,
+        workspaceSessionKey(targetWorkspacePath, id),
+      );
+    },
+    [onSelectSession, selectConversationFromList],
+  );
+
+  const createSessionFromSwitcher = useCallback(() => {
+    setSessionsOpen(false);
+    void createConversation();
+  }, [createConversation]);
+
+  const renameSessionFromSwitcher = useCallback(
+    (targetWorkspacePath: string, id: string, title: string) => {
+      renameConversationFromList(id, title, targetWorkspacePath);
+      setSessionsRefreshToken((value) => value + 1);
+    },
+    [renameConversationFromList],
+  );
+
+  const deleteSessionFromSwitcher = useCallback(
+    (targetWorkspacePath: string, id: string) => {
+      deleteConversationFromList(id, targetWorkspacePath);
+      setSessionsRefreshToken((value) => value + 1);
+    },
+    [deleteConversationFromList],
+  );
+
+  const streamingSessionKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const [streamingWorkspacePath, ids] of streamingConversationIdsByWorkspace) {
+      for (const id of ids) {
+        keys.add(workspaceSessionKey(streamingWorkspacePath, id));
+      }
+    }
+    return keys;
+  }, [streamingConversationIdsByWorkspace]);
+
   return (
     <div
       className="workspace"
@@ -2032,6 +2093,7 @@ export function Workspace({
             onRename={renameConversationFromList}
             onDelete={deleteConversationFromList}
             onOpenProject={onOpenProject || onOpenWorkspace ? openProjectPicker : undefined}
+            onOpenSessions={openSessionSwitcher}
           />
         </div>
         {effectiveCenterVisible && (
@@ -2158,6 +2220,7 @@ export function Workspace({
               onImplementPlanFresh={implementPlanFresh}
               onStop={stopTurn}
               onOpenFile={openChatFile}
+              onOpenSessions={openSessionSwitcher}
               externalDrops={externalDropFeed}
               dropZoneRef={chatDropZoneRef}
             />
@@ -2192,6 +2255,19 @@ export function Workspace({
           )}
         </div>
       </div>
+      {sessionsOpen && (
+        <SessionSwitcher
+          activeWorkspacePath={workspacePath}
+          activeSessionKey={effectiveActiveSessionKey}
+          streamingSessionKeys={streamingSessionKeys}
+          refreshToken={sessionsRefreshToken}
+          onSelect={selectSessionFromSwitcher}
+          onCreate={createSessionFromSwitcher}
+          onRename={renameSessionFromSwitcher}
+          onDelete={deleteSessionFromSwitcher}
+          onClose={closeSessionSwitcher}
+        />
+      )}
     </div>
   );
 }

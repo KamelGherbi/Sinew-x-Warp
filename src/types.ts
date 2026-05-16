@@ -91,6 +91,16 @@ export type ConversationSummary = {
   updatedAtMs: number;
 };
 
+export type SessionSummary = {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  title: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  messageCount: number;
+};
+
 export type SavedConversation = {
   id: string;
   workspaceId: string;

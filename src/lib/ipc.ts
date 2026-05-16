@@ -25,6 +25,7 @@ import type {
   PlanControl,
   SavedConversation,
   SkillSettings,
+  SessionSummary,
   StartAnthropicLoginOutput,
   StartGoogleLoginOutput,
   StartKimiLoginOutput,
@@ -205,6 +206,11 @@ export const api = {
   listConversations(workspacePath: string) {
     return invoke<ConversationSummary[]>("list_conversations", {
       input: { workspacePath },
+    });
+  },
+  listSessions(query?: string, limit?: number) {
+    return invoke<SessionSummary[]>("list_sessions", {
+      input: { query, limit },
     });
   },
   createConversation(workspacePath: string) {

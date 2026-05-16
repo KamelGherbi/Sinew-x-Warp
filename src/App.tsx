@@ -133,7 +133,11 @@ export default function App() {
       }
 
       try {
-        if (!base) return;
+        if (!base) {
+          const opened = await api.openWorkspace(workspacePath);
+          recordRecent(opened.workspace.path, opened.workspace.name);
+          base = sessionFromBootstrap(opened);
+        }
 
         const [activeConversation, conversations] = await Promise.all([
           api.loadConversation(workspacePath, conversationId),

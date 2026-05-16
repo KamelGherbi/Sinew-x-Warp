@@ -237,9 +237,10 @@ Code map:
     │   ├── ConversationList.tsx
     │   ├── EditorPane.tsx
     │   ├── FileTree.tsx
-    │   ├── SearchPane.tsx
-    │   ├── SettingsPane.tsx
-    │   ├── SinewMark.tsx
+│   ├── SearchPane.tsx
+│   ├── SettingsPane.tsx
+│   ├── SessionSwitcher.tsx
+│   ├── SinewMark.tsx
     │   ├── Splitter.tsx
     │   ├── TerminalPanel.tsx
     │   ├── UpdateBadge.tsx

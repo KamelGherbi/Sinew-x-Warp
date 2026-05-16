@@ -50,7 +50,7 @@ use sinew_app::{
     SubAgentConfig, SubAgentSettings, SubAgentTool, TeamRuntime, TeamTool, TerminalPathResolution,
     ToDoListTool, TodoListState, ToolSettings, ToolSettingsView, TurnCancel, TurnContext,
     WebFetchTool, WebSearchTool, WorkspaceBootstrap, WorkspaceCopyOperation, WorkspaceDeletedEntry,
-    WorkspaceFileChangeEvent, WorkspaceSearchResult,
+    WorkspaceFileChangeEvent, WorkspaceSearchResult, SessionSummary,
 };
 use sinew_core::{
     ChatMessage, Effort, ModelCapabilities, ModelRef, Part, Provider, ProviderRequest, Role,
@@ -268,6 +268,7 @@ pub fn run() {
             workspace::save_clipboard_image_attachment_command,
             workspace::read_clipboard_file_paths_command,
             conversations::list_conversations,
+            conversations::list_sessions,
             conversations::create_conversation,
             conversations::load_conversation,
             conversations::rename_conversation,

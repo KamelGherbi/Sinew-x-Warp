@@ -25,6 +25,7 @@ type Props = {
   onRename: (id: string, title: string, workspacePath?: string) => void;
   onDelete: (id: string, workspacePath?: string) => void;
   onOpenProject?: () => void;
+  onOpenSessions?: () => void;
 };
 
 export function ConversationList({
@@ -38,6 +39,7 @@ export function ConversationList({
   onRename,
   onDelete,
   onOpenProject,
+  onOpenSessions,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
@@ -88,6 +90,15 @@ export function ConversationList({
           <span>{hasProjectGroups ? "Projects" : "Conversations"}</span>
         </span>
         <span className="sidebar__head-actions">
+          {onOpenSessions && (
+            <button
+              className="sidebar__head-btn"
+              onClick={onOpenSessions}
+              title="Sessions"
+            >
+              <Icon icon="solar:clock-circle-linear" width={15} height={15} />
+            </button>
+          )}
           {onOpenProject && (
             <button
               className="sidebar__head-btn"

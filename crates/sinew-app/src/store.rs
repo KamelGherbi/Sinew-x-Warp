@@ -61,6 +61,18 @@ pub struct ConversationSummary {
     pub updated_at_ms: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    pub id: String,
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub title: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub message_count: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct TurnCheckpointRecord {
     pub history_index: usize,
@@ -638,6 +650,50 @@ impl AppStore {
             conversations.push(row.context("bad conversation row")?);
         }
         Ok(conversations)
+    }
+
+    pub fn list_sessions(&self, query: Option<&str>, limit: usize) -> Result<Vec<SessionSummary>> {
+        let conn = self.connection()?;
+        let limit = limit.clamp(1, 500) as i64;
+        let trimmed_query = query.unwrap_or_default().trim().to_lowercase();
+        let like_query = if trimmed_query.is_empty() {
+            None
+        } else {
+            Some(format!("%{}%", trimmed_query))
+        };
+
+        let mut statement = conn
+            .prepare(
+                "select c.id, c.workspace_id, c.title, c.created_at_ms, c.updated_at_ms, count(m.ordinal) as message_count
+                 from conversations c
+                 left join messages m on m.conversation_id = c.id
+                 where (?1 is null or lower(c.title) like ?1 or lower(c.workspace_id) like ?1)
+                 group by c.id, c.workspace_id, c.title, c.created_at_ms, c.updated_at_ms
+                 order by c.updated_at_ms desc
+                 limit ?2",
+            )
+            .context("unable to prepare session list query")?;
+
+        let rows = statement
+            .query_map(params![like_query, limit], |row| {
+                let workspace_id: String = row.get(1)?;
+                Ok(SessionSummary {
+                    id: row.get(0)?,
+                    workspace_name: workspace_name_from_id(&workspace_id),
+                    workspace_id,
+                    title: row.get(2)?,
+                    created_at_ms: row.get(3)?,
+                    updated_at_ms: row.get(4)?,
+                    message_count: row.get(5)?,
+                })
+            })
+            .context("unable to read session list")?;
+
+        let mut sessions = Vec::new();
+        for row in rows {
+            sessions.push(row.context("bad session row")?);
+        }
+        Ok(sessions)
     }
 
     pub fn load_conversation(
@@ -1390,6 +1446,15 @@ fn ensure_conversations_mode_model_settings_column(conn: &Connection) -> Result<
     )
     .context("unable to add mode model settings column")?;
     Ok(())
+}
+
+fn workspace_name_from_id(workspace_id: &str) -> String {
+    Path::new(workspace_id)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| workspace_id.to_string())
 }
 
 fn ensure_app_settings_table(conn: &Connection) -> Result<()> {
