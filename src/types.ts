@@ -143,6 +143,7 @@ export type SubAgentSettings = {
 
 export type ToolConfig = {
   name: string;
+  displayName?: string;
   description: string;
   defaultDescription: string;
   enabled: boolean;
@@ -524,7 +525,33 @@ export type StreamTokenUsage = {
 export type ConversationEventPayload = {
   conversationId: string;
   workspaceId?: string;
+  sequence?: number;
   event: AgentEvent;
+};
+
+export type SequencedAgentEvent = {
+  sequence: number;
+  event: AgentEvent;
+};
+
+export type ActiveTurnSummary = {
+  workspaceId: string;
+  conversationId: string;
+  startedAtMs: number;
+  latestSequence: number;
+};
+
+export type ActiveTurnsChangedPayload = {
+  activeTurns: ActiveTurnSummary[];
+};
+
+export type ActiveTurnReplay = {
+  active: boolean;
+  workspaceId: string;
+  conversationId: string;
+  startedAtMs?: number | null;
+  latestSequence: number;
+  events: SequencedAgentEvent[];
 };
 
 export type WorkspaceFileChangedPayload = {

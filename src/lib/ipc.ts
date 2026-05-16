@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AttachmentInput,
+  ActiveTurnReplay,
+  ActiveTurnSummary,
   AgentMode,
   AnthropicProviderStatus,
   ChatMessage,
@@ -403,6 +405,18 @@ export const api = {
   ) {
     return invoke<void>("compact_conversation", {
       input: { workspacePath, conversationId, model, thinking },
+    });
+  },
+  listActiveTurns() {
+    return invoke<ActiveTurnSummary[]>("list_active_turns");
+  },
+  replayActiveTurnEvents(
+    workspacePath: string,
+    conversationId: string,
+    afterSequence?: number,
+  ) {
+    return invoke<ActiveTurnReplay>("replay_active_turn_events", {
+      input: { workspacePath, conversationId, afterSequence },
     });
   },
   estimateContext(

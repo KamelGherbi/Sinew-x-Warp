@@ -8,6 +8,7 @@ pub mod mcp;
 pub mod patch;
 pub mod question;
 pub mod read;
+mod ripgrep;
 pub mod skill;
 pub mod store;
 pub mod subagent;
@@ -23,7 +24,7 @@ pub use agent::{
     system_prompt_for_mode_with_plan_prompt, AgentEvent, AgentEventScope, AgentMode,
     ConversationEvent, EngineCommand, TurnCancel, TurnContext,
 };
-pub use bash::BashTool;
+pub use bash::{active_shell_display_name, shell_system_prompt, BashTool};
 pub use compact::{compact_conversation_history, CompactConversationOutput};
 pub use glob::GlobTool;
 pub use grep::GrepTool;

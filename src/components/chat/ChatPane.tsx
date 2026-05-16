@@ -141,7 +141,7 @@ type Props = {
   isStreaming: boolean;
   history: ChatMessage[];
   subscribeEvents: (
-    handler: (conversationId: string, event: AgentEvent) => void,
+    handler: (conversationId: string, event: AgentEvent, sequence?: number) => void,
   ) => () => void;
   onSend: (
     text: string,

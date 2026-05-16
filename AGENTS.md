@@ -11,6 +11,8 @@ Code map:
 ├── package-lock.json
 ├── package.json
 ├── README.md
+├── scripts
+│   └── prepare-sidecars.mjs
 ├── tsconfig.json
 ├── tsconfig.node.json
 ├── vite.config.ts
@@ -130,8 +132,12 @@ Code map:
 │           └── wire.rs
 ├── src-tauri
 │   ├── Cargo.toml
+│   ├── binaries
+│   │   └── .gitkeep
 │   ├── build.rs
+│   ├── tauri.sidecars.conf.json
 │   ├── tauri.conf.json
+│   ├── tauri.windows.conf.json
 │   ├── capabilities
 │   │   └── default.json
 │   ├── gen
@@ -158,6 +164,8 @@ Code map:
 │   │   ├── icon.icns
 │   │   ├── icon.ico
 │   │   ├── icon.png
+│   │   ├── nsis-header.bmp
+│   │   ├── nsis-sidebar.bmp
 │   │   ├── source.svg
 │   │   ├── android
 │   │   │   ├── mipmap-anydpi-v26
@@ -236,6 +244,7 @@ Code map:
     │   ├── TerminalPanel.tsx
     │   ├── UpdateBadge.tsx
     │   ├── Welcome.tsx
+    │   ├── WindowControls.tsx
     │   ├── Workspace.tsx
     │   └── chat
     │       ├── AIThinkingBlock.tsx

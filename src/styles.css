@@ -205,6 +205,30 @@ textarea {
   padding: 48px 32px;
 }
 
+/* ── Windows-only drag region for the frameless Welcome shell ───────── */
+/* Rendered only when the OS decorations are off (Windows). Fixed to the */
+/* viewport so it stays put while the recents list scrolls underneath.   */
+/* Background is transparent to preserve the matte Welcome canvas; the   */
+/* WindowControls children paint themselves and own their own hover bg.  */
+/* On macOS/Linux this element is never rendered.                        */
+.welcome__titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  background: transparent;
+  -webkit-app-region: drag;
+  user-select: none;
+  z-index: 50;
+}
+.welcome__titlebar button {
+  -webkit-app-region: no-drag;
+}
+
 .welcome__stage {
   width: 100%;
   max-width: 520px;
@@ -410,6 +434,25 @@ textarea {
   background: var(--bg-5);
 }
 
+/* Recent row in "agent running" state: swap the folder glyph for a
+   loader. We keep the 32×32 chip container untouched so the row's
+   rhythm doesn't shift; only the inner mark changes. Lavender top arc
+   matches the app-wide signal color used for live agent activity. */
+.welcome__recent-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent-2);
+  animation: spin 0.85s linear infinite;
+}
+.welcome__recent[data-active="true"] .welcome__recent-icon {
+  background: var(--accent-2-soft);
+}
+.welcome__recent[data-active="true"]:hover .welcome__recent-icon {
+  background: var(--accent-2-soft);
+}
+
 .welcome__recent-body {
   display: flex;
   flex-direction: column;
@@ -544,6 +587,64 @@ textarea {
   right: 82px;
   transform: translateY(-50%);
   z-index: 6;
+}
+
+/* ── Windows custom window controls ─────────────────────────────────── */
+/* Rendered only when the OS decorations are off (Windows). Lives in the */
+/* same .titlebar row and pins to the top-right; spans full bar height   */
+/* so hit targets match the native chrome people expect. The buttons     */
+/* are flat, share the bar color, and never participate in the drag      */
+/* region — `data-tauri-drag-region="false"` on the wrapper + the global */
+/* `.titlebar button { -webkit-app-region: no-drag }` rule above.        */
+.titlebar__window-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 32px;
+  display: inline-flex;
+  align-items: stretch;
+  z-index: 10;
+  -webkit-app-region: no-drag;
+}
+.titlebar__window-control {
+  width: 46px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-1);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.titlebar__window-control:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+.titlebar__window-control:active {
+  background: var(--bg-4);
+}
+.titlebar__window-control--close:hover {
+  background: #e81123;
+  color: #ffffff;
+}
+.titlebar__window-control--close:active {
+  background: #c50f1f;
+  color: #ffffff;
+}
+
+/* When the custom controls are visible, push the brand and update badge */
+/* left so they don't sit under the close button. The controls block is  */
+/* 3×46 = 138px wide; add ~12px of breathing room.                       */
+.titlebar[data-platform="windows"] .titlebar__brand {
+  right: 150px;
+}
+.titlebar[data-platform="windows"] .titlebar__update {
+  right: 228px;
 }
 
 /* ── Auto-updater badge ─────────────────────────────────────────────── */
@@ -7029,21 +7130,17 @@ textarea {
 
 .todo-strip__queue-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 20px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   min-height: 24px;
   border-radius: var(--r-small);
   color: var(--text-1);
-  transition: background 120ms ease, opacity 120ms ease;
+  transition: background 120ms ease;
 }
 
 .todo-strip__queue-item:hover {
   background: var(--bg-3);
-}
-
-.todo-strip__queue-item[data-dragging="true"] {
-  opacity: 0.45;
 }
 
 .todo-strip__queue-body {
@@ -7097,7 +7194,22 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
-.todo-strip__queue-delete {
+.todo-strip__queue-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease;
+}
+
+.todo-strip__queue-item:hover .todo-strip__queue-actions,
+.todo-strip__queue-item:focus-within .todo-strip__queue-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.todo-strip__queue-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -7108,15 +7220,19 @@ textarea {
   border-radius: var(--r-med);
   background: transparent;
   color: var(--text-3);
-  opacity: 0.65;
   cursor: pointer;
-  transition: color 120ms ease, opacity 120ms ease, background 120ms ease;
+  transition: color 120ms ease, background 120ms ease;
 }
 
-.todo-strip__queue-delete:hover {
-  background: var(--bg-3);
+.todo-strip__queue-action:hover:not(:disabled) {
+  background: var(--bg-4, var(--bg-3));
   color: var(--text-1);
-  opacity: 1;
+}
+
+.todo-strip__queue-action:disabled {
+  color: var(--text-3);
+  opacity: 0.3;
+  cursor: default;
 }
 
 .todo-strip__message {

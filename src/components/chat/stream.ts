@@ -467,7 +467,7 @@ function bashInputShouldStayHidden(input: unknown, fallback: boolean): boolean {
 
 function bashRunningNotice(sessionId: number): RegExp {
   return new RegExp(
-    `\\n?\\[process still running: bash session ${sessionId}\\]\\nUse bash_input with session_id ${sessionId} to send input or poll output\\. Include a newline when answering a prompt\\. Use kill=true to stop it\\.\\s*$`,
+    `\\n?\\[process still running: (?:bash|PowerShell) session ${sessionId}\\]\\nUse bash_input with session_id ${sessionId} to send input or poll output\\. Include a newline when answering a prompt\\. Use kill=true to stop it\\.\\s*$`,
     "s",
   );
 }
@@ -485,7 +485,7 @@ function isOnlyBashRunningNotice(output: string, sessionId: number): boolean {
 
 function bashSessionIdFromOutput(output?: string): number | null {
   if (!output) return null;
-  const match = output.match(/\[process still running: bash session (\d+)\]/);
+  const match = output.match(/\[process still running: (?:bash|PowerShell) session (\d+)\]/);
   if (!match) return null;
   const value = Number(match[1]);
   return Number.isFinite(value) ? value : null;
@@ -1009,11 +1009,11 @@ function summaryFromInput(
   if (name === "bash_input" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     const session = typeof record.session_id === "number" ? record.session_id : null;
-    if (record.kill === true && session !== null) return `Stop bash session ${session}`;
+    if (record.kill === true && session !== null) return `Stop shell session ${session}`;
     if (typeof record.input === "string" && record.input.trim() && session !== null) {
-      return `Send input to bash session ${session}`;
+      return `Send input to shell session ${session}`;
     }
-    if (session !== null) return `Poll bash session ${session}`;
+    if (session !== null) return `Poll shell session ${session}`;
   }
   if (name === "read" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;

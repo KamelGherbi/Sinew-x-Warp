@@ -13,6 +13,7 @@ use sinew_core::{ChatMessage, ModelRef, Part, Role, ToolDescriptor};
 use uuid::Uuid;
 
 use crate::agent::AgentMode;
+use crate::bash::active_shell_display_name;
 use crate::mcp::McpSettings;
 use crate::skill::SkillSettings;
 use crate::subagent::SubAgentSettings;
@@ -296,6 +297,7 @@ impl OpenRouterModelRecord {
 #[serde(rename_all = "camelCase")]
 pub struct ToolConfigView {
     pub name: String,
+    pub display_name: String,
     pub description: String,
     pub default_description: String,
     pub enabled: bool,
@@ -412,12 +414,12 @@ pub fn tool_settings_view(settings: &ToolSettings, catalog: &[ToolDescriptor]) -
         .collect::<HashMap<_, _>>();
     let mut seen = HashSet::new();
 
-        ToolSettingsView {
-            plan_mode_prompt: settings.plan_mode_prompt().to_string(),
-            default_plan_mode_prompt: DEFAULT_PLAN_MODE_PROMPT.to_string(),
-            image_provider: settings.image_provider,
-            openai_image_use_subscription: settings.openai_image_use_subscription,
-            openai_image_api_key: settings.openai_image_api_key.clone(),
+    ToolSettingsView {
+        plan_mode_prompt: settings.plan_mode_prompt().to_string(),
+        default_plan_mode_prompt: DEFAULT_PLAN_MODE_PROMPT.to_string(),
+        image_provider: settings.image_provider,
+        openai_image_use_subscription: settings.openai_image_use_subscription,
+        openai_image_api_key: settings.openai_image_api_key.clone(),
         nano_banana_api_key: settings.nano_banana_api_key.clone(),
         web_search_provider: settings.web_search_provider,
         linkup_api_key: settings.linkup_api_key.clone(),
@@ -430,6 +432,7 @@ pub fn tool_settings_view(settings: &ToolSettings, catalog: &[ToolDescriptor]) -
                 let setting = by_name.get(descriptor.name.as_str());
                 Some(ToolConfigView {
                     name: descriptor.name.clone(),
+                    display_name: tool_display_name(&descriptor.name),
                     description: setting
                         .map(|tool| tool.description.clone())
                         .unwrap_or_else(|| descriptor.description.clone()),
@@ -440,6 +443,72 @@ pub fn tool_settings_view(settings: &ToolSettings, catalog: &[ToolDescriptor]) -
                 })
             })
             .collect(),
+    }
+}
+
+fn tool_display_name(name: &str) -> String {
+    match name {
+        "bash" => active_shell_display_name().to_string(),
+        "bash_input" => format!("{} input", active_shell_display_name()),
+        _ => default_tool_display_name(name),
+    }
+}
+
+fn default_tool_display_name(name: &str) -> String {
+    match name {
+        "read" => "Read".to_string(),
+        "apply_patch" => "Patch".to_string(),
+        "Glob" => "Glob".to_string(),
+        "Grep" => "Grep".to_string(),
+        "WebSearch" => "Web search".to_string(),
+        "WebFetch" => "Web fetch".to_string(),
+        "CreateImage" => "Create image".to_string(),
+        "Question" => "Question".to_string(),
+        "ToDoList" => "To-do list".to_string(),
+        "LoadMcpTool" => "Load MCP tool".to_string(),
+        "LoadSkill" => "Load skill".to_string(),
+        "TeamRun" => "Team run".to_string(),
+        "TeamStatus" => "Team status".to_string(),
+        "TeamStop" => "Team stop".to_string(),
+        "SendMessage" => "Send message".to_string(),
+        "clean_context" => "Clean context".to_string(),
+        "update_goal" => "Update goal".to_string(),
+        "context_compaction" => "Compact context".to_string(),
+        _ => humanize_tool_name(name),
+    }
+}
+
+fn humanize_tool_name(name: &str) -> String {
+    let mut out = String::new();
+    let mut previous_was_separator = true;
+    let mut previous_was_lowercase = false;
+
+    for ch in name.chars() {
+        if ch == '_' || ch == '-' || ch.is_whitespace() {
+            if !out.ends_with(' ') && !out.is_empty() {
+                out.push(' ');
+            }
+            previous_was_separator = true;
+            previous_was_lowercase = false;
+            continue;
+        }
+        if ch.is_uppercase() && previous_was_lowercase && !out.ends_with(' ') {
+            out.push(' ');
+        }
+        if previous_was_separator {
+            out.extend(ch.to_uppercase());
+        } else {
+            out.extend(ch.to_lowercase());
+        }
+        previous_was_separator = false;
+        previous_was_lowercase = ch.is_lowercase();
+    }
+
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        name.to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 

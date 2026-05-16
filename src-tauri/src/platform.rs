@@ -22,6 +22,11 @@ pub(super) fn create_new_window(app: &AppHandle) -> Result<()> {
             .traffic_light_position(tauri::LogicalPosition::new(14.0, 18.0));
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.decorations(false);
+    }
+
     let window = builder.build().context("unable to create new window")?;
     let _ = window.set_focus();
     Ok(())
@@ -298,8 +303,8 @@ pub(super) fn open_external_url(raw_url: &str) -> Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        let status = Command::new("cmd")
-            .args(["/C", "start", "", url])
+        let status = Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", url])
             .status()
             .context("unable to open link")?;
         if !status.success() {

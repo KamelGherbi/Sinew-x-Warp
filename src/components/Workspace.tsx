@@ -25,7 +25,10 @@ import { SearchPane } from "./SearchPane";
 import { ChatPane, type ExternalDropFeed } from "./chat/ChatPane";
 import { SinewMark } from "./SinewMark";
 import { UpdateBadge } from "./UpdateBadge";
+import { WindowControls, isWindowsPlatform } from "./WindowControls";
 import type {
+  ActiveTurnSummary,
+  ActiveTurnsChangedPayload,
   AgentEvent,
   AgentMode,
   ConversationEventPayload,
@@ -89,6 +92,7 @@ const COMPACTION_CONTINUATION_PROMPT =
   "Continue from the compacted context. Do not repeat completed work. Pick up exactly where you left off and proceed with the next useful step.";
 const GOAL_COMPACTION_CONTINUATION_PROMPT =
   "Continue working toward the active goal from the compacted context. Do not repeat completed work. If the goal is now truly complete, audit it and call update_goal with status complete.";
+const IS_WINDOWS = isWindowsPlatform();
 
 type ViewMode = "chat" | "editor" | "all";
 
@@ -122,6 +126,12 @@ export function Workspace({
     useState<Map<string, Set<string>>>(() => new Map());
   const [streamingModelsBySession, setStreamingModelsBySession] =
     useState<Map<string, SavedConversation["model"]>>(() => new Map());
+  const lastAgentEventSequenceByConversationRef = useRef<Map<string, number>>(
+    new Map(),
+  );
+  const replayActiveTurnEventsRef = useRef<
+    (conversationId: string, afterSequence?: number) => Promise<void>
+  >(async () => {});
   const activeConvIdRef = useRef(bootstrap.activeConversation.id);
   const workspacePathRef = useRef(workspacePath);
   const navigationSeqRef = useRef(0);
@@ -245,11 +255,18 @@ export function Workspace({
         activeConvIdRef.current = loaded.id;
         setActiveConv(loaded);
         onSelectSession?.(workspacePath, id);
+        const sequenceKey = workspaceSessionKey(workspacePath, id);
+        const last = lastAgentEventSequenceByConversationRef.current.get(sequenceKey) ?? 0;
+        if (streamingConversationIds.has(id)) {
+          void replayActiveTurnEventsRef.current(id, last).catch((err) =>
+            console.error(err),
+          );
+        }
       } catch (err) {
         console.error(err);
       }
     },
-    [workspacePath, activeConv.id, onSelectSession],
+    [workspacePath, activeConv.id, onSelectSession, streamingConversationIds],
   );
 
   const createConversation = useCallback(async () => {
@@ -853,7 +870,14 @@ export function Workspace({
   // ---------------- Event subscriptions ----------------
 
   const agentSubsRef = useRef<
-    Set<(conversationId: string, event: AgentEvent, workspacePath: string) => void>
+    Set<
+      (
+        conversationId: string,
+        event: AgentEvent,
+        workspacePath: string,
+        sequence?: number,
+      ) => void
+    >
   >(new Set());
 
   useEffect(() => {
@@ -865,8 +889,28 @@ export function Workspace({
         (event) => {
           const payload = event.payload;
           const payloadWorkspacePath = payload.workspaceId ?? workspacePathRef.current;
+          if (typeof payload.sequence === "number") {
+            const sequenceKey = workspaceSessionKey(
+              payloadWorkspacePath,
+              payload.conversationId,
+            );
+            const last =
+              lastAgentEventSequenceByConversationRef.current.get(
+                sequenceKey,
+              ) ?? 0;
+            if (payload.sequence <= last) return;
+            lastAgentEventSequenceByConversationRef.current.set(
+              sequenceKey,
+              payload.sequence,
+            );
+          }
           for (const handler of agentSubsRef.current) {
-            handler(payload.conversationId, payload.event, payloadWorkspacePath);
+            handler(
+              payload.conversationId,
+              payload.event,
+              payloadWorkspacePath,
+              payload.sequence,
+            );
           }
         },
       );
@@ -883,14 +927,21 @@ export function Workspace({
   }, []);
 
   const subscribeEvents = useCallback(
-    (handler: (conversationId: string, event: AgentEvent) => void) => {
+    (
+      handler: (
+        conversationId: string,
+        event: AgentEvent,
+        sequence?: number,
+      ) => void,
+    ) => {
       const scopedHandler = (
         conversationId: string,
         event: AgentEvent,
         eventWorkspacePath: string,
+        sequence?: number,
       ) => {
         if (eventWorkspacePath !== workspacePathRef.current) return;
-        handler(conversationId, event);
+        handler(conversationId, event, sequence);
       };
       agentSubsRef.current.add(scopedHandler);
       return () => {
@@ -898,6 +949,103 @@ export function Workspace({
       };
     },
     [],
+  );
+
+  const replayActiveTurnEvents = useCallback(
+    async (conversationId: string, afterSequence = 0) => {
+      const workspaceAtRequest = workspacePathRef.current;
+      const replay = await api.replayActiveTurnEvents(
+        workspaceAtRequest,
+        conversationId,
+        afterSequence,
+      );
+      if (workspacePathRef.current !== workspaceAtRequest) return;
+      if (!replay.active) {
+        markConversationStreaming(workspaceAtRequest, conversationId, false);
+        return;
+      }
+      markConversationStreaming(workspaceAtRequest, conversationId, true);
+      const sortedEvents = [...replay.events].sort(
+        (a, b) => a.sequence - b.sequence,
+      );
+      for (const entry of sortedEvents) {
+        const sequenceKey = workspaceSessionKey(workspaceAtRequest, conversationId);
+        const last =
+          lastAgentEventSequenceByConversationRef.current.get(sequenceKey) ?? 0;
+        if (entry.sequence <= last) continue;
+        lastAgentEventSequenceByConversationRef.current.set(
+          sequenceKey,
+          entry.sequence,
+        );
+        for (const handler of agentSubsRef.current) {
+          handler(conversationId, entry.event, workspaceAtRequest, entry.sequence);
+        }
+      }
+    },
+    [markConversationStreaming],
+  );
+
+  useEffect(() => {
+    replayActiveTurnEventsRef.current = replayActiveTurnEvents;
+  }, [replayActiveTurnEvents]);
+
+  const syncActiveTurns = useCallback(
+    (activeTurns: ActiveTurnSummary[]) => {
+      const activeIdsByWorkspace = new Map<string, Set<string>>();
+      const activeSessionKeys = new Set<string>();
+      for (const turn of activeTurns) {
+        const ids = activeIdsByWorkspace.get(turn.workspaceId) ?? new Set<string>();
+        ids.add(turn.conversationId);
+        activeIdsByWorkspace.set(turn.workspaceId, ids);
+        activeSessionKeys.add(workspaceSessionKey(turn.workspaceId, turn.conversationId));
+      }
+
+      setStreamingConversationIdsByWorkspace((prev) => {
+        let changed = prev.size !== activeIdsByWorkspace.size;
+        if (!changed) {
+          for (const [workspaceId, activeIds] of activeIdsByWorkspace) {
+            const currentIds = prev.get(workspaceId);
+            if (!currentIds || currentIds.size !== activeIds.size) {
+              changed = true;
+              break;
+            }
+            for (const id of activeIds) {
+              if (!currentIds.has(id)) {
+                changed = true;
+                break;
+              }
+            }
+            if (changed) break;
+          }
+        }
+        return changed ? activeIdsByWorkspace : prev;
+      });
+
+      setStreamingModelsBySession((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const sessionKey of Array.from(next.keys())) {
+          if (!activeSessionKeys.has(sessionKey)) {
+            next.delete(sessionKey);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+
+      for (const turn of activeTurns) {
+        if (turn.workspaceId !== workspacePathRef.current) continue;
+        const sequenceKey = workspaceSessionKey(turn.workspaceId, turn.conversationId);
+        const last =
+          lastAgentEventSequenceByConversationRef.current.get(sequenceKey) ?? 0;
+        if (turn.latestSequence > last) {
+          void replayActiveTurnEvents(turn.conversationId, last).catch((err) => {
+            console.error(err);
+          });
+        }
+      }
+    },
+    [replayActiveTurnEvents],
   );
 
   useEffect(() => {
@@ -956,6 +1104,43 @@ export function Workspace({
       agentSubsRef.current.delete(handler);
     };
   }, [markConversationStreaming, onWorkspaceConversationsReplace, refreshChangedFiles]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .listActiveTurns()
+      .then((activeTurns) => {
+        if (!cancelled) syncActiveTurns(activeTurns);
+      })
+      .catch((err) => {
+        if (!cancelled) console.error(err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [syncActiveTurns, workspacePath]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | null = null;
+    (async () => {
+      const u = await listen<ActiveTurnsChangedPayload>(
+        "active-turns-changed",
+        (event) => {
+          syncActiveTurns(event.payload.activeTurns);
+        },
+      );
+      if (cancelled) {
+        u();
+      } else {
+        unlisten = u;
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [syncActiveTurns]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1659,7 +1844,11 @@ export function Workspace({
       data-center-visible={effectiveCenterVisible ? "true" : "false"}
       data-view={viewMode}
     >
-      <div className="titlebar" data-tauri-drag-region>
+      <div
+        className="titlebar"
+        data-tauri-drag-region
+        data-platform={IS_WINDOWS ? "windows" : undefined}
+      >
         <div
           className="titlebar__actions"
           data-tauri-drag-region
@@ -1734,6 +1923,7 @@ export function Workspace({
           <span className="titlebar__brand-name">Sinew</span>
         </div>
         <UpdateBadge />
+        <WindowControls />
       </div>
 
       <div

@@ -8,10 +8,31 @@ pub(super) async fn open_workspace(
 ) -> std::result::Result<WorkspaceBootstrap, String> {
     let workspace_root =
         normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
-    let bootstrap = state
+    let mut bootstrap = state
         .store
         .bootstrap_workspace(&workspace_root, &state.default_model, &state.system_prompt)
         .map_err(error_to_string)?;
+    let workspace_id = workspace_root.display().to_string();
+    let active_conversation_id = state
+        .active_turn_details
+        .lock()
+        .ok()
+        .and_then(|active| {
+            active
+                .values()
+                .filter(|record| record.workspace_id == workspace_id)
+                .max_by_key(|record| record.started_at_ms)
+                .map(|record| record.conversation_id.clone())
+        });
+    if let Some(conversation_id) = active_conversation_id {
+        if let Some(active_conversation) = state
+            .store
+            .load_conversation(&workspace_id, &conversation_id)
+            .map_err(error_to_string)?
+        {
+            bootstrap.active_conversation = active_conversation;
+        }
+    }
     apply_window_title(&window, &bootstrap.workspace.name);
     Ok(bootstrap)
 }

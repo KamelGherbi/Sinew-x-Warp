@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use crate::bash::active_shell_display_name;
+
 pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
     if name == "bash" {
         if let Some(desc) = input
@@ -16,12 +18,13 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
     }
     if name == "bash_input" {
         if let Some(session_id) = input.get("session_id").and_then(|value| value.as_u64()) {
+            let shell = active_shell_display_name();
             if input
                 .get("kill")
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false)
             {
-                return format!("Stop bash session {session_id}");
+                return format!("Stop {shell} session {session_id}");
             }
             if input
                 .get("input")
@@ -30,9 +33,9 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
                 .filter(|value| !value.is_empty())
                 .is_some()
             {
-                return format!("Send input to bash session {session_id}");
+                return format!("Send input to {shell} session {session_id}");
             }
-            return format!("Poll bash session {session_id}");
+            return format!("Poll {shell} session {session_id}");
         }
     }
     if name == "read" {

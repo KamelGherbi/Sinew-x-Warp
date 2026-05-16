@@ -2178,7 +2178,7 @@ function ToolSettingsItem({
             <ToolGlyph name={tool.name} />
           </span>
           <span className="settings-pane__tool-config-label">
-            {labelForTool(tool.name)}
+            {labelForTool(tool)}
           </span>
         </span>
         <div className="settings-pane__tool-config-actions">
@@ -3424,6 +3424,7 @@ function normalizeToolSettings(settings: ToolSettings): ToolSettings {
       return [
         {
           name,
+          displayName: tool.displayName?.trim() || undefined,
           description: tool.description ?? defaultDescription,
           defaultDescription,
           enabled: tool.enabled !== false,
@@ -3827,8 +3828,8 @@ function ToolGlyph({ name }: { name: string }) {
 }
 
 const TOOL_LABEL: Record<string, string> = {
-  bash: "Bash",
-  bash_input: "Bash input",
+  bash: "Shell",
+  bash_input: "Shell input",
   read: "Read",
   apply_patch: "Patch",
   Glob: "Glob",
@@ -3862,7 +3863,13 @@ const TOOL_ICON: Record<string, string> = {
   context_compaction: "solar:archive-linear",
 };
 
-function labelForTool(name: string): string {
+function labelForTool(tool: ToolConfig | string): string {
+  if (typeof tool !== "string") {
+    const displayName = tool.displayName?.trim();
+    if (displayName) return displayName;
+    return TOOL_LABEL[tool.name] ?? humanizeToolName(tool.name);
+  }
+  const name = tool;
   return TOOL_LABEL[name] ?? humanizeToolName(name);
 }
 

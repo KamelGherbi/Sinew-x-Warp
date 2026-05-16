@@ -86,6 +86,8 @@ pub enum AgentEvent {
 pub struct ConversationEvent {
     pub workspace_id: String,
     pub conversation_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<u64>,
     pub event: AgentEvent,
 }
 

@@ -50,7 +50,7 @@ pub(super) async fn spawn_terminal(
         ))
         .map_err(error_to_string)?;
 
-    let mut command = CommandBuilder::new_default_prog();
+    let mut command = default_terminal_command();
     command.cwd(workspace_root.as_os_str());
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
@@ -89,6 +89,22 @@ pub(super) async fn spawn_terminal(
     );
 
     Ok(TerminalSpawnOutput { session_id })
+}
+
+fn default_terminal_command() -> CommandBuilder {
+    #[cfg(windows)]
+    {
+        let mut command = CommandBuilder::new("powershell.exe");
+        command.arg("-NoLogo");
+        command.arg("-NoProfile");
+        command.arg("-ExecutionPolicy");
+        command.arg("Bypass");
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        CommandBuilder::new_default_prog()
+    }
 }
 
 #[tauri::command]

@@ -105,6 +105,7 @@ pub(super) async fn send_message(
         }
         active_turns.insert(input.conversation_id.clone(), cancel.clone());
     }
+    register_active_turn(&app, &state, &workspace_id, &input.conversation_id).await;
 
     let turn_user_history_index = conversation.history.len();
     let before_turn_snapshot = snapshot_workspace_for_checkpoint(&workspace_root);
@@ -120,9 +121,16 @@ pub(super) async fn send_message(
         .save_conversation(&conversation)
         .map_err(|err| {
             let active_turns = state.active_turns.clone();
+            let active_turn_details = state.active_turn_details.clone();
+            let app = app.clone();
             let conversation_id = input.conversation_id.clone();
             tauri::async_runtime::spawn(async move {
                 active_turns.lock().await.remove(&conversation_id);
+                active_turn_details
+                    .lock()
+                    .map(|mut active| active.remove(&conversation_id))
+                    .ok();
+                emit_active_turns_changed(&app, &active_turn_details).await;
             });
             error_to_string(err)
         })?;
@@ -199,6 +207,7 @@ pub(super) async fn send_message(
 
     let store = state.store.clone();
     let active_turns = state.active_turns.clone();
+    let active_turn_details = state.active_turn_details.clone();
     let state_for_wake = state.inner().clone();
     let conversation_id = conversation.id.clone();
     let conversation_title = conversation.title.clone();
@@ -326,13 +335,18 @@ pub(super) async fn send_message(
                                     );
                                 }
                             }
-                            active_turns.lock().await.remove(&conversation_id);
                             let _ = emit_agent_event(
                                 &app,
                                 &workspace_id,
                                 &conversation_id,
                                 &AgentEvent::TurnFinished,
                             );
+                            active_turns.lock().await.remove(&conversation_id);
+                            active_turn_details
+                                .lock()
+                                .map(|mut active| active.remove(&conversation_id))
+                                .ok();
+                            emit_active_turns_changed(&app, &active_turn_details).await;
                         }
                         Err(err) => {
                             let _ = emit_agent_event(
@@ -343,13 +357,18 @@ pub(super) async fn send_message(
                                     message: format!("turn task failed: {err}"),
                                 },
                             );
-                            active_turns.lock().await.remove(&conversation_id);
                             let _ = emit_agent_event(
                                 &app,
                                 &workspace_id,
                                 &conversation_id,
                                 &AgentEvent::TurnFinished,
                             );
+                            active_turns.lock().await.remove(&conversation_id);
+                            active_turn_details
+                                .lock()
+                                .map(|mut active| active.remove(&conversation_id))
+                                .ok();
+                            emit_active_turns_changed(&app, &active_turn_details).await;
                         }
                     }
                 }
@@ -406,6 +425,7 @@ pub(super) async fn compact_conversation(
         }
         active_turns.insert(input.conversation_id.clone(), cancel);
     }
+    register_active_turn(&app, &state, &workspace_id, &input.conversation_id).await;
 
     let conversation_id = conversation.id.clone();
     let source_history = conversation.history.clone();
@@ -565,6 +585,12 @@ pub(super) async fn compact_conversation(
         &AgentEvent::TurnFinished,
     );
     state.active_turns.lock().await.remove(&conversation_id);
+    state
+        .active_turn_details
+        .lock()
+        .map(|mut active| active.remove(&conversation_id))
+        .ok();
+    emit_active_turns_changed(&app, &state.active_turn_details).await;
 
     command_result
 }
@@ -584,6 +610,67 @@ pub(super) async fn cancel_turn(
     Ok(match sender {
         Some(sender) => sender.cancel_all(),
         None => false,
+    })
+}
+
+#[tauri::command]
+pub(super) async fn list_active_turns(
+    state: State<'_, DesktopState>,
+) -> std::result::Result<Vec<ActiveTurnSummary>, String> {
+    let active = state
+        .active_turn_details
+        .lock()
+        .map_err(|_| "active turn state is unavailable".to_string())?;
+    Ok(active_turn_summaries_from_map(&active))
+}
+
+#[tauri::command]
+pub(super) async fn replay_active_turn_events(
+    state: State<'_, DesktopState>,
+    input: ActiveTurnReplayInput,
+) -> std::result::Result<ActiveTurnReplay, String> {
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let workspace_id = workspace_root.display().to_string();
+    let after_sequence = input.after_sequence.unwrap_or(0);
+    let active = state
+        .active_turn_details
+        .lock()
+        .map_err(|_| "active turn state is unavailable".to_string())?;
+    let Some(record) = active.get(&input.conversation_id) else {
+        return Ok(ActiveTurnReplay {
+            active: false,
+            workspace_id,
+            conversation_id: input.conversation_id,
+            started_at_ms: None,
+            latest_sequence: 0,
+            events: Vec::new(),
+        });
+    };
+
+    if record.workspace_id != workspace_id {
+        return Ok(ActiveTurnReplay {
+            active: false,
+            workspace_id,
+            conversation_id: input.conversation_id,
+            started_at_ms: None,
+            latest_sequence: 0,
+            events: Vec::new(),
+        });
+    }
+
+    Ok(ActiveTurnReplay {
+        active: true,
+        workspace_id: record.workspace_id.clone(),
+        conversation_id: record.conversation_id.clone(),
+        started_at_ms: Some(record.started_at_ms),
+        latest_sequence: record.latest_sequence(),
+        events: record
+            .events
+            .iter()
+            .filter(|entry| entry.sequence > after_sequence)
+            .cloned()
+            .collect(),
     })
 }
 
@@ -622,16 +709,105 @@ pub(super) fn emit_agent_event(
     conversation_id: &str,
     event: &AgentEvent,
 ) -> Result<()> {
+    let sequence = remember_active_turn_event(app, conversation_id, event.clone());
     app.emit(
         AGENT_EVENT_NAME,
         ConversationEvent {
             workspace_id: workspace_id.to_string(),
             conversation_id: conversation_id.to_string(),
+            sequence,
             event: event.clone(),
         },
     )
     .context("unable to emit agent event")?;
     Ok(())
+}
+
+pub(super) async fn register_active_turn(
+    app: &AppHandle,
+    state: &DesktopState,
+    workspace_id: &str,
+    conversation_id: &str,
+) {
+    {
+        let mut active = match state.active_turn_details.lock() {
+            Ok(active) => active,
+            Err(_) => return,
+        };
+        active.insert(
+            conversation_id.to_string(),
+            ActiveTurnRecord {
+                workspace_id: workspace_id.to_string(),
+                conversation_id: conversation_id.to_string(),
+                started_at_ms: now_ms(),
+                events: Vec::new(),
+                next_sequence: 1,
+            },
+        );
+    }
+    emit_active_turns_changed(app, &state.active_turn_details).await;
+}
+
+pub(super) async fn emit_active_turns_changed(
+    app: &AppHandle,
+    active_turn_details: &Arc<StdMutex<HashMap<String, ActiveTurnRecord>>>,
+) {
+    let active_turns = {
+        let active = match active_turn_details.lock() {
+            Ok(active) => active,
+            Err(_) => return,
+        };
+        active_turn_summaries_from_map(&active)
+    };
+    let _ = app.emit(
+        ACTIVE_TURNS_EVENT_NAME,
+        ActiveTurnsChangedPayload { active_turns },
+    );
+}
+
+pub(super) fn active_turn_summaries_from_map(
+    active: &HashMap<String, ActiveTurnRecord>,
+) -> Vec<ActiveTurnSummary> {
+    let mut summaries = active
+        .values()
+        .map(|record| ActiveTurnSummary {
+            workspace_id: record.workspace_id.clone(),
+            conversation_id: record.conversation_id.clone(),
+            started_at_ms: record.started_at_ms,
+            latest_sequence: record.latest_sequence(),
+        })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|a, b| {
+        a.workspace_id
+            .cmp(&b.workspace_id)
+            .then_with(|| b.started_at_ms.cmp(&a.started_at_ms))
+            .then_with(|| a.conversation_id.cmp(&b.conversation_id))
+    });
+    summaries
+}
+
+fn remember_active_turn_event(
+    app: &AppHandle,
+    conversation_id: &str,
+    event: AgentEvent,
+) -> Option<u64> {
+    let state = app.try_state::<DesktopState>()?;
+    let active_turn_details = state.active_turn_details.clone();
+    {
+        let mut active = active_turn_details.lock().ok()?;
+        let record = active.get_mut(conversation_id)?;
+        let sequence = record.next_sequence;
+        record.next_sequence = record.next_sequence.saturating_add(1);
+        record.events.push(SequencedAgentEvent { sequence, event });
+        let overflow = record
+            .events
+            .len()
+            .saturating_sub(ACTIVE_TURN_EVENT_BUFFER_MAX);
+        if overflow > 0 {
+            record.events.drain(0..overflow);
+        }
+        Some(sequence)
+    }
 }
 
 pub(super) fn emit_agent_file_changes(app: &AppHandle, workspace_id: &str, event: &AgentEvent) {
@@ -1079,7 +1255,7 @@ pub(super) fn configurable_tool_catalog(workspace_root: &Path) -> Vec<ToolDescri
 }
 
 pub(super) fn system_prompt_for_workspace(workspace_root: &Path, base: &str) -> Result<String> {
-    let mut sections = Vec::new();
+    let mut sections = vec![format!("# Shell environment\n\n{}", shell_system_prompt())];
 
     if let Some(instructions) =
         read_workspace_prompt_file(workspace_root, WORKSPACE_INSTRUCTIONS_FILE)?
@@ -1093,10 +1269,6 @@ pub(super) fn system_prompt_for_workspace(workspace_root: &Path, base: &str) -> 
         sections.push(format!(
             "# Workspace design context\n\nThe following design guidance comes from the current workspace and should guide product, UX, visual, and frontend decisions.\n\n{design}"
         ));
-    }
-
-    if sections.is_empty() {
-        return Ok(base.to_string());
     }
 
     Ok(format!("{base}\n\n{}", sections.join("\n\n")))

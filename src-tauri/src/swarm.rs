@@ -289,6 +289,7 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
         }
         active_turns.insert(conversation_id.clone(), cancel.clone());
     }
+    register_active_turn(&app, &state, &workspace_id, &conversation_id).await;
 
     let turn_user_history_index = conversation.history.len();
     let before_turn_snapshot = snapshot_workspace_for_checkpoint(&workspace_root);
@@ -304,9 +305,16 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
         .save_conversation(&conversation)
         .map_err(|err| {
             let active_turns = state.active_turns.clone();
+            let active_turn_details = state.active_turn_details.clone();
+            let app = app.clone();
             let conversation_id = conversation_id.clone();
             tauri::async_runtime::spawn(async move {
                 active_turns.lock().await.remove(&conversation_id);
+                active_turn_details
+                    .lock()
+                    .map(|mut active| active.remove(&conversation_id))
+                    .ok();
+                emit_active_turns_changed(&app, &active_turn_details).await;
             });
             error_to_string(err)
         })?;
@@ -391,6 +399,7 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
 
     let store = state.store.clone();
     let active_turns = state.active_turns.clone();
+    let active_turn_details = state.active_turn_details.clone();
     let conversation_title = conversation.title.clone();
     let conversation_model = conversation.model.clone();
     let conversation_mode_model_settings = conversation.mode_model_settings.clone();
@@ -488,13 +497,18 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
                                     );
                                 }
                             }
-                            active_turns.lock().await.remove(&conversation_id_for_events);
                             let _ = emit_agent_event(
                                 &app,
                                 &workspace_id,
                                 &conversation_id_for_events,
                                 &AgentEvent::TurnFinished,
                             );
+                            active_turns.lock().await.remove(&conversation_id_for_events);
+                            active_turn_details
+                                .lock()
+                                .map(|mut active| active.remove(&conversation_id_for_events))
+                                .ok();
+                            emit_active_turns_changed(&app, &active_turn_details).await;
                         }
                         Err(err) => {
                             let _ = emit_agent_event(
@@ -505,13 +519,18 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
                                     message: format!("turn task failed: {err}"),
                                 },
                             );
-                            active_turns.lock().await.remove(&conversation_id_for_events);
                             let _ = emit_agent_event(
                                 &app,
                                 &workspace_id,
                                 &conversation_id_for_events,
                                 &AgentEvent::TurnFinished,
                             );
+                            active_turns.lock().await.remove(&conversation_id_for_events);
+                            active_turn_details
+                                .lock()
+                                .map(|mut active| active.remove(&conversation_id_for_events))
+                                .ok();
+                            emit_active_turns_changed(&app, &active_turn_details).await;
                         }
                     }
                 }

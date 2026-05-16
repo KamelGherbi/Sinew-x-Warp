@@ -166,6 +166,41 @@ pub(super) struct ConversationInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(super) struct ActiveTurnReplayInput {
+    pub(super) workspace_path: String,
+    pub(super) conversation_id: String,
+    #[serde(default)]
+    pub(super) after_sequence: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ActiveTurnSummary {
+    pub(super) workspace_id: String,
+    pub(super) conversation_id: String,
+    pub(super) started_at_ms: i64,
+    pub(super) latest_sequence: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ActiveTurnsChangedPayload {
+    pub(super) active_turns: Vec<ActiveTurnSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ActiveTurnReplay {
+    pub(super) active: bool,
+    pub(super) workspace_id: String,
+    pub(super) conversation_id: String,
+    pub(super) started_at_ms: Option<i64>,
+    pub(super) latest_sequence: u64,
+    pub(super) events: Vec<SequencedAgentEvent>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct StopAgentSwarmInput {
     pub(super) workspace_path: String,
     pub(super) conversation_id: String,
