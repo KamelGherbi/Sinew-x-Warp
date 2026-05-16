@@ -20,6 +20,8 @@ type GroupedSessions = {
   sessions: SessionSummary[];
 };
 
+type SessionScope = "current" | "all";
+
 export function SessionSwitcher({
   activeWorkspacePath,
   activeSessionKey,
@@ -37,6 +39,7 @@ export function SessionSwitcher({
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [scope, setScope] = useState<SessionScope>("current");
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -72,9 +75,17 @@ export function SessionSwitcher({
     };
   }, [refreshToken]);
 
+  const scopedSessions = useMemo(
+    () =>
+      scope === "current"
+        ? sessions.filter((session) => session.workspaceId === activeWorkspacePath)
+        : sessions,
+    [activeWorkspacePath, scope, sessions],
+  );
+
   const grouped = useMemo(
-    () => groupSessions(filterSessions(sessions, query)),
-    [sessions, query],
+    () => groupSessions(filterSessions(scopedSessions, query)),
+    [scopedSessions, query],
   );
 
   const resultCount = grouped.reduce(
@@ -114,8 +125,14 @@ export function SessionSwitcher({
       <div className="session-switcher__panel">
         <div className="session-switcher__head">
           <div>
-            <div className="session-switcher__eyebrow">Global sessions</div>
-            <div className="session-switcher__title">All projects</div>
+            <div className="session-switcher__eyebrow">
+              {scope === "current" ? "Project sessions" : "Global sessions"}
+            </div>
+            <div className="session-switcher__title">
+              {scope === "current"
+                ? activeProjectName(scopedSessions, activeWorkspacePath)
+                : "All projects"}
+            </div>
           </div>
           <button
             type="button"
@@ -143,6 +160,22 @@ export function SessionSwitcher({
             <Icon icon="solar:add-square-linear" width={15} height={15} />
             New session
           </button>
+          <div className="session-switcher__scope" role="group" aria-label="Session scope">
+            <button
+              type="button"
+              data-active={scope === "current" ? "true" : "false"}
+              onClick={() => setScope("current")}
+            >
+              Current project
+            </button>
+            <button
+              type="button"
+              data-active={scope === "all" ? "true" : "false"}
+              onClick={() => setScope("all")}
+            >
+              All projects
+            </button>
+          </div>
           <span>Type /sessions, /session, /resume or /continue in chat.</span>
         </div>
 
@@ -151,7 +184,9 @@ export function SessionSwitcher({
           {error && <div className="session-switcher__empty">{error}</div>}
           {!loading && !error && grouped.length === 0 && (
             <div className="session-switcher__empty">
-              No matching sessions.
+              {scope === "current"
+                ? "No matching sessions in this project."
+                : "No matching sessions."}
             </div>
           )}
           {grouped.map((group) => (
@@ -290,6 +325,22 @@ function groupSessions(sessions: SessionSummary[]): GroupedSessions[] {
 
 function sessionKey(session: SessionSummary): string {
   return `${session.workspaceId}\u001f${session.id}`;
+}
+
+function activeProjectName(
+  sessions: SessionSummary[],
+  activeWorkspacePath: string,
+): string {
+  return (
+    sessions.find((session) => session.workspaceId === activeWorkspacePath)
+      ?.workspaceName ?? workspaceNameFromPath(activeWorkspacePath)
+  );
+}
+
+function workspaceNameFromPath(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const separator = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return separator >= 0 ? trimmed.slice(separator + 1) || trimmed : trimmed;
 }
 
 function sessionDateGroup(timestamp: number): string {

@@ -1735,6 +1735,28 @@ textarea {
   color: var(--text-0);
   background: var(--bg-4);
 }
+.session-switcher__scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-med);
+  background: var(--bg-2);
+}
+.session-switcher__scope button {
+  height: 24px;
+  padding: 0 8px;
+  color: var(--text-3);
+  background: transparent;
+}
+.session-switcher__scope button:hover {
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+.session-switcher__scope button[data-active="true"] {
+  color: var(--text-0);
+  background: var(--bg-4);
+}
 .session-switcher__list {
   min-height: 0;
   overflow: auto;
