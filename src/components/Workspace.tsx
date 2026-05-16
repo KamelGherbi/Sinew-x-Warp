@@ -590,10 +590,15 @@ export function Workspace({
   }, []);
 
   const openSettings = useCallback(() => {
+    if (settingsActive) {
+      setSettingsOpen(false);
+      setSettingsActive(false);
+      return;
+    }
     setSettingsOpen(true);
     setSettingsActive(true);
     setViewMode((current) => (current === "chat" ? "all" : current));
-  }, []);
+  }, [settingsActive]);
 
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
