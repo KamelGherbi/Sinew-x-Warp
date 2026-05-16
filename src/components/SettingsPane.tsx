@@ -186,7 +186,7 @@ export function SettingsPane({ workspacePath }: Props) {
   const selectedServer =
     settings.servers.find((server) => server.id === selectedServerId) ?? null;
   const selectedProbe =
-    probes.find((probe) => probe.serverId === selectedServerId) ?? null;
+    selectedServer ? probeForServer(probes, selectedServer) ?? null : null;
 
   // ---- Tools load ------------------------------------------------------
   const loadToolSettings = useCallback(async () => {
@@ -2365,7 +2365,7 @@ function McpSection({
               <div className="settings-pane__nav-list-divider" />
             )}
             {servers.map((server) => {
-              const probe = probes.find((item) => item.serverId === server.id);
+              const probe = probeForServer(probes, server);
               const tone = !server.enabled
                 ? "off"
                 : !probe
@@ -3578,6 +3578,7 @@ function settingsToJson(settings: McpSettings): string {
   const mcpServers: Record<string, unknown> = {};
   for (const server of settings.servers) {
     const entry: Record<string, unknown> = {
+      id: server.id,
       command: server.command,
     };
     if (server.args.length) entry.args = server.args;
@@ -3588,6 +3589,24 @@ function settingsToJson(settings: McpSettings): string {
   }
 
   return `${JSON.stringify({ mcpServers }, null, 2)}\n`;
+}
+
+function probeForServer(
+  probes: McpServerProbe[],
+  server: McpServerConfig,
+): McpServerProbe | undefined {
+  return probes.find(
+    (probe) =>
+      probe.serverId === server.id ||
+      normalizedMcpLabel(probe.serverName) === normalizedMcpLabel(server.name),
+  );
+}
+
+function normalizedMcpLabel(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
 }
 
 function deterministicId(name: string): string {

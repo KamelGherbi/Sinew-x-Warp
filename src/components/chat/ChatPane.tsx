@@ -253,6 +253,15 @@ type InlineMention = {
   name: string;
 };
 
+type SlashCommand = {
+  command: string;
+  aliases?: string[];
+  title: string;
+  description: string;
+  icon: string;
+  run: () => void;
+};
+
 type ContextEstimateState =
   | { status: "loading"; estimate: ContextEstimate | null }
   | { status: "ready"; estimate: ContextEstimate }
@@ -430,6 +439,7 @@ export function ChatPane({
     null,
   );
   const [mention, setMention] = useState<MentionState | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
   const [inlineMentions, setInlineMentions] = useState<InlineMention[]>([]);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const overlayInnerRef = useRef<HTMLDivElement | null>(null);
@@ -1800,6 +1810,83 @@ export function ChatPane({
     [effectiveMode, onModeChange, selectorLocked],
   );
 
+  const slashCommands = useMemo<SlashCommand[]>(
+    () => [
+      {
+        command: "/sessions",
+        aliases: ["/session", "/resume", "/continue"],
+        title: "Open sessions",
+        description: "Browse and resume project sessions.",
+        icon: "solar:clock-circle-linear",
+        run: () => onOpenSessions?.(),
+      },
+      {
+        command: "/compact",
+        title: "Compact context",
+        description: "Summarize this chat and continue with a smaller context.",
+        icon: "solar:minimize-square-3-linear",
+        run: () => void handleCompact(),
+      },
+      {
+        command: "/act",
+        title: "Switch to Act mode",
+        description: "Let the agent edit, run tools, and implement changes.",
+        icon: "solar:bolt-circle-linear",
+        run: () => void handleModeSelect("act"),
+      },
+      {
+        command: "/plan",
+        title: "Switch to Plan mode",
+        description: "Ask questions and prepare a plan before implementation.",
+        icon: "solar:clipboard-list-linear",
+        run: () => void handleModeSelect("plan"),
+      },
+      {
+        command: "/goal",
+        title: "Switch to Goal mode",
+        description: "Keep working toward a longer-running objective.",
+        icon: "solar:flag-2-linear",
+        run: () => void handleModeSelect("goal"),
+      },
+    ],
+    [handleCompact, handleModeSelect, onOpenSessions],
+  );
+
+  const slashQuery = slashCommandQuery(text);
+  const slashMatches = useMemo(
+    () => (slashQuery === null ? [] : filterSlashCommands(slashCommands, slashQuery)),
+    [slashCommands, slashQuery],
+  );
+  const slashOpen = slashQuery !== null && slashMatches.length > 0 && !mention;
+  const selectedSlashCommand = slashMatches[slashIndex] ?? slashMatches[0] ?? null;
+
+  useEffect(() => {
+    if (slashIndex >= slashMatches.length) {
+      setSlashIndex(Math.max(0, slashMatches.length - 1));
+    }
+  }, [slashIndex, slashMatches.length]);
+
+  const executeSlashCommand = useCallback(
+    (command: SlashCommand | null) => {
+      if (!command) return;
+      setText("");
+      setInlineMentions([]);
+      setMention(null);
+      command.run();
+    },
+    [],
+  );
+
+  const completeSlashCommand = useCallback(
+    (command: SlashCommand | null) => {
+      if (!command) return;
+      setText(command.command);
+      pendingCaretRef.current = command.command.length;
+      setMention(null);
+    },
+    [],
+  );
+
   const commandSelectionForMode = useCallback(
     (targetMode: AgentMode): ModeModelSelection => {
       const rawSelection =
@@ -1979,6 +2066,35 @@ export function ChatPane({
   );
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashOpen) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSlashIndex((index) => (index + 1) % slashMatches.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSlashIndex(
+          (index) => (index - 1 + slashMatches.length) % slashMatches.length,
+        );
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        completeSlashCommand(selectedSlashCommand);
+        return;
+      }
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        executeSlashCommand(selectedSlashCommand);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setText("");
+        return;
+      }
+    }
     if (mention) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -2024,6 +2140,7 @@ export function ChatPane({
   ) => {
     const value = event.target.value;
     setText(value);
+    if (slashCommandQuery(value) !== null) setSlashIndex(0);
     detectMention(value, event.target.selectionStart ?? value.length);
   };
 
@@ -2745,6 +2862,41 @@ export function ChatPane({
           className="composer__box"
           data-drop={dropActive ? "true" : "false"}
         >
+          {slashOpen && (
+            <div
+              className="slash-popover"
+              role="listbox"
+              aria-label="Slash commands"
+            >
+              {slashMatches.map((command, idx) => {
+                const selected = idx === slashIndex;
+                return (
+                  <button
+                    key={command.command}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    className="slash-popover__row"
+                    data-selected={selected ? "true" : "false"}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setSlashIndex(idx)}
+                    onClick={() => executeSlashCommand(command)}
+                  >
+                    <span className="slash-popover__icon">
+                      <Icon icon={command.icon} width={15} height={15} />
+                    </span>
+                    <span className="slash-popover__main">
+                      <span className="slash-popover__command">{command.command}</span>
+                      <span className="slash-popover__title">{command.title}</span>
+                    </span>
+                    <span className="slash-popover__description">
+                      {command.description}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {mention && (
             <div
               className="mention-popover"
@@ -4820,6 +4972,25 @@ function isSessionCommand(value: string): boolean {
     command === "/resume" ||
     command === "/continue"
   );
+}
+
+function slashCommandQuery(value: string): string | null {
+  const trimmed = value.trimStart();
+  if (!trimmed.startsWith("/")) return null;
+  if (/\s/.test(trimmed)) return null;
+  return trimmed.toLowerCase();
+}
+
+function filterSlashCommands(
+  commands: SlashCommand[],
+  query: string,
+): SlashCommand[] {
+  return commands.filter((command) => {
+    const aliases = command.aliases ?? [];
+    return [command.command, ...aliases].some((candidate) =>
+      candidate.toLowerCase().startsWith(query),
+    );
+  });
 }
 
 function buildQueuedPrompt({
