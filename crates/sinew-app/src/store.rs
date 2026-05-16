@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::agent::AgentMode;
 use crate::bash::active_shell_display_name;
-use crate::mcp::McpSettings;
+use crate::mcp::{with_default_mcp_servers, McpSettings};
 use crate::skill::SkillSettings;
 use crate::subagent::{with_default_sub_agents, SubAgentSettings};
 use crate::todo::TodoListState;
@@ -1023,11 +1023,11 @@ impl AppStore {
 
         if let Some(json) = stored {
             if let Ok(settings) = serde_json::from_str::<McpSettings>(&json) {
-                return Ok(settings);
+                return Ok(with_default_mcp_servers(settings));
             }
         }
 
-        Ok(McpSettings::default())
+        Ok(with_default_mcp_servers(McpSettings::default()))
     }
 
     pub fn save_mcp_settings(&self, settings: &McpSettings) -> Result<()> {

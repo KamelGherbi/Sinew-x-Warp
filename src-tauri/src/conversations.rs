@@ -210,7 +210,7 @@ pub(super) async fn save_mcp_settings(
         .store
         .save_mcp_settings(&input.settings)
         .map_err(error_to_string)?;
-    Ok(input.settings)
+    state.store.load_mcp_settings().map_err(error_to_string)
 }
 
 #[tauri::command]

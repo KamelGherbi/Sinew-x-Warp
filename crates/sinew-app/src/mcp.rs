@@ -61,6 +61,91 @@ pub struct McpEnvVar {
     pub value: String,
 }
 
+pub fn with_default_mcp_servers(mut settings: McpSettings) -> McpSettings {
+    let mut defaults = default_mcp_servers();
+    defaults.retain(|default_server| {
+        !settings
+            .servers
+            .iter()
+            .any(|server| mcp_server_matches_default(server, default_server))
+    });
+    defaults.extend(settings.servers);
+    settings.servers = defaults;
+    settings
+}
+
+fn default_mcp_servers() -> Vec<McpServerConfig> {
+    vec![
+        McpServerConfig {
+            id: "context7".to_string(),
+            name: "Context7".to_string(),
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@upstash/context7-mcp@latest".to_string(),
+            ],
+            env: Vec::new(),
+            cwd: None,
+            enabled: true,
+        },
+        McpServerConfig {
+            id: "sequential-thinking".to_string(),
+            name: "Sequential Thinking".to_string(),
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-sequential-thinking".to_string(),
+            ],
+            env: Vec::new(),
+            cwd: None,
+            enabled: false,
+        },
+        McpServerConfig {
+            id: "memory".to_string(),
+            name: "Memory".to_string(),
+            command: "npx".to_string(),
+            args: vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-memory".to_string(),
+            ],
+            env: Vec::new(),
+            cwd: None,
+            enabled: false,
+        },
+        McpServerConfig {
+            id: "playwright".to_string(),
+            name: "Playwright".to_string(),
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "@playwright/mcp@latest".to_string()],
+            env: Vec::new(),
+            cwd: None,
+            enabled: false,
+        },
+    ]
+}
+
+fn mcp_server_matches_default(server: &McpServerConfig, default_server: &McpServerConfig) -> bool {
+    let server_id = normalized_mcp_identity(&server.id);
+    let server_name = normalized_mcp_identity(&server.name);
+    let default_id = normalized_mcp_identity(&default_server.id);
+    let default_name = normalized_mcp_identity(&default_server.name);
+
+    server_id == default_id
+        || server_name == default_name
+        || (!server.command.trim().is_empty()
+            && server.command.trim() == default_server.command
+            && server.args == default_server.args)
+}
+
+fn normalized_mcp_identity(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpToolInfo {
