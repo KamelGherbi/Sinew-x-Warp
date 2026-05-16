@@ -863,6 +863,9 @@ textarea {
   flex-direction: column;
   background: var(--bg-0);
 }
+.chat-stack[data-visible="false"] {
+  display: none;
+}
 .chat-stack[data-expanded="true"] {
   flex: 1 1 0;
 }

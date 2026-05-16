@@ -2117,26 +2117,24 @@ export function Workspace({
             onDelta={(delta) => setRightWidth((v) => clampColumn(v - delta))}
           />
         )}
-        {chatVisible && (
-          <div
-            className="chat-stack"
-            data-expanded={chatExpanded ? "true" : "false"}
-            data-terminal-open={detachedTerminal && terminalVisible ? "true" : "false"}
-            style={
-              chatExpanded
-                ? {
-                    flex: "1 1 0",
-                    minWidth: 0,
-                    display: "flex",
-                  }
-                : {
-                    width: rightWidth,
-                    flex: `0 0 ${rightWidth}px`,
-                    minWidth: 0,
-                    display: "flex",
-                  }
-            }
-          >
+        <div
+          className="chat-stack"
+          data-expanded={chatExpanded ? "true" : "false"}
+          data-visible={chatVisible ? "true" : "false"}
+          data-terminal-open={detachedTerminal && terminalVisible ? "true" : "false"}
+          style={
+            chatExpanded
+              ? {
+                  flex: "1 1 0",
+                  minWidth: 0,
+                }
+              : {
+                  width: rightWidth,
+                  flex: `0 0 ${rightWidth}px`,
+                  minWidth: 0,
+                }
+          }
+        >
           <div
             className="chat-shell"
             data-expanded={chatExpanded ? "true" : "false"}
@@ -2192,8 +2190,7 @@ export function Workspace({
               />
             </div>
           )}
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );
