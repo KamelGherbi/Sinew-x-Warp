@@ -3392,6 +3392,11 @@ textarea {
   background: var(--bg-4);
 }
 
+.settings-pane__skill-source[data-source="builtin"] {
+  color: var(--accent-1);
+  background: color-mix(in srgb, var(--accent-1) 12%, transparent);
+}
+
 .settings-pane__skill-state {
   flex: 0 0 auto;
   padding: 1px 7px;

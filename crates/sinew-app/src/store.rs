@@ -16,7 +16,7 @@ use crate::agent::AgentMode;
 use crate::bash::active_shell_display_name;
 use crate::mcp::McpSettings;
 use crate::skill::SkillSettings;
-use crate::subagent::SubAgentSettings;
+use crate::subagent::{with_default_sub_agents, SubAgentSettings};
 use crate::todo::TodoListState;
 use crate::tool_run::TurnCheckpoint;
 use crate::workspace::{workspace_info, WorkspaceInfo};
@@ -1135,11 +1135,11 @@ impl AppStore {
 
         if let Some(json) = stored {
             if let Ok(settings) = serde_json::from_str::<SubAgentSettings>(&json) {
-                return Ok(settings.normalized());
+                return Ok(with_default_sub_agents(settings));
             }
         }
 
-        Ok(SubAgentSettings::default())
+        Ok(with_default_sub_agents(SubAgentSettings::default()))
     }
 
     pub fn load_openrouter_models(&self) -> Result<Vec<OpenRouterModelRecord>> {

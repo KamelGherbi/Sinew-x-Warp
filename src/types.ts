@@ -294,7 +294,7 @@ export type McpServerProbe = {
   error?: string | null;
 };
 
-export type SkillSource = "workspace" | "global";
+export type SkillSource = "workspace" | "global" | "builtin";
 
 export type InstalledSkill = {
   name: string;

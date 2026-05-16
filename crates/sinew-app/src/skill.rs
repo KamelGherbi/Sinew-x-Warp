@@ -115,6 +115,7 @@ impl SkillTool {
             roots.push(home.join(".agents/skills"));
             roots.push(home.join(".sinew/skills"));
         }
+        roots.extend(builtin_skill_roots());
 
         let mut seen = HashSet::new();
         let mut skills = Vec::new();
@@ -240,6 +241,7 @@ fn parse_frontmatter(content: &str) -> HashMap<String, String> {
 pub enum SkillSource {
     Workspace,
     Global,
+    Builtin,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -272,6 +274,9 @@ pub fn list_installed_skills(
     if let Some(home) = home_dir.as_ref() {
         roots.push((SkillSource::Global, home.join(".agents/skills")));
         roots.push((SkillSource::Global, home.join(".sinew/skills")));
+    }
+    for root in builtin_skill_roots() {
+        roots.push((SkillSource::Builtin, root));
     }
 
     let mut seen = HashSet::new();
@@ -344,6 +349,33 @@ fn format_root_label(root: &Path, workspace_root: &Path, home_dir: Option<&Path>
         }
     }
     root.display().to_string()
+}
+
+fn builtin_skill_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(repo_root) = manifest_root.parent().and_then(|path| path.parent()) {
+        roots.push(repo_root.join("resources/skills"));
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            roots.push(exe_dir.join("resources/skills"));
+            roots.push(exe_dir.join("skills"));
+            roots.push(exe_dir.join("../Resources/resources/skills"));
+            roots.push(exe_dir.join("../Resources/skills"));
+            roots.push(exe_dir.join("../resources/skills"));
+            roots.push(exe_dir.join("../skills"));
+        }
+    }
+
+    let mut seen = HashSet::new();
+    roots
+        .into_iter()
+        .filter(|root| root.is_dir())
+        .filter(|root| seen.insert(root.clone()))
+        .collect()
 }
 
 fn clean_yaml_string(value: &str) -> &str {

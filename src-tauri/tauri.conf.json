@@ -45,6 +45,7 @@
       "icons/icon.ico"
     ],
     "createUpdaterArtifacts": true,
+    "resources": ["../resources/skills"],
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",

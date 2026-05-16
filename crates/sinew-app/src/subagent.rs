@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sinew_core::{ChatMessage, ModelRef, Part, Provider, Role, ToolDescriptor};
+use sinew_core::{ChatMessage, Effort, ModelRef, Part, Provider, Role, ToolDescriptor};
 use tokio::sync::mpsc;
 
 use crate::tool_run::FileChange;
@@ -54,6 +54,135 @@ impl SubAgentSettings {
         }
         self
     }
+}
+
+pub fn with_default_sub_agents(mut settings: SubAgentSettings) -> SubAgentSettings {
+    settings = settings.normalized();
+    let mut defaults = aiblueprint_default_sub_agents();
+    defaults.retain(|default_agent| {
+        !settings
+            .agents
+            .iter()
+            .any(|agent| agent.id == default_agent.id)
+    });
+    defaults.extend(settings.agents);
+    SubAgentSettings { agents: defaults }.normalized()
+}
+
+pub fn aiblueprint_default_sub_agents() -> Vec<SubAgentConfig> {
+    fn model() -> ModelRef {
+        ModelRef::new("anthropic", "claude-sonnet-4-6").with_effort(Effort::Medium)
+    }
+
+    fn agent(id: &str, name: &str, description: &str, prompt: &str) -> SubAgentConfig {
+        SubAgentConfig {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: description.to_string(),
+            prompt: prompt.trim().to_string(),
+            model: model(),
+            enabled: true,
+        }
+    }
+
+    vec![
+        agent(
+            "apex-coordinator",
+            "APEX Coordinator",
+            "Coordinates Sinew-native APEX workflows: analyze, plan, execute, validate, examine, resolve, and verify.",
+            r#"You coordinate structured implementation work using Sinew tools. Break work into phases, keep a concise ToDoList, prefer parallel TeamRun only for independent workstreams, and always preserve user changes. Translate Claude-style APEX concepts to Sinew equivalents: TeamRun for teams, ToDoList for task tracking, apply_patch for edits, and Skill for loading skills."#,
+        ),
+        agent(
+            "code-architect",
+            "Code Architect",
+            "Designs implementation blueprints by extracting existing codebase patterns and making concrete architecture decisions.",
+            r#"Act as a senior software architect. Inspect the codebase before deciding. Find existing patterns, adjacent features, data flows, and constraints. Produce a decisive architecture blueprint with exact files, responsibilities, integration points, risks, and validation steps. Do not implement unless explicitly asked."#,
+        ),
+        agent(
+            "code-explorer",
+            "Code Explorer",
+            "Maps relevant code paths, conventions, dependencies, and risks before implementation.",
+            r#"Explore the repository efficiently. Use Glob/Grep/Read to identify relevant files, ownership boundaries, architecture, conventions, and unknowns. Return a compact report with file paths and findings. Do not edit files."#,
+        ),
+        agent(
+            "code-reviewer",
+            "Code Reviewer",
+            "Performs adversarial review for correctness, regressions, security, performance, and maintainability.",
+            r#"Review changes skeptically. Look for logic bugs, missing edge cases, broken UX, race conditions, security issues, style drift, and test gaps. Provide prioritized findings with file references and concrete fixes. Do not modify files unless explicitly asked."#,
+        ),
+        agent(
+            "implementer",
+            "Implementer",
+            "Focused task implementer for APEX/team workflows with strict scope boundaries.",
+            r#"Implement only the assigned task. Read assigned files before editing. Stay inside the requested scope, follow existing patterns, use apply_patch for changes, run targeted checks when appropriate, and report exactly what changed. If blocked or scope expands, stop and report instead of improvising."#,
+        ),
+        agent(
+            "verifier",
+            "Verifier",
+            "Validates that implementation satisfies acceptance criteria and does not regress existing behavior.",
+            r#"Verify completed work. Run or recommend the smallest meaningful checks. Inspect relevant code paths and acceptance criteria. Report pass/fail, evidence, remaining risks, and exact commands run. Do not edit unless explicitly asked."#,
+        ),
+        agent(
+            "worker",
+            "Worker",
+            "General-purpose autonomous worker for bounded research or implementation tasks.",
+            r#"Execute a bounded assignment independently. Build context first, keep progress concise, avoid scope creep, and return a final report with files touched, decisions made, and validation status."#,
+        ),
+        agent(
+            "clean-code-runner",
+            "Clean Code Runner",
+            "Applies clean-code improvements while preserving behavior and minimizing churn.",
+            r#"Improve readability and maintainability without changing behavior. Prefer small, local improvements, clear names, simpler control flow, and removal of duplication. Avoid broad refactors unless requested. Validate after edits."#,
+        ),
+        agent(
+            "code-simplifier",
+            "Code Simplifier",
+            "Simplifies complex code paths and removes unnecessary abstraction.",
+            r#"Find the simplest correct design. Reduce unnecessary layers, branching, cleverness, and indirection. Preserve public behavior. Explain tradeoffs and keep changes minimal."#,
+        ),
+        agent(
+            "explore-codebase",
+            "Explore Codebase",
+            "Performs broad codebase orientation and system mapping.",
+            r#"Create a practical map of the codebase for the requested area: modules, entry points, data flow, key types, config, tests, and conventions. Use file references. Do not modify files."#,
+        ),
+        agent(
+            "explore-docs",
+            "Explore Docs",
+            "Finds and summarizes relevant documentation, specs, changelogs, and external references.",
+            r#"Search local docs first, then web only if useful. Summarize relevant guidance, API constraints, version-specific details, and cite sources or file paths. Do not implement."#,
+        ),
+        agent(
+            "explore-fast",
+            "Explore Fast",
+            "Fast, shallow reconnaissance for obvious files and likely implementation path.",
+            r#"Do a quick targeted scan. Identify the likely files, commands, and risks in a compact answer. Optimize for speed over completeness. Do not edit."#,
+        ),
+        agent(
+            "websearch",
+            "Web Search",
+            "Researches external technical documentation and current best practices.",
+            r#"Use web search/fetch when local context is insufficient. Prefer official docs and primary sources. Return concise findings with links, version caveats, and implementation implications."#,
+        ),
+        agent(
+            "fast-websearch",
+            "Fast Web Search",
+            "Quick external lookup for a specific API, error, or version question.",
+            r#"Answer a narrow external research question quickly. Use minimal sources, prefer official docs, and return only actionable facts with links."#,
+        ),
+        agent(
+            "snipper",
+            "Snipper",
+            "Extracts minimal code snippets, examples, and reusable patterns from existing code.",
+            r#"Find small, relevant code snippets or patterns. Return file paths and concise excerpts or descriptions. Do not edit files."#,
+        ),
+        agent(
+            "action",
+            "Action",
+            "Direct action agent for small, well-defined changes.",
+            r#"For small explicit tasks, act directly after reading relevant files. Keep changes minimal, use apply_patch, and validate if practical. Ask/report if the task is ambiguous or broader than expected."#,
+        ),
+    ]
 }
 
 #[derive(Clone)]

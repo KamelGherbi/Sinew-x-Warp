@@ -3153,7 +3153,7 @@ function SkillsSection({
                       className="settings-pane__skill-source"
                       data-source={skill.source}
                     >
-                      {skill.source === "workspace" ? "workspace" : "global"}
+                      {skillSourceLabel(skill.source)}
                     </span>
                     <span
                       className="settings-pane__skill-state"
@@ -3261,7 +3261,7 @@ function SkillPreview({
               className="settings-pane__skill-source"
               data-source={skill.source}
             >
-              {skill.source === "workspace" ? "workspace" : "global"}
+              {skillSourceLabel(skill.source)}
             </span>
           </div>
           <div className="settings-pane__skill-doc-actions">
@@ -3281,8 +3281,14 @@ function SkillPreview({
               className="settings-pane__skill-doc-action"
               data-danger="true"
               data-confirm={confirmDelete ? "true" : "false"}
-              disabled={deleting}
-              title={confirmDelete ? "Click again to confirm" : "Delete skill"}
+              disabled={deleting || skill.source === "builtin"}
+              title={
+                skill.source === "builtin"
+                  ? "Built-in skills can be disabled but not deleted"
+                  : confirmDelete
+                    ? "Click again to confirm"
+                    : "Delete skill"
+              }
               aria-label={confirmDelete ? "Confirm skill delete" : `Delete ${skill.name}`}
               onClick={() => {
                 if (confirmDelete) {
@@ -3324,6 +3330,12 @@ function SkillPreview({
 }
 
 function noop(): void {}
+
+function skillSourceLabel(source: InstalledSkill["source"]): string {
+  if (source === "workspace") return "workspace";
+  if (source === "builtin") return "built-in";
+  return "global";
+}
 
 function WrenchIcon({
   size,
