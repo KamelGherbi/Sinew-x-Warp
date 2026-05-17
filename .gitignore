@@ -10,6 +10,7 @@
 .env.*
 .idea/
 .vscode/
+settings.json
 
 # Tauri updater signing keys — NEVER commit private keys
 /.tauri-keys/
