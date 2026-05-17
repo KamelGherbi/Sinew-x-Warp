@@ -5794,6 +5794,10 @@ textarea {
   gap: 6px;
   padding: 0 9px 9px;
 }
+.plan-card__actions[data-align="end"] {
+  justify-content: flex-end;
+  padding: 0;
+}
 .plan-card__button {
   padding: 4px 10px;
   min-height: 26px;
@@ -5897,6 +5901,34 @@ textarea {
   color: var(--text-3);
   font-size: var(--fs-xxs);
   line-height: 1.3;
+}
+.plan-card__target-summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: var(--r-card);
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.plan-card__target-summary code {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-0);
+  font-family: var(--font-mono);
+}
+.plan-card__target-summary button {
+  flex: 0 0 auto;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+.plan-card__target-summary button:hover:not(:disabled) {
+  color: var(--text-0);
 }
 .plan-card__tiles {
   display: grid;

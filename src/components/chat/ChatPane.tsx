@@ -5620,7 +5620,7 @@ function PlanCard({
   onImplementFresh: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
   onImplementFreshWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
 }) {
-  const [step, setStep] = useState<"choose" | "runner">("choose");
+  const [step, setStep] = useState<"choose" | "target" | "runner">("choose");
   const [implementMode, setImplementMode] =
     useState<PlanImplementMode>("continue");
   const [implementationPath, setImplementationPath] = useState(".");
@@ -5629,7 +5629,7 @@ function PlanCard({
   const startImplement = (mode: PlanImplementMode) => {
     if (disabled) return;
     setImplementMode(mode);
-    setStep("runner");
+    setStep("target");
   };
 
   const implementationOptions = (): PlanImplementationOptions | null => {
@@ -5659,6 +5659,12 @@ function PlanCard({
     } catch (err) {
       setImplementationPathError(String(err));
     }
+  };
+
+  const continueToRunner = () => {
+    if (disabled) return;
+    if (!implementationOptions()) return;
+    setStep("runner");
   };
 
   const launchNormal = () => {
@@ -5726,6 +5732,48 @@ function PlanCard({
             <span>Implement the plan &amp; clear context</span>
           </button>
         </div>
+      ) : step === "target" ? (
+        <div className="plan-card__runner">
+          <div className="plan-card__runner-head">
+            <button
+              type="button"
+              className="plan-card__back"
+              onClick={() => setStep("choose")}
+              aria-label="Back"
+              title="Back"
+            >
+              <Icon icon="solar:alt-arrow-left-linear" width={13} height={13} />
+            </button>
+            <span className="plan-card__runner-label">
+              {implementMode === "continue"
+                ? "Implement the plan · choose target folder"
+                : "Implement the plan & clear context · choose target folder"}
+            </span>
+          </div>
+          <PlanTargetFolderPicker
+            artifactPath={artifact.path}
+            workspacePath={workspacePath}
+            disabled={disabled}
+            implementationPath={implementationPath}
+            implementationPathError={implementationPathError}
+            onPathChange={(value) => {
+              setImplementationPath(value);
+              setImplementationPathError(null);
+            }}
+            onPickFolder={pickImplementationFolder}
+          />
+          <div className="plan-card__actions" data-align="end">
+            <button
+              type="button"
+              className="plan-card__button"
+              onClick={continueToRunner}
+              disabled={disabled}
+              data-primary="true"
+            >
+              <span>Continue</span>
+            </button>
+          </div>
+        </div>
       ) : (
         <div className="plan-card__runner">
           <div className="plan-card__runner-head">
@@ -5744,34 +5792,12 @@ function PlanCard({
                 : "Implement the plan & clear context · choose runner"}
             </span>
           </div>
-          <div className="plan-card__target">
-            <label className="plan-card__target-label" htmlFor={`plan-target-${artifact.path}`}>
-              Target folder
-            </label>
-            <div className="plan-card__target-row">
-              <input
-                id={`plan-target-${artifact.path}`}
-                className="plan-card__target-input"
-                value={implementationPath}
-                onChange={(event) => {
-                  setImplementationPath(event.target.value);
-                  setImplementationPathError(null);
-                }}
-                placeholder="."
-                disabled={disabled}
-              />
-              <button
-                type="button"
-                className="plan-card__target-pick"
-                onClick={() => void pickImplementationFolder()}
-                disabled={disabled}
-              >
-                Browse
-              </button>
-            </div>
-            <div className="plan-card__target-help">
-              {implementationPathError ?? "Use . for the workspace root, or choose a subfolder."}
-            </div>
+          <div className="plan-card__target-summary">
+            <span>Target folder</span>
+            <code>{normalizePlanImplementationPath(implementationPath) ?? implementationPath}</code>
+            <button type="button" onClick={() => setStep("target")} disabled={disabled}>
+              Change
+            </button>
           </div>
           <div className="plan-card__tiles">
             <button
@@ -5823,6 +5849,54 @@ function PlanCard({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function PlanTargetFolderPicker({
+  artifactPath,
+  workspacePath,
+  disabled,
+  implementationPath,
+  implementationPathError,
+  onPathChange,
+  onPickFolder,
+}: {
+  artifactPath: string;
+  workspacePath: string;
+  disabled: boolean;
+  implementationPath: string;
+  implementationPathError: string | null;
+  onPathChange: (value: string) => void;
+  onPickFolder: () => void | Promise<void>;
+}) {
+  return (
+    <div className="plan-card__target">
+      <label className="plan-card__target-label" htmlFor={`plan-target-${artifactPath}`}>
+        Target folder
+      </label>
+      <div className="plan-card__target-row">
+        <input
+          id={`plan-target-${artifactPath}`}
+          className="plan-card__target-input"
+          value={implementationPath}
+          onChange={(event) => onPathChange(event.target.value)}
+          placeholder="."
+          disabled={disabled}
+          autoFocus
+        />
+        <button
+          type="button"
+          className="plan-card__target-pick"
+          onClick={() => void onPickFolder()}
+          disabled={disabled || !workspacePath}
+        >
+          Browse
+        </button>
+      </div>
+      <div className="plan-card__target-help">
+        {implementationPathError ?? "Use . for the workspace root, or choose a subfolder before selecting Normal or Agent swarm."}
+      </div>
     </div>
   );
 }
