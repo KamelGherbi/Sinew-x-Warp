@@ -46,7 +46,13 @@ impl CreateImageTool {
     }
 
     pub fn with_api_key(workspace_root: impl Into<PathBuf>, api_key: Option<String>) -> Self {
-        Self::with_settings(workspace_root, ImageProvider::GptImage2, false, api_key, None)
+        Self::with_settings(
+            workspace_root,
+            ImageProvider::GptImage2,
+            false,
+            api_key,
+            None,
+        )
     }
 
     pub fn with_settings(

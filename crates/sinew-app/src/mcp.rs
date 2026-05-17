@@ -80,10 +80,7 @@ fn default_mcp_servers() -> Vec<McpServerConfig> {
             id: "context7".to_string(),
             name: "Context7".to_string(),
             command: "npx".to_string(),
-            args: vec![
-                "-y".to_string(),
-                "@upstash/context7-mcp@latest".to_string(),
-            ],
+            args: vec!["-y".to_string(), "@upstash/context7-mcp@latest".to_string()],
             env: Vec::new(),
             cwd: None,
             enabled: true,

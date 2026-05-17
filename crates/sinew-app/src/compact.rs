@@ -3,8 +3,11 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Result};
 use futures_util::StreamExt;
 use serde_json::{json, Value};
-use sinew_core::{ChatMessage, ModelRef, Part, Provider, ProviderRequest, Role, StreamEvent};
+use sinew_core::{
+    AppError, ChatMessage, ModelRef, Part, Provider, ProviderRequest, Role, StreamEvent,
+};
 use tokio::sync::mpsc;
+use tokio::time::{sleep, Duration};
 
 use crate::agent::EngineCommand;
 
@@ -21,6 +24,8 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 const SUMMARY_PREFIX: &str = r#"Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:"#;
 
 const MAX_RETAINED_USER_CHARS: usize = 80_000;
+const FALLBACK_RETAINED_USER_CHARS: usize = 8_000;
+const COMPACTION_RATE_LIMIT_RETRY_DELAYS_MS: &[u64] = &[2_000, 5_000, 15_000, 30_000, 60_000];
 
 #[derive(Debug, Clone)]
 pub struct CompactConversationOutput {
@@ -53,7 +58,36 @@ pub async fn compact_conversation_history(
         request = request.with_cache_key(cache_key);
     }
 
-    let mut stream = provider.stream(request).await?;
+    let mut stream_attempt = 0usize;
+    let mut stream = loop {
+        match provider.stream(request.clone()).await {
+            Ok(stream) => break stream,
+            Err(AppError::RateLimit(message))
+                if stream_attempt < COMPACTION_RATE_LIMIT_RETRY_DELAYS_MS.len() =>
+            {
+                if let Some(tx) = &summary_delta_tx {
+                    let _ = tx.send(format!(
+                        "\n\n[Compaction rate limited by provider ({message}). Retrying in {}s.]\n",
+                        COMPACTION_RATE_LIMIT_RETRY_DELAYS_MS[stream_attempt] / 1000
+                    ));
+                }
+                tokio::select! {
+                    biased;
+                    command = cmd_rx.recv() => {
+                        if matches!(command, Some(EngineCommand::Cancel)) {
+                            bail!("compaction cancelled");
+                        }
+                    }
+                    _ = sleep(Duration::from_millis(COMPACTION_RATE_LIMIT_RETRY_DELAYS_MS[stream_attempt])) => {}
+                }
+                stream_attempt += 1;
+            }
+            Err(AppError::ContextLength(message)) => {
+                return Ok(build_fallback_compacted_output(&history, &message));
+            }
+            Err(err) => return Err(err.into()),
+        }
+    };
     let mut summary = String::new();
     let mut completed = false;
 
@@ -70,7 +104,14 @@ pub async fn compact_conversation_history(
                 let Some(event) = event else {
                     break;
                 };
-                match event? {
+                let event = match event {
+                    Ok(event) => event,
+                    Err(AppError::ContextLength(message)) => {
+                        return Ok(build_fallback_compacted_output(&history, &message));
+                    }
+                    Err(err) => return Err(err.into()),
+                };
+                match event {
                     StreamEvent::TextDelta { delta, .. } => {
                         if let Some(tx) = &summary_delta_tx {
                             let _ = tx.send(delta.clone());
@@ -136,7 +177,49 @@ fn build_compacted_history(history: &[ChatMessage], summary: &str) -> BuiltCompa
     }
 }
 
+fn build_fallback_compacted_output(
+    history: &[ChatMessage],
+    error: &str,
+) -> CompactConversationOutput {
+    let retained_user_messages =
+        collect_recent_user_messages_with_limit(history, FALLBACK_RETAINED_USER_CHARS);
+    let retained_count = retained_user_messages.len();
+    let mut compacted = retained_user_messages
+        .into_iter()
+        .map(|message| ChatMessage {
+            role: Role::User,
+            parts: vec![Part::Text {
+                text: message,
+                meta: Some(json!({ "compaction_retained_user": true })),
+            }],
+        })
+        .collect::<Vec<_>>();
+    let summary = format!(
+        "Context was too large for model-driven compaction, so Sinew performed a local emergency compaction. The oldest raw messages/tool output were dropped, and only the most recent user instructions were retained. Original compaction error: {}",
+        truncate_chars(error.trim(), 600)
+    );
+    compacted.push(ChatMessage {
+        role: Role::User,
+        parts: vec![Part::Text {
+            text: format!("{SUMMARY_PREFIX}\n\n{summary}"),
+            meta: Some(json!({ "compaction_summary": true })),
+        }],
+    });
+    CompactConversationOutput {
+        history: compacted,
+        retained_user_messages: retained_count,
+        summary,
+    }
+}
+
 fn collect_recent_user_messages(history: &[ChatMessage]) -> Vec<String> {
+    collect_recent_user_messages_with_limit(history, MAX_RETAINED_USER_CHARS)
+}
+
+fn collect_recent_user_messages_with_limit(
+    history: &[ChatMessage],
+    max_chars: usize,
+) -> Vec<String> {
     let user_messages = history
         .iter()
         .filter_map(visible_user_text)
@@ -144,7 +227,7 @@ fn collect_recent_user_messages(history: &[ChatMessage]) -> Vec<String> {
         .collect::<Vec<_>>();
 
     let mut selected = Vec::new();
-    let mut remaining = MAX_RETAINED_USER_CHARS;
+    let mut remaining = max_chars;
     for message in user_messages.iter().rev() {
         if remaining == 0 {
             break;

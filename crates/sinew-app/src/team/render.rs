@@ -1,5 +1,8 @@
 use super::*;
 
+const TEAM_KICKOFF_OBJECTIVE_CHAR_LIMIT: usize = 12_000;
+const TEAM_KICKOFF_AGENT_PROMPT_CHAR_LIMIT: usize = 4_000;
+
 pub(super) fn team_agent_system_prompt(base: &str, team_name: &str, agent: &TeamAgent) -> String {
     let config_agent = SubAgentConfig {
         id: agent.id.clone(),
@@ -50,7 +53,10 @@ pub(super) fn team_kickoff_message(
     agent_name: &str,
     agent_prompt: Option<&str>,
 ) -> String {
-    let mut sections = vec![format!("Objective:\n{}", objective.trim())];
+    let mut sections = vec![format!(
+        "Objective:\n{}",
+        truncate_text(objective.trim(), TEAM_KICKOFF_OBJECTIVE_CHAR_LIMIT)
+    )];
     if let Some(prompt) = agent_prompt
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -58,7 +64,7 @@ pub(super) fn team_kickoff_message(
         sections.push(format!(
             "Message from the main agent for @{}:\n{}",
             agent_name.trim(),
-            prompt
+            truncate_text(prompt, TEAM_KICKOFF_AGENT_PROMPT_CHAR_LIMIT)
         ));
     }
     sections.join("\n\n")

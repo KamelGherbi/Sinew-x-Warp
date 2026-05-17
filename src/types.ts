@@ -502,6 +502,7 @@ export type AgentEvent =
       usage: StreamTokenUsage;
     }
   | { type: "interrupted" }
+  | { type: "notice"; message: string }
   | { type: "error"; message: string }
   | {
       type: "peer_message_received";

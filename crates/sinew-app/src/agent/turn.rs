@@ -194,17 +194,17 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                 Err(AppError::RateLimit(message))
                     if stream_attempt < RATE_LIMIT_RETRY_DELAYS_MS.len() =>
                 {
-                    let delay_ms = RATE_LIMIT_RETRY_DELAYS_MS[stream_attempt];
+                    let delay_ms = rate_limit_retry_delay_ms(stream_attempt);
                     stream_attempt += 1;
                     send_event(
                         &event_tx,
                         event_scope.as_ref(),
-                        AgentEvent::Error {
+                        AgentEvent::Notice {
                             message: format!(
                                 "Rate limited by provider ({message}). Retrying in {}s (attempt {}/{}).",
                                 delay_ms / 1000,
                                 stream_attempt,
-                                RATE_LIMIT_RETRY_DELAYS_MS.len()
+                                rate_limit_retry_attempts()
                             ),
                         },
                     );
@@ -658,6 +658,14 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
         goal_workflow,
         interrupted: cancelled,
     }
+}
+
+pub(crate) fn rate_limit_retry_delay_ms(attempt: usize) -> u64 {
+    RATE_LIMIT_RETRY_DELAYS_MS[attempt]
+}
+
+pub(crate) fn rate_limit_retry_attempts() -> usize {
+    RATE_LIMIT_RETRY_DELAYS_MS.len()
 }
 
 pub(super) fn retain_cancelled_visible_parts(message: &mut ChatMessage) {

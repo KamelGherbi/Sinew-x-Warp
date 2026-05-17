@@ -1717,6 +1717,9 @@ export function applyEvent(
         status: "stopped",
       });
 
+    case "notice":
+      return state;
+
     case "error":
       return withStreamPhase(state, "idle", {
         status: "stopped",

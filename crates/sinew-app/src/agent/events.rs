@@ -57,6 +57,9 @@ pub enum AgentEvent {
         usage: Usage,
     },
     Interrupted,
+    Notice {
+        message: String,
+    },
     Error {
         message: String,
     },
