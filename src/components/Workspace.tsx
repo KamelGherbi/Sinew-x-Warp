@@ -1505,7 +1505,9 @@ export function Workspace({
       prompt = "Implement completely this plan. Use the attached markdown plan as the source of truth.",
       planImplementationOptions?: PlanImplementationOptions,
     ) => {
-      const next = await api.createConversation(workspacePath);
+      const implementationWorkspacePath =
+        planImplementationOptions?.implementationWorkspacePath?.trim() || workspacePath;
+      const next = await api.createConversation(implementationWorkspacePath);
       const conversationId = next.activeConversation.id;
       // The new conversation is seeded with the workspace's global default,
       // which represents the most recent model the user picked anywhere. Per
@@ -1520,7 +1522,7 @@ export function Workspace({
         title,
       };
       const titledConversations = await api.renameConversation(
-        workspacePath,
+        implementationWorkspacePath,
         conversationId,
         title,
       );
@@ -1537,7 +1539,7 @@ export function Workspace({
       markConversationStreaming(conversationId, true);
       try {
         await sendMessageWithBusyRetry(
-          workspacePath,
+          implementationWorkspacePath,
           conversationId,
           prompt,
           [
@@ -1552,9 +1554,12 @@ export function Workspace({
           undefined,
           "implementPlan",
           "systemReminder",
-          planImplementationOptions,
+          {
+            ...planImplementationOptions,
+            implementationPath: ".",
+          },
         );
-        const loaded = await api.loadConversation(workspacePath, conversationId);
+        const loaded = await api.loadConversation(implementationWorkspacePath, conversationId);
         startTransition(() => {
           setActiveConv((current) =>
             current.id === conversationId ? loaded : current,

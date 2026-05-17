@@ -329,6 +329,7 @@ export type PlanControl = "stopQuestions" | "updatePlan" | "implementPlan";
 
 export type PlanImplementationOptions = {
   implementationPath?: string;
+  implementationWorkspacePath?: string;
 };
 
 export type MessageVisibility = "normal" | "systemReminder";

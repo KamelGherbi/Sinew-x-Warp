@@ -5635,11 +5635,17 @@ function PlanCard({
   const implementationOptions = (): PlanImplementationOptions | null => {
     const normalized = normalizePlanImplementationPath(implementationPath);
     if (normalized === null) {
-      setImplementationPathError("Choose a folder inside this workspace.");
+      setImplementationPathError("Choose a valid folder path.");
       return null;
     }
     setImplementationPath(normalized || ".");
     setImplementationPathError(null);
+    if (isAbsolutePath(normalized)) {
+      return {
+        implementationWorkspacePath: normalized,
+        implementationPath: ".",
+      };
+    }
     return { implementationPath: normalized || "." };
   };
 
@@ -5650,11 +5656,7 @@ function PlanCard({
       const picked = typeof selected === "string" ? selected : null;
       if (!picked) return;
       const relative = relativizePath(workspacePath, picked);
-      if (relative === null) {
-        setImplementationPathError("Choose a folder inside this workspace.");
-        return;
-      }
-      setImplementationPath(relative || ".");
+      setImplementationPath(relative === null ? picked : relative || ".");
       setImplementationPathError(null);
     } catch (err) {
       setImplementationPathError(String(err));
@@ -5671,6 +5673,10 @@ function PlanCard({
     if (disabled) return;
     const options = implementationOptions();
     if (!options) return;
+    if (options.implementationWorkspacePath) {
+      onImplementFresh(artifact, options);
+      return;
+    }
     if (implementMode === "continue") onImplement(artifact, options);
     else onImplementFresh(artifact, options);
   };
@@ -5679,6 +5685,10 @@ function PlanCard({
     if (disabled || !agentTeamsEnabled) return;
     const options = implementationOptions();
     if (!options) return;
+    if (options.implementationWorkspacePath) {
+      onImplementFreshWithSwarm(artifact, options);
+      return;
+    }
     if (implementMode === "continue") onImplementWithSwarm(artifact, options);
     else onImplementFreshWithSwarm(artifact, options);
   };
@@ -5794,7 +5804,7 @@ function PlanCard({
           </div>
           <div className="plan-card__target-summary">
             <span>Target folder</span>
-            <code>{normalizePlanImplementationPath(implementationPath) ?? implementationPath}</code>
+            <code>{planImplementationTargetLabel(implementationPath)}</code>
             <button type="button" onClick={() => setStep("target")} disabled={disabled}>
               Change
             </button>
@@ -5895,7 +5905,7 @@ function PlanTargetFolderPicker({
         </button>
       </div>
       <div className="plan-card__target-help">
-        {implementationPathError ?? "Use . for the workspace root, or choose a subfolder before selecting Normal or Agent swarm."}
+        {implementationPathError ?? "Use . for the current workspace root, a subfolder, or browse another project folder."}
       </div>
     </div>
   );
@@ -6053,12 +6063,34 @@ function relativizePath(workspacePath: string, candidate: string): string | null
 }
 
 function normalizePlanImplementationPath(value: string): string | null {
-  const trimmed = value.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  const original = value.trim().replace(/\\/g, "/");
+  if (isAbsolutePath(original)) return normalizeAbsolutePath(original);
+  const trimmed = original.replace(/^\.\//, "");
   if (!trimmed || trimmed === ".") return ".";
-  if (trimmed.startsWith("/") || /^[A-Za-z]:\//.test(trimmed)) return null;
   const parts = trimmed.split("/").filter(Boolean);
   if (parts.some((part) => part === "..")) return null;
   return parts.join("/") || ".";
+}
+
+function isAbsolutePath(value: string): boolean {
+  return value.startsWith("/") || /^[A-Za-z]:\//.test(value);
+}
+
+function normalizeAbsolutePath(value: string): string | null {
+  const parts = value.replace(/\\/g, "/").split("/");
+  const prefix = /^[A-Za-z]:$/.test(parts[0] ?? "") ? parts.shift() : "";
+  const normalized: string[] = [];
+  for (const part of parts) {
+    if (!part || part === ".") continue;
+    if (part === "..") return null;
+    normalized.push(part);
+  }
+  if (prefix) return `${prefix}/${normalized.join("/")}`;
+  return `/${normalized.join("/")}`;
+}
+
+function planImplementationTargetLabel(value: string): string {
+  return normalizePlanImplementationPath(value) ?? value;
 }
 
 function renderMentionHighlights(
