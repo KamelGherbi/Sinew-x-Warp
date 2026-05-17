@@ -3,10 +3,12 @@ use std::collections::BTreeSet;
 use futures_util::StreamExt;
 use serde_json::{json, Map, Value};
 use tokio::sync::mpsc;
+use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 
 use sinew_core::{
-    ChatMessage, Part, PartKind, ProviderRequest, Role, StopReason, StreamEvent, ToolResultImage,
+    AppError, ChatMessage, Part, PartKind, ProviderRequest, Role, StopReason, StreamEvent,
+    ToolResultImage,
 };
 
 use super::{
@@ -30,6 +32,8 @@ use super::{
 };
 
 use crate::{system_prompt_with_todo, ToolRunResult};
+
+const RATE_LIMIT_RETRY_DELAYS_MS: &[u64] = &[2_000, 5_000, 15_000, 30_000, 60_000];
 
 pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
     let TurnContext {
@@ -183,7 +187,46 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
             None => request,
         };
 
-        let mut stream = match provider.stream(request).await {
+        let mut stream_attempt: usize = 0;
+        let stream_result = loop {
+            match provider.stream(request.clone()).await {
+                Ok(stream) => break Ok(stream),
+                Err(AppError::RateLimit(message))
+                    if stream_attempt < RATE_LIMIT_RETRY_DELAYS_MS.len() =>
+                {
+                    let delay_ms = RATE_LIMIT_RETRY_DELAYS_MS[stream_attempt];
+                    stream_attempt += 1;
+                    send_event(
+                        &event_tx,
+                        event_scope.as_ref(),
+                        AgentEvent::Error {
+                            message: format!(
+                                "Rate limited by provider ({message}). Retrying in {}s (attempt {}/{}).",
+                                delay_ms / 1000,
+                                stream_attempt,
+                                RATE_LIMIT_RETRY_DELAYS_MS.len()
+                            ),
+                        },
+                    );
+                    tokio::select! {
+                        biased;
+                        command = cmd_rx.recv() => {
+                            if matches!(command, Some(EngineCommand::Cancel)) {
+                                cancelled = true;
+                                break Err(AppError::RateLimit(message));
+                            }
+                        }
+                        _ = sleep(Duration::from_millis(delay_ms)) => {}
+                    }
+                    if cancelled {
+                        break Err(AppError::RateLimit(message));
+                    }
+                    continue;
+                }
+                Err(err) => break Err(err),
+            }
+        };
+        let mut stream = match stream_result {
             Ok(stream) => stream,
             Err(err) => {
                 if auto_compact
