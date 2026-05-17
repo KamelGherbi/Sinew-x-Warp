@@ -50,6 +50,8 @@ impl KimiProvider {
     pub fn new(config: KimiConfig) -> Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
+            .tcp_keepalive(std::time::Duration::from_secs(20))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
             .build()
             .map_err(|err| AppError::Network(err.to_string()))?;
         Ok(Self { config, http })

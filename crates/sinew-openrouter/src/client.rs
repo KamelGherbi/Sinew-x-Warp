@@ -62,6 +62,8 @@ impl OpenRouterProvider {
     pub fn new(config: OpenRouterConfig) -> Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
+            .tcp_keepalive(std::time::Duration::from_secs(20))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
             .build()
             .map_err(|err| AppError::Network(err.to_string()))?;
         let models = config
@@ -822,6 +824,8 @@ fn f64_to_u32(value: f64) -> Option<u32> {
 fn openrouter_http() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
+        .tcp_keepalive(std::time::Duration::from_secs(20))
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
         .build()
         .map_err(|err| AppError::Network(err.to_string()))
 }

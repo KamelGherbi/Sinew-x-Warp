@@ -25,6 +25,8 @@ const MAX_LIMIT: usize = 500;
 const MAX_LINE_CHARS: usize = 240;
 const STDERR_LIMIT: usize = 8 * 1024;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone)]
 pub struct GrepTool {
@@ -179,6 +181,9 @@ impl GrepTool {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
 
         let mut child = command
             .spawn()

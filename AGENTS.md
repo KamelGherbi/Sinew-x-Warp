@@ -164,7 +164,6 @@ Code map:
 │   │   ├── icon.icns
 │   │   ├── icon.ico
 │   │   ├── icon.png
-│   │   ├── nsis-header.bmp
 │   │   ├── nsis-sidebar.bmp
 │   │   ├── source.svg
 │   │   ├── android

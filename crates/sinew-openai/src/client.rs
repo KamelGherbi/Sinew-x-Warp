@@ -51,6 +51,8 @@ impl OpenAiProvider {
     pub fn new(config: OpenAiConfig) -> Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
+            .tcp_keepalive(std::time::Duration::from_secs(20))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
             .build()
             .map_err(|err| AppError::Network(err.to_string()))?;
         Ok(Self { config, http })
@@ -217,11 +219,11 @@ where
     let parser = EventParser::new(default_model);
 
     stream::unfold(
-        (source, parser, Vec::<StreamEvent>::new(), false),
-        |(mut source, mut parser, mut pending, mut done)| async move {
+        (source, parser, Vec::<StreamEvent>::new(), false, false),
+        |(mut source, mut parser, mut pending, mut done, mut saw_any_event)| async move {
             loop {
                 if let Some(next) = pending.pop() {
-                    return Some((Ok(next), (source, parser, pending, done)));
+                    return Some((Ok(next), (source, parser, pending, done, saw_any_event)));
                 }
                 if done {
                     return None;
@@ -229,6 +231,7 @@ where
 
                 match source.next().await {
                     Some(Ok(event)) => {
+                        saw_any_event = true;
                         let data = event.data.trim();
                         if data == "[DONE]" {
                             done = true;
@@ -240,7 +243,7 @@ where
                             Err(err) => {
                                 return Some((
                                     Err(AppError::Decode(format!("bad openai SSE event: {err}"))),
-                                    (source, parser, pending, true),
+                                    (source, parser, pending, true, saw_any_event),
                                 ));
                             }
                         };
@@ -253,16 +256,31 @@ where
                                 produced.reverse();
                                 pending.extend(produced);
                             }
-                            Err(err) => return Some((Err(err), (source, parser, pending, true))),
+                            Err(err) => {
+                                return Some((
+                                    Err(err),
+                                    (source, parser, pending, true, saw_any_event),
+                                ));
+                            }
                         }
                     }
                     Some(Err(err)) => {
                         return Some((
                             Err(AppError::Stream(format!("openai SSE error: {err}"))),
-                            (source, parser, pending, true),
+                            (source, parser, pending, true, saw_any_event),
                         ));
                     }
                     None => {
+                        if !saw_any_event {
+                            return Some((
+                                Err(AppError::Stream(
+                                    "openai SSE closed before any event; \
+                                     the server likely dropped the connection"
+                                        .into(),
+                                )),
+                                (source, parser, pending, true, saw_any_event),
+                            ));
+                        }
                         let mut produced = parser.finish_if_needed();
                         if produced.is_empty() {
                             return None;

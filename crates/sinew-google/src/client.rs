@@ -56,6 +56,8 @@ impl GoogleProvider {
     pub fn new(config: GoogleConfig) -> Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
+            .tcp_keepalive(std::time::Duration::from_secs(20))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
             .build()
             .map_err(|err| AppError::Network(err.to_string()))?;
         let user_data = load_default_user_data().unwrap_or(None);

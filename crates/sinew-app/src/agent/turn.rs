@@ -6,7 +6,8 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use sinew_core::{
-    ChatMessage, Part, PartKind, ProviderRequest, Role, StopReason, StreamEvent, ToolResultImage,
+    AppError, ChatMessage, Part, PartKind, ProviderRequest, Role, StopReason, StreamEvent,
+    ToolResultImage,
 };
 
 use super::{
@@ -235,6 +236,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
         let mut stop_reason = StopReason::EndTurn;
         let mut response_usage = None;
         let mut stream_error = None;
+        let mut saw_message_stop = false;
 
         loop {
             tokio::select! {
@@ -339,6 +341,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                             send_token_usage_event(&event_tx, event_scope.as_ref(), &provider, &model, usage);
                         }
                         StreamEvent::MessageStop { stop_reason: reason, usage } => {
+                            saw_message_stop = true;
                             stop_reason = reason;
                             response_usage = Some(usage);
                             send_token_usage_event(&event_tx, event_scope.as_ref(), &provider, &model, usage);
@@ -347,6 +350,18 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                     }
                 }
             }
+        }
+
+        // Detect a silent stream close: the underlying SSE source returned `None` (or yielded
+        // its last item) without ever emitting a `MessageStop`. This is the classic "OpenAI
+        // just stops without an error" symptom — usually a connection drop on the provider /
+        // edge proxy side. Surface it as an explicit stream error so the user gets feedback
+        // and the normal recovery path (auto-compaction, etc.) is given a chance to run.
+        if !cancelled && stream_error.is_none() && !saw_message_stop {
+            stream_error = Some(AppError::Stream(format!(
+                "{} stream closed without sending a stop event (likely a connection drop)",
+                provider.name()
+            )));
         }
 
         if let Some(err) = stream_error {

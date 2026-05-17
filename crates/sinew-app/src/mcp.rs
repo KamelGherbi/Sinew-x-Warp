@@ -30,6 +30,8 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(120);
 const TOOL_OUTPUT_LIMIT: usize = 128 * 1024;
 const TOOL_NAME_LIMIT: usize = 64;
 const LOAD_MCP_TOOL_NAME: &str = "LoadMcpTool";
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -812,6 +814,9 @@ impl McpStdioClient {
                 command.env(key, &env.value);
             }
         }
+
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
 
         let mut child = command
             .spawn()

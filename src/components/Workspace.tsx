@@ -798,7 +798,13 @@ export function Workspace({
               lastAgentEventSequenceByConversationRef.current.get(
                 payload.conversationId,
               ) ?? 0;
-            if (payload.sequence <= last) return;
+            // The backend's per-turn sequence resets to 1 when a new turn
+            // registers. A strictly *lower* sequence than what we cached
+            // therefore means a brand-new turn started for this
+            // conversation — accept the event and forget the stale "last"
+            // from the previous turn. Equal sequences are real duplicates
+            // (typically a replay/live overlap) and stay filtered.
+            if (payload.sequence === last && last !== 0) return;
             lastAgentEventSequenceByConversationRef.current.set(
               payload.conversationId,
               payload.sequence,
@@ -840,7 +846,7 @@ export function Workspace({
   const replayActiveTurnEvents = useCallback(
     async (conversationId: string, afterSequence = 0) => {
       const workspaceAtRequest = workspacePathRef.current;
-      const replay = await api.replayActiveTurnEvents(
+      let replay = await api.replayActiveTurnEvents(
         workspaceAtRequest,
         conversationId,
         afterSequence,
@@ -850,6 +856,24 @@ export function Workspace({
         markConversationStreaming(conversationId, false);
         return;
       }
+      // The backend resets per-turn sequences to 1 on each register_active_turn.
+      // If the server's latest sequence is *below* our cached afterSequence, the
+      // turn we knew about has ended and a fresh one started — our cached
+      // "last" would otherwise filter out every event of the new turn. Drop it
+      // and refetch the active turn's buffer from scratch.
+      if (replay.latestSequence < afterSequence) {
+        lastAgentEventSequenceByConversationRef.current.delete(conversationId);
+        replay = await api.replayActiveTurnEvents(
+          workspaceAtRequest,
+          conversationId,
+          0,
+        );
+        if (workspacePathRef.current !== workspaceAtRequest) return;
+        if (!replay.active) {
+          markConversationStreaming(conversationId, false);
+          return;
+        }
+      }
       markConversationStreaming(conversationId, true);
       const sortedEvents = [...replay.events].sort(
         (a, b) => a.sequence - b.sequence,
@@ -857,7 +881,11 @@ export function Workspace({
       for (const entry of sortedEvents) {
         const last =
           lastAgentEventSequenceByConversationRef.current.get(conversationId) ?? 0;
-        if (entry.sequence <= last) continue;
+        // Same logic as the live `agent-event` handler: only filter true
+        // duplicates. A strictly *lower* sequence is impossible inside a
+        // single replay batch (events are sorted), but be defensive in case
+        // the backend ever interleaves turns.
+        if (entry.sequence === last && last !== 0) continue;
         lastAgentEventSequenceByConversationRef.current.set(
           conversationId,
           entry.sequence,
@@ -910,8 +938,20 @@ export function Workspace({
         return changed ? next : prev;
       });
       for (const turn of workspaceTurns) {
-        const last =
+        let last =
           lastAgentEventSequenceByConversationRef.current.get(turn.conversationId) ?? 0;
+        // A freshly-registered turn always starts at latestSequence = 0
+        // (next_sequence = 1 on the backend). If our cached "last" from a
+        // prior turn is higher, the per-turn counter has rolled over and
+        // the cached value would otherwise filter out every live event of
+        // the new turn. Drop it so the upcoming sequence=1 event is
+        // accepted.
+        if (turn.latestSequence < last) {
+          lastAgentEventSequenceByConversationRef.current.delete(
+            turn.conversationId,
+          );
+          last = 0;
+        }
         if (turn.latestSequence > last) {
           void replayActiveTurnEvents(turn.conversationId, last).catch((err) => {
             console.error(err);
