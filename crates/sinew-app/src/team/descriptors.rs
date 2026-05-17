@@ -34,7 +34,7 @@ impl TeamTool {
                         },
                         "agent_profiles": {
                             "type": "array",
-                            "description": "Optional profile assignments for teammates. Use this to make a team member inherit a configured sub-agent profile. Each agent must match agent_names; each profile is a configured sub-agent id or name.",
+                            "description": "Optional profile assignments for teammates. Use this to make a team member inherit a configured sub-agent profile's role prompt and description. Teammates still use the current chat model by default. Each agent must match agent_names; each profile is a configured sub-agent id or name.",
                             "items": {
                                 "type": "object",
                                 "properties": {

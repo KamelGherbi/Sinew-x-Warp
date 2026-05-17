@@ -1,4 +1,7 @@
 use super::*;
+use async_trait::async_trait;
+use futures_util::stream;
+use sinew_core::{Effort, ModelCapabilities, ProviderRequest, ProviderStream, TokenEstimate};
 
 #[test]
 fn optional_object_tools_accept_empty_string_input() {
@@ -203,6 +206,85 @@ fn team_run_still_accepts_agent_profiles_map() {
         profiles.get("scene").map(String::as_str),
         Some("threejs_expert")
     );
+}
+
+#[test]
+fn team_agent_profiles_keep_current_chat_model_by_default() {
+    let current_model = ModelRef::new("openai", "gpt-5.5").with_effort(Effort::High);
+    let profile_model = ModelRef::new("anthropic", "claude-sonnet-4-6").with_effort(Effort::Medium);
+    let tool = TeamTool::new(
+        "test-scope".to_string(),
+        PathBuf::from("."),
+        String::new(),
+        HashMap::from([(
+            "openai".to_string(),
+            Arc::new(TestProvider) as Arc<dyn Provider>,
+        )]),
+        SubAgentSettings {
+            agents: vec![SubAgentConfig {
+                id: "code-architect".to_string(),
+                name: "Code Architect".to_string(),
+                description: "Architecture profile".to_string(),
+                prompt: "Think like an architect".to_string(),
+                model: profile_model,
+                enabled: true,
+            }],
+        },
+        McpSettings::default(),
+        ToolSettings::default(),
+        SkillSettings::default(),
+        current_model.clone(),
+        1,
+        Arc::new(RwLock::new(TeamRuntime::default())),
+        TurnCancel::empty(),
+    );
+    let mut profiles = HashMap::new();
+    profiles.insert("architect".to_string(), "code-architect".to_string());
+
+    let configs = tool
+        .prepare_team_agent_configs(&["architect".to_string()], Some(&profiles))
+        .expect("profile should resolve");
+
+    assert_eq!(configs[0].description, "Architecture profile");
+    assert_eq!(configs[0].prompt, "Think like an architect");
+    assert_eq!(configs[0].model, current_model);
+}
+
+struct TestProvider;
+
+#[async_trait]
+impl Provider for TestProvider {
+    fn name(&self) -> &str {
+        "test-provider"
+    }
+
+    fn capabilities(&self, model: &ModelRef) -> Option<ModelCapabilities> {
+        Some(ModelCapabilities {
+            model: model.clone(),
+            context_window: 128_000,
+            preferred_window: 128_000,
+            max_output_tokens: 8_000,
+            supports_thinking: true,
+            visible_thinking: true,
+            supports_tools: true,
+            supports_images: true,
+            effort_mode: sinew_core::EffortMode::Tier,
+        })
+    }
+
+    async fn estimate_tokens(
+        &self,
+        _request: ProviderRequest,
+    ) -> sinew_core::Result<TokenEstimate> {
+        Ok(TokenEstimate {
+            input_tokens: 0,
+            exact: true,
+        })
+    }
+
+    async fn stream(&self, _request: ProviderRequest) -> sinew_core::Result<ProviderStream> {
+        Ok(Box::pin(stream::empty()))
+    }
 }
 
 #[test]

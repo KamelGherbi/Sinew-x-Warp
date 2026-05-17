@@ -421,9 +421,7 @@ impl TeamTool {
             let description = profile
                 .map(|agent| agent.description.clone())
                 .unwrap_or_else(|| "Team collaborator".to_string());
-            let model = profile
-                .map(|agent| agent.model.clone())
-                .unwrap_or_else(|| self.default_model.clone());
+            let model = self.default_model.clone();
             self.validate_model(&model)?;
             let prompt = profile
                 .map(|agent| agent.prompt.clone())
