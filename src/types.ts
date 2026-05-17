@@ -327,6 +327,10 @@ export type SkillSettings = {
 
 export type PlanControl = "stopQuestions" | "updatePlan" | "implementPlan";
 
+export type PlanImplementationOptions = {
+  implementationPath?: string;
+};
+
 export type MessageVisibility = "normal" | "systemReminder";
 
 export type PlanArtifact = {

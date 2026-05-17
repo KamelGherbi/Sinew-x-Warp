@@ -40,6 +40,7 @@ import type {
   MessageVisibility,
   PlanArtifact,
   PlanControl,
+  PlanImplementationOptions,
   SavedConversation,
   ThinkingLevel,
   WorkspaceBootstrap,
@@ -1321,6 +1322,7 @@ export function Workspace({
       rewriteFromHistoryIndex?: number,
       planControl?: PlanControl,
       messageVisibility?: MessageVisibility,
+      planImplementationOptions?: PlanImplementationOptions,
     ) => {
       const conversationId = activeConv.id;
       const workspaceAtRequest = workspacePath;
@@ -1349,6 +1351,7 @@ export function Workspace({
           rewriteFromHistoryIndex,
           planControl,
           messageVisibility,
+          planImplementationOptions,
         );
       } catch (err) {
         markConversationStreaming(conversationId, false);
@@ -1500,6 +1503,7 @@ export function Workspace({
     async (
       plan: PlanArtifact,
       prompt = "Implement completely this plan. Use the attached markdown plan as the source of truth.",
+      planImplementationOptions?: PlanImplementationOptions,
     ) => {
       const next = await api.createConversation(workspacePath);
       const conversationId = next.activeConversation.id;
@@ -1548,6 +1552,7 @@ export function Workspace({
           undefined,
           "implementPlan",
           "systemReminder",
+          planImplementationOptions,
         );
         const loaded = await api.loadConversation(workspacePath, conversationId);
         startTransition(() => {

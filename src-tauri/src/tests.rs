@@ -134,6 +134,7 @@ fn plan_implementation_reminder_uses_ready_plan_artifact() {
         &sample_plan_ready(),
         &[],
         Some(PlanControlInput::ImplementPlan),
+        None,
     )
     .unwrap()
     .unwrap();
@@ -155,6 +156,7 @@ fn plan_implementation_reminder_uses_attached_plan_after_context_clear() {
         &PlanWorkflowState::Idle,
         &attachments,
         Some(PlanControlInput::ImplementPlan),
+        None,
     )
     .unwrap()
     .unwrap();
@@ -169,10 +171,30 @@ fn plan_implementation_reminder_is_scoped_to_implement_control() {
         &sample_plan_ready(),
         &[],
         Some(PlanControlInput::UpdatePlan),
+        None,
     )
     .unwrap();
 
     assert!(reminder.is_none());
+}
+
+#[test]
+fn plan_implementation_reminder_includes_target_directory() {
+    let options = PlanImplementationOptionsInput {
+        implementation_path: Some("apps/web".into()),
+    };
+    let reminder = plan_implementation_turn_reminder(
+        Path::new("/workspace"),
+        &sample_plan_ready(),
+        &[],
+        Some(PlanControlInput::ImplementPlan),
+        Some(&options),
+    )
+    .unwrap()
+    .unwrap();
+
+    assert!(reminder.contains("Implementation target directory: apps/web"));
+    assert!(reminder.contains("Scope all file creation"));
 }
 
 #[test]

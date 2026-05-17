@@ -60,6 +60,7 @@ pub(super) async fn send_message(
         &conversation.plan_workflow,
         &input.attachments,
         plan_control,
+        input.plan_implementation_options.as_ref(),
     )?;
     let turn_system_prompt = with_turn_plan_reminder(&effective_system_prompt, turn_plan_reminder);
     let mut mode_model_settings = conversation.mode_model_settings.clone();
@@ -907,6 +908,7 @@ pub(super) fn plan_implementation_turn_reminder(
     workflow: &PlanWorkflowState,
     attachments: &[AttachmentInput],
     control: Option<PlanControlInput>,
+    options: Option<&PlanImplementationOptionsInput>,
 ) -> std::result::Result<Option<String>, String> {
     if !matches!(control, Some(PlanControlInput::ImplementPlan)) {
         return Ok(None);
@@ -927,6 +929,10 @@ pub(super) fn plan_implementation_turn_reminder(
     if let Some(title) = plan.title.filter(|title| !title.trim().is_empty()) {
         lines.push(format!("Plan title: {}", title.trim()));
     }
+    if let Some(target) = plan_implementation_target_path(workspace_root, options)? {
+        lines.push(format!("Implementation target directory: {target}"));
+        lines.push("Scope all file creation, edits, commands, and validation to this target directory unless the plan explicitly requires touching shared/root configuration files.".to_string());
+    }
     lines.extend([
         "Treat the plan as the source of truth for this implementation run.".to_string(),
         "Use the ToDoList tool to track implementation progress when the plan has multiple steps, and keep it updated until the plan is complete.".to_string(),
@@ -934,6 +940,40 @@ pub(super) fn plan_implementation_turn_reminder(
     ]);
 
     Ok(Some(lines.join("\n")))
+}
+
+pub(super) fn plan_implementation_target_path(
+    workspace_root: &Path,
+    options: Option<&PlanImplementationOptionsInput>,
+) -> std::result::Result<Option<String>, String> {
+    let Some(raw) = options
+        .and_then(|options| options.implementation_path.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    if Path::new(raw)
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("implementation target cannot contain `..`".to_string());
+    }
+
+    let resolved = resolve_attachment_path(workspace_root, raw);
+    let relative = resolved.strip_prefix(workspace_root).map_err(|_| {
+        format!(
+            "implementation target must be inside the workspace: {}",
+            resolved.display()
+        )
+    })?;
+    let display = if relative.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        relative.display().to_string()
+    };
+    Ok(Some(display))
 }
 
 pub(super) fn with_turn_plan_reminder(base: &str, reminder: Option<String>) -> String {

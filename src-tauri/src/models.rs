@@ -258,8 +258,15 @@ pub(super) struct SendMessageInput {
     pub(super) mode: Option<AgentModeInput>,
     pub(super) plan_control: Option<PlanControlInput>,
     pub(super) message_visibility: Option<MessageVisibilityInput>,
+    pub(super) plan_implementation_options: Option<PlanImplementationOptionsInput>,
     #[serde(default)]
     pub(super) rewrite_from_history_index: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PlanImplementationOptionsInput {
+    pub(super) implementation_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

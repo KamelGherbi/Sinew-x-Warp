@@ -23,6 +23,7 @@ import type {
   OpenRouterModelSearchResult,
   OpenRouterProviderStatus,
   PlanControl,
+  PlanImplementationOptions,
   SavedConversation,
   SkillSettings,
   SessionSummary,
@@ -387,6 +388,7 @@ export const api = {
     rewriteFromHistoryIndex?: number,
     planControl?: PlanControl,
     messageVisibility?: MessageVisibility,
+    planImplementationOptions?: PlanImplementationOptions,
   ) {
     return invoke<void>("send_message", {
       input: {
@@ -400,6 +402,7 @@ export const api = {
         rewriteFromHistoryIndex,
         planControl,
         messageVisibility,
+        planImplementationOptions,
       },
     });
   },

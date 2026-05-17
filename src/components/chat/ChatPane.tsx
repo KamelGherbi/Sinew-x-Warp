@@ -56,6 +56,7 @@ import type {
   Part,
   PlanArtifact,
   PlanControl,
+  PlanImplementationOptions,
   PlanWorkflowState,
   StreamTokenUsage,
   ThinkingLevel,
@@ -152,6 +153,7 @@ type Props = {
     rewriteFromHistoryIndex?: number,
     planControl?: PlanControl,
     messageVisibility?: MessageVisibility,
+    planImplementationOptions?: PlanImplementationOptions,
   ) => Promise<void>;
   onCompact: (model: ModelRef, thinking: ThinkingLevel) => Promise<void>;
   onModeChange: (mode: AgentMode) => Promise<void>;
@@ -163,6 +165,7 @@ type Props = {
   onImplementPlanFresh: (
     plan: PlanArtifact,
     prompt?: string,
+    planImplementationOptions?: PlanImplementationOptions,
   ) => Promise<void>;
   onStop: () => Promise<void>;
   onOpenFile: (path: string) => void;
@@ -1904,6 +1907,7 @@ export function ChatPane({
       nextMode: AgentMode,
       planControl: PlanControl,
       messageVisibility: MessageVisibility = "normal",
+      planImplementationOptions?: PlanImplementationOptions,
     ) => {
       if (view.status === "streaming" || !modelEntry) return;
       const planAttachment = {
@@ -1927,6 +1931,7 @@ export function ChatPane({
           undefined,
           planControl,
           messageVisibility,
+          planImplementationOptions,
         );
       } catch (err) {
         setView((prev) => ({
@@ -1957,7 +1962,7 @@ export function ChatPane({
   );
 
   const handlePlanImplement = useCallback(
-    (plan: PlanArtifact) => {
+    (plan: PlanArtifact, planImplementationOptions?: PlanImplementationOptions) => {
       pendingPlanWriteModeRef.current = null;
       setMode("act");
       void sendPlanCommand(
@@ -1966,13 +1971,14 @@ export function ChatPane({
         "act",
         "implementPlan",
         "systemReminder",
+        planImplementationOptions,
       );
     },
     [sendPlanCommand],
   );
 
   const handlePlanImplementWithSwarm = useCallback(
-    (plan: PlanArtifact) => {
+    (plan: PlanArtifact, planImplementationOptions?: PlanImplementationOptions) => {
       if (!agentTeamsEnabled) return;
       pendingPlanWriteModeRef.current = null;
       setMode("act");
@@ -1982,13 +1988,14 @@ export function ChatPane({
         "act",
         "implementPlan",
         "systemReminder",
+        planImplementationOptions,
       );
     },
     [agentTeamsEnabled, sendPlanCommand],
   );
 
   const handlePlanImplementFresh = useCallback(
-    async (plan: PlanArtifact) => {
+    async (plan: PlanArtifact, planImplementationOptions?: PlanImplementationOptions) => {
       if (view.status === "streaming") return;
       pendingPlanWriteModeRef.current = null;
       setMode("act");
@@ -2000,7 +2007,7 @@ export function ChatPane({
         // We deliberately do NOT pass the current conversation's selection
         // here — that would contaminate the fresh conversation with the
         // old conversation's preference.
-        await onImplementPlanFresh(plan);
+        await onImplementPlanFresh(plan, undefined, planImplementationOptions);
       } catch (err) {
         setView((prev) => ({
           ...prev,
@@ -2015,7 +2022,7 @@ export function ChatPane({
   );
 
   const handlePlanImplementFreshWithSwarm = useCallback(
-    async (plan: PlanArtifact) => {
+    async (plan: PlanArtifact, planImplementationOptions?: PlanImplementationOptions) => {
       if (view.status === "streaming" || !agentTeamsEnabled) return;
       pendingPlanWriteModeRef.current = null;
       setMode("act");
@@ -2024,7 +2031,11 @@ export function ChatPane({
         // Same reasoning as handlePlanImplementFresh: this spawns a new
         // conversation, which the parent seeds from the workspace's global
         // default.
-        await onImplementPlanFresh(plan, IMPLEMENT_PLAN_WITH_SWARM_PROMPT);
+        await onImplementPlanFresh(
+          plan,
+          IMPLEMENT_PLAN_WITH_SWARM_PROMPT,
+          planImplementationOptions,
+        );
       } catch (err) {
         setView((prev) => ({
           ...prev,
@@ -2724,6 +2735,7 @@ export function ChatPane({
             <>
               {displayView.blocks.length > 0 && (
                 <ChatBlocks
+                  workspacePath={workspacePath}
                   blocks={displayView.blocks}
                   onPreviewImage={setPreviewImage}
                   onRewindMessage={viewingSubAgent ? () => {} : handleRewindToMessage}
@@ -5183,6 +5195,7 @@ function toQuestionItem(block: QuestionToolBlock): QuestionItem {
 }
 
 function ChatBlocks({
+  workspacePath,
   blocks,
   onPreviewImage,
   onRewindMessage,
@@ -5206,6 +5219,7 @@ function ChatBlocks({
   activeTeamNames,
   activeAgentName,
 }: {
+  workspacePath: string;
   blocks: ChatBlock[];
   onPreviewImage: (path: string) => void;
   onRewindMessage: (block: Extract<ChatBlock, { kind: "user-text" }>) => void;
@@ -5219,10 +5233,10 @@ function ChatBlocks({
   answerQuestionDisabled: boolean;
   allowStopQuestions: boolean;
   onPlanKeepUpdating: (plan: PlanArtifact) => void;
-  onPlanImplement: (plan: PlanArtifact) => void;
-  onPlanImplementWithSwarm: (plan: PlanArtifact) => void;
-  onPlanImplementFresh: (plan: PlanArtifact) => void;
-  onPlanImplementFreshWithSwarm: (plan: PlanArtifact) => void;
+  onPlanImplement: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onPlanImplementWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onPlanImplementFresh: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onPlanImplementFreshWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
   planActionDisabled: boolean;
   agentTeamsEnabled: boolean;
   onOpenSubAgent: (block: Extract<ChatBlock, { kind: "tool" }>) => void;
@@ -5255,6 +5269,7 @@ function ChatBlocks({
         }
         return (
           <BlockView
+            workspacePath={workspacePath}
             key={item.block.id + ":" + index}
             block={item.block}
             onPreviewImage={onPreviewImage}
@@ -5283,6 +5298,7 @@ function ChatBlocks({
 }
 
 function BlockView({
+  workspacePath,
   block,
   onPreviewImage,
   onRewindMessage,
@@ -5303,6 +5319,7 @@ function BlockView({
   activeTeamNames,
   activeAgentName,
 }: {
+  workspacePath: string;
   block: ChatBlock;
   onPreviewImage: (path: string) => void;
   onRewindMessage: (block: Extract<ChatBlock, { kind: "user-text" }>) => void;
@@ -5310,10 +5327,10 @@ function BlockView({
   rewriteHistoryIndex: number | null;
   onOpenFile: (path: string) => void;
   onPlanKeepUpdating: (plan: PlanArtifact) => void;
-  onPlanImplement: (plan: PlanArtifact) => void;
-  onPlanImplementWithSwarm: (plan: PlanArtifact) => void;
-  onPlanImplementFresh: (plan: PlanArtifact) => void;
-  onPlanImplementFreshWithSwarm: (plan: PlanArtifact) => void;
+  onPlanImplement: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onPlanImplementWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onPlanImplementFresh: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onPlanImplementFreshWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
   planActionDisabled: boolean;
   agentTeamsEnabled: boolean;
   onOpenSubAgent: (block: Extract<ChatBlock, { kind: "tool" }>) => void;
@@ -5438,6 +5455,7 @@ function BlockView({
         <div className="msg" data-role="assistant">
           <PlanCard
             artifact={block.artifact}
+            workspacePath={workspacePath}
             disabled={planActionDisabled}
             agentTeamsEnabled={agentTeamsEnabled}
             onOpenFile={onOpenFile}
@@ -5581,6 +5599,7 @@ function PlanSwarmGlyph() {
 
 function PlanCard({
   artifact,
+  workspacePath,
   disabled,
   agentTeamsEnabled,
   onOpenFile,
@@ -5591,18 +5610,21 @@ function PlanCard({
   onImplementFreshWithSwarm,
 }: {
   artifact: PlanArtifact;
+  workspacePath: string;
   disabled: boolean;
   agentTeamsEnabled: boolean;
   onOpenFile: (path: string) => void;
   onKeepUpdating: (plan: PlanArtifact) => void;
-  onImplement: (plan: PlanArtifact) => void;
-  onImplementWithSwarm: (plan: PlanArtifact) => void;
-  onImplementFresh: (plan: PlanArtifact) => void;
-  onImplementFreshWithSwarm: (plan: PlanArtifact) => void;
+  onImplement: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onImplementWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onImplementFresh: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onImplementFreshWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
 }) {
   const [step, setStep] = useState<"choose" | "runner">("choose");
   const [implementMode, setImplementMode] =
     useState<PlanImplementMode>("continue");
+  const [implementationPath, setImplementationPath] = useState(".");
+  const [implementationPathError, setImplementationPathError] = useState<string | null>(null);
 
   const startImplement = (mode: PlanImplementMode) => {
     if (disabled) return;
@@ -5610,16 +5632,49 @@ function PlanCard({
     setStep("runner");
   };
 
+  const implementationOptions = (): PlanImplementationOptions | null => {
+    const normalized = normalizePlanImplementationPath(implementationPath);
+    if (normalized === null) {
+      setImplementationPathError("Choose a folder inside this workspace.");
+      return null;
+    }
+    setImplementationPath(normalized || ".");
+    setImplementationPathError(null);
+    return { implementationPath: normalized || "." };
+  };
+
+  const pickImplementationFolder = async () => {
+    if (disabled) return;
+    try {
+      const selected = await open({ directory: true, multiple: false, defaultPath: workspacePath });
+      const picked = typeof selected === "string" ? selected : null;
+      if (!picked) return;
+      const relative = relativizePath(workspacePath, picked);
+      if (relative === null) {
+        setImplementationPathError("Choose a folder inside this workspace.");
+        return;
+      }
+      setImplementationPath(relative || ".");
+      setImplementationPathError(null);
+    } catch (err) {
+      setImplementationPathError(String(err));
+    }
+  };
+
   const launchNormal = () => {
     if (disabled) return;
-    if (implementMode === "continue") onImplement(artifact);
-    else onImplementFresh(artifact);
+    const options = implementationOptions();
+    if (!options) return;
+    if (implementMode === "continue") onImplement(artifact, options);
+    else onImplementFresh(artifact, options);
   };
 
   const launchSwarm = () => {
     if (disabled || !agentTeamsEnabled) return;
-    if (implementMode === "continue") onImplementWithSwarm(artifact);
-    else onImplementFreshWithSwarm(artifact);
+    const options = implementationOptions();
+    if (!options) return;
+    if (implementMode === "continue") onImplementWithSwarm(artifact, options);
+    else onImplementFreshWithSwarm(artifact, options);
   };
 
   return (
@@ -5688,6 +5743,35 @@ function PlanCard({
                 ? "Implement the plan · choose runner"
                 : "Implement the plan & clear context · choose runner"}
             </span>
+          </div>
+          <div className="plan-card__target">
+            <label className="plan-card__target-label" htmlFor={`plan-target-${artifact.path}`}>
+              Target folder
+            </label>
+            <div className="plan-card__target-row">
+              <input
+                id={`plan-target-${artifact.path}`}
+                className="plan-card__target-input"
+                value={implementationPath}
+                onChange={(event) => {
+                  setImplementationPath(event.target.value);
+                  setImplementationPathError(null);
+                }}
+                placeholder="."
+                disabled={disabled}
+              />
+              <button
+                type="button"
+                className="plan-card__target-pick"
+                onClick={() => void pickImplementationFolder()}
+                disabled={disabled}
+              >
+                Browse
+              </button>
+            </div>
+            <div className="plan-card__target-help">
+              {implementationPathError ?? "Use . for the workspace root, or choose a subfolder."}
+            </div>
           </div>
           <div className="plan-card__tiles">
             <button
@@ -5892,6 +5976,15 @@ function relativizePath(workspacePath: string, candidate: string): string | null
     return norm.slice(rootSlash.length + 1);
   }
   return null;
+}
+
+function normalizePlanImplementationPath(value: string): string | null {
+  const trimmed = value.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!trimmed || trimmed === ".") return ".";
+  if (trimmed.startsWith("/") || /^[A-Za-z]:\//.test(trimmed)) return null;
+  const parts = trimmed.split("/").filter(Boolean);
+  if (parts.some((part) => part === "..")) return null;
+  return parts.join("/") || ".";
 }
 
 function renderMentionHighlights(
