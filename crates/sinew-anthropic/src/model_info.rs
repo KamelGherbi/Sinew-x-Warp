@@ -38,16 +38,13 @@ const MODELS: &[AnthropicModelInfo] = &[
     },
 ];
 
-fn model_info(model_id: &str) -> &'static AnthropicModelInfo {
-    MODELS
-        .iter()
-        .find(|info| info.id == model_id)
-        .unwrap_or(&MODELS[0])
+fn model_info(model_id: &str) -> Option<&'static AnthropicModelInfo> {
+    MODELS.iter().find(|info| info.id == model_id)
 }
 
-pub fn capabilities(model: &ModelRef) -> ModelCapabilities {
-    let info = model_info(&model.name);
-    ModelCapabilities {
+pub fn capabilities(model: &ModelRef) -> Option<ModelCapabilities> {
+    let info = model_info(&model.name)?;
+    Some(ModelCapabilities {
         model: model.clone(),
         context_window: info.context_window,
         preferred_window: info.preferred_window,
@@ -57,5 +54,5 @@ pub fn capabilities(model: &ModelRef) -> ModelCapabilities {
         supports_tools: true,
         supports_images: true,
         effort_mode: EffortMode::Tier,
-    }
+    })
 }

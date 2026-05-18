@@ -152,7 +152,7 @@ impl Provider for AnthropicProvider {
         if model.provider != "anthropic" {
             return None;
         }
-        Some(model_info::capabilities(model))
+        model_info::capabilities(model)
     }
 
     async fn estimate_tokens(&self, request: ProviderRequest) -> Result<TokenEstimate> {
@@ -196,7 +196,12 @@ impl Provider for AnthropicProvider {
     }
 
     async fn stream(&self, request: ProviderRequest) -> Result<ProviderStream> {
-        let caps = model_info::capabilities(&request.model);
+        let caps = model_info::capabilities(&request.model).ok_or_else(|| {
+            AppError::Unsupported(format!(
+                "unsupported anthropic model {}",
+                request.model.name
+            ))
+        })?;
         let is_oauth = self.config.credential.is_oauth();
         let (thinking, output_config) = effort_to_output(request.effective_effort());
         let mut cache_budget = CACHE_BREAKPOINTS;

@@ -390,6 +390,7 @@ impl TeamTool {
         &self,
         agent_names: &[String],
         agent_profiles: Option<&HashMap<String, String>>,
+        agent_models: Option<&HashMap<String, ModelRef>>,
     ) -> std::result::Result<Vec<PreparedTeamAgentConfig>, String> {
         let mut profile_by_agent = HashMap::<String, SubAgentConfig>::new();
         if let Some(agent_profiles) = agent_profiles {
@@ -415,13 +416,37 @@ impl TeamTool {
             }
         }
 
+        let mut model_by_agent = HashMap::<String, ModelRef>::new();
+        if let Some(agent_models) = agent_models {
+            for (agent_name, model) in agent_models {
+                let agent_name = agent_name.trim();
+                if agent_name.is_empty() {
+                    return Err("agent_models keys cannot be empty".to_string());
+                }
+                let agent_key_value = agent_key(agent_name);
+                let Some(canonical_name) = agent_names
+                    .iter()
+                    .find(|name| agent_key(name) == agent_key_value)
+                else {
+                    return Err(format!(
+                        "agent_models references unknown teammate `{agent_name}`"
+                    ));
+                };
+                self.validate_model(model)?;
+                model_by_agent.insert(agent_key(canonical_name), model.clone());
+            }
+        }
+
         let mut configs = Vec::with_capacity(agent_names.len());
         for name in agent_names {
             let profile = profile_by_agent.get(&agent_key(name));
             let description = profile
                 .map(|agent| agent.description.clone())
                 .unwrap_or_else(|| "Team collaborator".to_string());
-            let model = self.default_model.clone();
+            let model = model_by_agent
+                .get(&agent_key(name))
+                .cloned()
+                .unwrap_or_else(|| self.default_model.clone());
             self.validate_model(&model)?;
             let prompt = profile
                 .map(|agent| agent.prompt.clone())

@@ -94,7 +94,7 @@ impl Provider for OpenAiProvider {
         if model.provider != "openai" {
             return None;
         }
-        Some(model_info::capabilities(model))
+        model_info::capabilities(model)
     }
 
     async fn estimate_tokens(&self, request: ProviderRequest) -> Result<TokenEstimate> {
@@ -285,7 +285,9 @@ fn build_responses_request<'a>(
     store: Option<bool>,
     stream: Option<bool>,
 ) -> Result<wire::ResponsesRequest<'a>> {
-    let caps = model_info::capabilities(&request.model);
+    let caps = model_info::capabilities(&request.model).ok_or_else(|| {
+        AppError::Unsupported(format!("unsupported openai model {}", request.model.name))
+    })?;
     Ok(wire::ResponsesRequest {
         model: &request.model.name,
         instructions: response_instructions(request, is_oauth),

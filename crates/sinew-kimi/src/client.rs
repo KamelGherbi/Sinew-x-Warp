@@ -118,7 +118,7 @@ impl Provider for KimiProvider {
         if model.provider != "kimi" {
             return None;
         }
-        Some(model_info::capabilities(model))
+        model_info::capabilities(model)
     }
 
     async fn estimate_tokens(&self, request: ProviderRequest) -> Result<TokenEstimate> {
@@ -142,7 +142,9 @@ impl Provider for KimiProvider {
             )));
         }
 
-        let caps = model_info::capabilities(&request.model);
+        let caps = model_info::capabilities(&request.model).ok_or_else(|| {
+            AppError::Unsupported(format!("unsupported kimi model {}", request.model.name))
+        })?;
         let (reasoning_effort, thinking) = effort_to_thinking(request.effective_effort());
         let body = wire::ChatCompletionsRequest {
             model: &request.model.name,

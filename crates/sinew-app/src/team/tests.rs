@@ -153,6 +153,23 @@ fn team_run_descriptor_exposes_agent_profiles_as_visible_array() {
 }
 
 #[test]
+fn team_run_descriptor_exposes_agent_models() {
+    let descriptor = TeamTool::descriptors_static()
+        .into_iter()
+        .find(|tool| tool.name == TEAM_RUN_TOOL)
+        .expect("TeamRun descriptor should exist");
+
+    assert!(descriptor
+        .input_schema
+        .pointer("/properties/agent_models/oneOf/0/items/properties/model/properties/provider")
+        .is_some());
+    assert!(descriptor
+        .input_schema
+        .pointer("/properties/agent_models/oneOf/0/items/properties/model/properties/name")
+        .is_some());
+}
+
+#[test]
 fn team_run_accepts_agent_profiles_assignments() {
     let parsed: TeamRunInput = serde_json::from_value(json!({
         "objective": "ship app",
@@ -178,6 +195,62 @@ fn team_run_accepts_agent_profiles_assignments() {
         profiles.get("scene").map(String::as_str),
         Some("threejs_expert")
     );
+}
+
+#[test]
+fn team_run_accepts_agent_models_assignments() {
+    let parsed: TeamRunInput = serde_json::from_value(json!({
+        "objective": "ship app",
+        "agent_names": ["frontend", "backend"],
+        "agent_models": [
+            {
+                "agent": "frontend",
+                "model": { "provider": "anthropic", "name": "claude-opus-4-7", "effort": "max" }
+            },
+            {
+                "agent": "backend",
+                "model": { "provider": "openai", "name": "gpt-5.5", "effort": "high" }
+            }
+        ]
+    }))
+    .expect("agent model assignment list should parse");
+
+    let models = parsed
+        .agent_models
+        .expect("models should exist")
+        .to_model_map()
+        .expect("models should normalize");
+
+    assert_eq!(
+        models.get("frontend"),
+        Some(&ModelRef::new("anthropic", "claude-opus-4-7").with_effort(Effort::Max))
+    );
+    assert_eq!(
+        models.get("backend"),
+        Some(&ModelRef::new("openai", "gpt-5.5").with_effort(Effort::High))
+    );
+}
+
+#[test]
+fn team_run_still_accepts_agent_models_map() {
+    let parsed: TeamRunInput = serde_json::from_value(json!({
+        "objective": "ship app",
+        "agent_names": ["frontend", "backend"],
+        "agent_models": {
+            "frontend": { "provider": "anthropic", "name": "claude-opus-4-7", "effort": "max" },
+            "backend": { "provider": "openai", "name": "gpt-5.5", "effort": "high" }
+        }
+    }))
+    .expect("legacy agent model map should parse");
+
+    let models = parsed
+        .agent_models
+        .expect("models should exist")
+        .to_model_map()
+        .expect("models should normalize");
+
+    assert_eq!(models["frontend"].provider, "anthropic");
+    assert_eq!(models["backend"].name, "gpt-5.5");
 }
 
 #[test]
@@ -242,12 +315,67 @@ fn team_agent_profiles_keep_current_chat_model_by_default() {
     profiles.insert("architect".to_string(), "code-architect".to_string());
 
     let configs = tool
-        .prepare_team_agent_configs(&["architect".to_string()], Some(&profiles))
+        .prepare_team_agent_configs(&["architect".to_string()], Some(&profiles), None)
         .expect("profile should resolve");
 
     assert_eq!(configs[0].description, "Architecture profile");
     assert_eq!(configs[0].prompt, "Think like an architect");
     assert_eq!(configs[0].model, current_model);
+}
+
+#[test]
+fn team_agent_models_override_current_chat_model_per_teammate() {
+    let current_model = ModelRef::new("openai", "gpt-5.5").with_effort(Effort::High);
+    let frontend_model = ModelRef::new("anthropic", "claude-opus-4-7").with_effort(Effort::Max);
+    let tool = TeamTool::new(
+        "test-scope".to_string(),
+        PathBuf::from("."),
+        String::new(),
+        HashMap::from([
+            (
+                "openai".to_string(),
+                Arc::new(TestProvider) as Arc<dyn Provider>,
+            ),
+            (
+                "anthropic".to_string(),
+                Arc::new(TestProvider) as Arc<dyn Provider>,
+            ),
+        ]),
+        SubAgentSettings::default(),
+        McpSettings::default(),
+        ToolSettings::default(),
+        SkillSettings::default(),
+        current_model.clone(),
+        1,
+        Arc::new(RwLock::new(TeamRuntime::default())),
+        TurnCancel::empty(),
+    );
+    let mut models = HashMap::new();
+    models.insert("frontend".to_string(), frontend_model.clone());
+
+    let configs = tool
+        .prepare_team_agent_configs(
+            &["frontend".to_string(), "backend".to_string()],
+            None,
+            Some(&models),
+        )
+        .expect("models should resolve");
+
+    assert_eq!(configs[0].model, frontend_model);
+    assert_eq!(configs[1].model, current_model);
+}
+
+#[test]
+fn team_agent_models_reject_unknown_teammate() {
+    let tool = test_team_tool();
+    let mut models = HashMap::new();
+    models.insert("frontend".to_string(), ModelRef::new("test", "model"));
+
+    let err = tool
+        .prepare_team_agent_configs(&["backend".to_string()], None, Some(&models))
+        .expect_err("unknown model assignment should fail");
+
+    assert!(err.contains("agent_models references unknown teammate `frontend`"));
 }
 
 struct TestProvider;
@@ -285,6 +413,72 @@ impl Provider for TestProvider {
     async fn stream(&self, _request: ProviderRequest) -> sinew_core::Result<ProviderStream> {
         Ok(Box::pin(stream::empty()))
     }
+}
+
+struct StrictTestProvider;
+
+#[async_trait]
+impl Provider for StrictTestProvider {
+    fn name(&self) -> &str {
+        "strict-test-provider"
+    }
+
+    fn capabilities(&self, model: &ModelRef) -> Option<ModelCapabilities> {
+        (model.name == "known-model").then(|| ModelCapabilities {
+            model: model.clone(),
+            context_window: 128_000,
+            preferred_window: 128_000,
+            max_output_tokens: 8_000,
+            supports_thinking: true,
+            visible_thinking: true,
+            supports_tools: true,
+            supports_images: true,
+            effort_mode: sinew_core::EffortMode::Tier,
+        })
+    }
+
+    async fn estimate_tokens(
+        &self,
+        _request: ProviderRequest,
+    ) -> sinew_core::Result<TokenEstimate> {
+        Ok(TokenEstimate {
+            input_tokens: 0,
+            exact: true,
+        })
+    }
+
+    async fn stream(&self, _request: ProviderRequest) -> sinew_core::Result<ProviderStream> {
+        Ok(Box::pin(stream::empty()))
+    }
+}
+
+#[test]
+fn team_agent_models_reject_unsupported_model_id() {
+    let tool = TeamTool::new(
+        "test-scope".to_string(),
+        PathBuf::from("."),
+        String::new(),
+        HashMap::from([(
+            "test".to_string(),
+            Arc::new(StrictTestProvider) as Arc<dyn Provider>,
+        )]),
+        SubAgentSettings::default(),
+        McpSettings::default(),
+        ToolSettings::default(),
+        SkillSettings::default(),
+        ModelRef::new("test", "known-model"),
+        1,
+        Arc::new(RwLock::new(TeamRuntime::default())),
+        TurnCancel::empty(),
+    );
+    let mut models = HashMap::new();
+    models.insert("frontend".to_string(), ModelRef::new("test", "typo-model"));
+
+    let err = tool
+        .prepare_team_agent_configs(&["frontend".to_string()], None, Some(&models))
+        .expect_err("unsupported model assignment should fail");
+
+    assert!(err.contains("model `typo-model` is not supported"));
 }
 
 #[test]

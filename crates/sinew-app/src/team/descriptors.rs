@@ -51,6 +51,55 @@ impl TeamTool {
                                 "additionalProperties": false
                             }
                         },
+                        "agent_models": {
+                            "description": "Optional model assignments for teammates. Use this to run different teammates on different configured providers/models. Each agent must match agent_names. Omitted teammates use the current chat model.",
+                            "oneOf": [
+                                {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "agent": {
+                                                "type": "string",
+                                                "description": "Teammate name from agent_names."
+                                            },
+                                            "model": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "provider": { "type": "string" },
+                                                    "name": { "type": "string" },
+                                                    "effort": {
+                                                        "type": "string",
+                                                        "enum": ["none", "low", "medium", "high", "xhigh", "max"]
+                                                    }
+                                                },
+                                                "required": ["provider", "name"],
+                                                "additionalProperties": false
+                                            }
+                                        },
+                                        "required": ["agent", "model"],
+                                        "additionalProperties": false
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                        "type": "object",
+                                        "properties": {
+                                            "provider": { "type": "string" },
+                                            "name": { "type": "string" },
+                                            "effort": {
+                                                "type": "string",
+                                                "enum": ["none", "low", "medium", "high", "xhigh", "max"]
+                                            }
+                                        },
+                                        "required": ["provider", "name"],
+                                        "additionalProperties": false
+                                    },
+                                    "description": "Map from teammate name to that teammate's model reference."
+                                }
+                            ]
+                        },
                         "agent_prompts": {
                             "description": "Optional teammate-specific launch prompts from the main agent. Each agent must match agent_names. These prompts are delivered only to that teammate alongside the shared objective.",
                             "oneOf": [

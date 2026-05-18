@@ -146,6 +146,8 @@ pub(super) struct TeamRunInput {
     pub(super) agent_names: Option<Vec<String>>,
     #[serde(default, alias = "agentProfiles")]
     pub(super) agent_profiles: Option<AgentProfilesInput>,
+    #[serde(default, alias = "agentModels")]
+    pub(super) agent_models: Option<AgentModelsInput>,
     #[serde(default, alias = "agentPrompts")]
     pub(super) agent_prompts: Option<AgentPromptsInput>,
     pub(super) tasks: Option<Vec<TeamRunTaskInput>>,
@@ -190,6 +192,45 @@ impl AgentProfilesInput {
 pub(super) struct AgentProfileAssignmentInput {
     pub(super) agent: String,
     pub(super) profile: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub(super) enum AgentModelsInput {
+    Assignments(Vec<AgentModelAssignmentInput>),
+    Map(HashMap<String, ModelRef>),
+}
+
+impl AgentModelsInput {
+    pub(super) fn to_model_map(&self) -> std::result::Result<HashMap<String, ModelRef>, String> {
+        match self {
+            Self::Map(map) => Ok(map.clone()),
+            Self::Assignments(assignments) => {
+                let mut map = HashMap::new();
+                let mut seen = BTreeSet::new();
+                for assignment in assignments {
+                    let agent = assignment.agent.trim();
+                    if agent.is_empty() {
+                        return Err("agent_models entries require non-empty agent".to_string());
+                    }
+                    if !seen.insert(agent_key(agent)) {
+                        return Err(format!(
+                            "agent_models contains duplicate teammate `{agent}`"
+                        ));
+                    }
+                    map.insert(agent.to_string(), assignment.model.clone());
+                }
+                Ok(map)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AgentModelAssignmentInput {
+    pub(super) agent: String,
+    pub(super) model: ModelRef,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -257,7 +257,7 @@ impl Provider for GoogleProvider {
         if model.provider != "google" {
             return None;
         }
-        Some(model_info::capabilities(model))
+        model_info::capabilities(model)
     }
 
     async fn estimate_tokens(&self, request: ProviderRequest) -> Result<TokenEstimate> {
@@ -301,7 +301,9 @@ impl Provider for GoogleProvider {
                 request.model.provider
             )));
         }
-        let caps = model_info::capabilities(&request.model);
+        let caps = model_info::capabilities(&request.model).ok_or_else(|| {
+            AppError::Unsupported(format!("unsupported google model {}", request.model.name))
+        })?;
         let user_data = self.ensure_user_data().await?;
         let body = build_generate_request(&request, &user_data, &caps)?;
         let response = self
