@@ -86,6 +86,7 @@
   --fs-xs: 11px;
   --fs-mono: 12px;
   --fs-mono-sm: 11.5px;
+  --message-font-size: var(--fs-sm);
 
   /* radius — rounder than before, matches designsystem 10/14/20 */
   --r-micro: 3px;
@@ -2363,6 +2364,12 @@ textarea {
   padding-top: 22px;
 }
 
+.settings-pane__body--appearance {
+  align-content: start;
+  overflow-y: auto;
+  max-width: 680px;
+}
+
 .settings-pane__about-hero {
   display: flex;
   align-items: center;
@@ -2430,6 +2437,84 @@ textarea {
 .settings-pane__about-link:hover {
   background: var(--bg-2);
   color: var(--text-0);
+}
+
+.settings-pane__appearance-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px;
+  border-radius: var(--r-card);
+  background: var(--bg-2);
+}
+
+.settings-pane__appearance-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.settings-pane__appearance-card-head h2 {
+  margin: 0 0 3px;
+  color: var(--text-0);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  font-weight: 520;
+}
+
+.settings-pane__appearance-card-head p {
+  margin: 0;
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+.settings-pane__appearance-card-head > span {
+  flex: 0 0 auto;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-pane__range-row {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.settings-pane__range-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--text-0);
+}
+
+.settings-pane__range-value {
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+}
+
+.settings-pane__message-preview {
+  padding: 12px;
+  border-radius: var(--r-card);
+  background: var(--bg-1);
+}
+
+.settings-pane__message-preview-bubble {
+  max-width: 54ch;
+  color: var(--text-0);
+  font-family: var(--font-ui);
+  font-size: var(--message-font-size);
+  line-height: 1.5;
+}
+
+.settings-pane__message-preview-bubble .md {
+  font-size: inherit;
 }
 
 .settings-pane__provider-card {
@@ -4483,7 +4568,7 @@ textarea {
 
 .msg__body {
   font-family: var(--font-ui);
-  font-size: var(--fs-sm);
+  font-size: var(--message-font-size);
   color: var(--text-0);
   line-height: 1.5;
   letter-spacing: -0.005em;
@@ -4690,7 +4775,7 @@ textarea {
 .team-message__text {
   color: var(--text-0);
   font-family: var(--font-ui);
-  font-size: var(--fs-sm);
+  font-size: var(--message-font-size);
   line-height: 1.5;
   letter-spacing: -0.005em;
   overflow-wrap: anywhere;
@@ -4699,7 +4784,7 @@ textarea {
 /* Markdown */
 .md {
   font-family: var(--font-ui);
-  font-size: var(--fs-sm);
+  font-size: var(--message-font-size);
   line-height: 1.5;
   color: var(--text-0);
   letter-spacing: -0.005em;
@@ -4725,10 +4810,10 @@ textarea {
   color: var(--text-0);
   line-height: 1.30;
 }
-.md h1 { font-size: 15px; }
-.md h2 { font-size: 14px; }
-.md h3 { font-size: 13px; }
-.md h4 { font-size: var(--fs-sm); }
+.md h1 { font-size: calc(var(--message-font-size) + 3px); }
+.md h2 { font-size: calc(var(--message-font-size) + 2px); }
+.md h3 { font-size: calc(var(--message-font-size) + 1px); }
+.md h4 { font-size: var(--message-font-size); }
 .md a {
   color: var(--text-0);
   text-decoration: none;

@@ -55,12 +55,24 @@ const FALLBACK_TOOL_SETTINGS: ToolSettings = {
 };
 const PROVIDERS_CHANGED_EVENT = "sinew:providers-changed";
 const TOOL_SETTINGS_CHANGED_EVENT = "sinew:tool-settings-changed";
+const MESSAGE_FONT_SIZE_STORAGE_KEY = "sinew.appearance.messageFontSize";
+const MESSAGE_FONT_SIZE_CHANGED_EVENT = "sinew:message-font-size-changed";
+const DEFAULT_MESSAGE_FONT_SIZE = 12;
+const MIN_MESSAGE_FONT_SIZE = 11;
+const MAX_MESSAGE_FONT_SIZE = 18;
 
 type Props = {
   workspacePath: string;
 };
 
-type Section = "about" | "providers" | "tools" | "mcp" | "skills" | "subagents";
+type Section =
+  | "about"
+  | "appearance"
+  | "providers"
+  | "tools"
+  | "mcp"
+  | "skills"
+  | "subagents";
 
 export function SettingsPane({ workspacePath }: Props) {
   const [section, setSection] = useState<Section>("about");
@@ -111,6 +123,13 @@ export function SettingsPane({ workspacePath }: Props) {
   const [providersBusy, setProvidersBusy] = useState(false);
   const [providersMessage, setProvidersMessage] = useState<string | null>(null);
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([]);
+  const [messageFontSize, setMessageFontSize] = useState(loadMessageFontSize);
+
+  useEffect(() => {
+    applyMessageFontSize(messageFontSize);
+    saveMessageFontSize(messageFontSize);
+    window.dispatchEvent(new Event(MESSAGE_FONT_SIZE_CHANGED_EVENT));
+  }, [messageFontSize]);
 
   useEffect(() => {
     setToolSettings(null);
@@ -1010,6 +1029,21 @@ export function SettingsPane({ workspacePath }: Props) {
         <button
           type="button"
           className="settings-pane__nav-item"
+          data-active={section === "appearance" ? "true" : "false"}
+          onClick={() => setSection("appearance")}
+        >
+          <Icon
+            icon="solar:palette-linear"
+            width={15}
+            height={15}
+            className="settings-pane__nav-icon"
+          />
+          <span className="settings-pane__nav-label">Appearance</span>
+          <span className="settings-pane__nav-count">{messageFontSize}px</span>
+        </button>
+        <button
+          type="button"
+          className="settings-pane__nav-item"
           data-active={section === "providers" ? "true" : "false"}
           onClick={() => setSection("providers")}
         >
@@ -1088,6 +1122,11 @@ export function SettingsPane({ workspacePath }: Props) {
       <section className="settings-pane__main">
         {section === "about" ? (
           <AboutSection />
+        ) : section === "appearance" ? (
+          <AppearanceSection
+            messageFontSize={messageFontSize}
+            onMessageFontSizeChange={setMessageFontSize}
+          />
         ) : section === "providers" ? (
           <ProvidersSection
             openAiStatus={openAiStatus}
@@ -1248,6 +1287,78 @@ function AboutSection() {
         </a>
       </div>
     </div>
+  );
+}
+
+// ---- Appearance section ------------------------------------------------
+
+type AppearanceSectionProps = {
+  messageFontSize: number;
+  onMessageFontSizeChange: (value: number) => void;
+};
+
+function AppearanceSection({
+  messageFontSize,
+  onMessageFontSizeChange,
+}: AppearanceSectionProps) {
+  return (
+    <>
+      <header className="settings-pane__header">
+        <div className="settings-pane__header-text">
+          <h1 className="settings-pane__title">Appearance</h1>
+          <p className="settings-pane__subtitle">
+            Tune how conversation messages are displayed.
+          </p>
+        </div>
+      </header>
+
+      <div className="settings-pane__body settings-pane__body--appearance">
+        <section className="settings-pane__appearance-card">
+          <div className="settings-pane__appearance-card-head">
+            <div>
+              <h2>Message font size</h2>
+              <p>Changes user and assistant message text immediately.</p>
+            </div>
+            <span>{messageFontSize}px</span>
+          </div>
+
+          <label className="settings-pane__range-row">
+            <span className="settings-pane__range-value">Small</span>
+            <input
+              type="range"
+              min={MIN_MESSAGE_FONT_SIZE}
+              max={MAX_MESSAGE_FONT_SIZE}
+              step={1}
+              value={messageFontSize}
+              aria-label="Message font size"
+              onChange={(event) =>
+                onMessageFontSizeChange(normalizeMessageFontSize(event.target.value))
+              }
+            />
+            <span className="settings-pane__range-value">Large</span>
+          </label>
+
+          <div className="settings-pane__message-preview" aria-label="Message preview">
+            <div className="settings-pane__message-preview-bubble">
+              <Markdown
+                text="This is how messages will look in the chat. You can make them larger when dense replies feel too small."
+                onOpenFile={() => undefined}
+              />
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="settings-pane__btn"
+            onClick={() => onMessageFontSizeChange(DEFAULT_MESSAGE_FONT_SIZE)}
+            disabled={messageFontSize === DEFAULT_MESSAGE_FONT_SIZE}
+          >
+            <Icon icon="solar:restart-linear" width={13} height={13} />
+            <span>Reset to default</span>
+          </button>
+        </section>
+      </div>
+    </>
   );
 }
 
@@ -3387,6 +3498,47 @@ function WrenchIcon({
       className={className}
       aria-hidden
     />
+  );
+}
+
+function loadMessageFontSize(): number {
+  try {
+    if (typeof window === "undefined") return DEFAULT_MESSAGE_FONT_SIZE;
+    return normalizeMessageFontSize(
+      window.localStorage.getItem(MESSAGE_FONT_SIZE_STORAGE_KEY),
+    );
+  } catch {
+    return DEFAULT_MESSAGE_FONT_SIZE;
+  }
+}
+
+function saveMessageFontSize(value: number): void {
+  try {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      MESSAGE_FONT_SIZE_STORAGE_KEY,
+      String(normalizeMessageFontSize(value)),
+    );
+  } catch {
+    // Ignore storage errors; the live CSS variable still applies for this session.
+  }
+}
+
+function applyMessageFontSize(value: number): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.style.setProperty(
+    "--message-font-size",
+    `${normalizeMessageFontSize(value)}px`,
+  );
+}
+
+function normalizeMessageFontSize(value: unknown): number {
+  const numberValue =
+    typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(numberValue)) return DEFAULT_MESSAGE_FONT_SIZE;
+  return Math.min(
+    MAX_MESSAGE_FONT_SIZE,
+    Math.max(MIN_MESSAGE_FONT_SIZE, Math.round(numberValue)),
   );
 }
 
