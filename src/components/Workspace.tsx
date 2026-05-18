@@ -275,16 +275,17 @@ export function Workspace({
     [workspacePath, activeConv.id, onSelectSession, streamingConversationIds],
   );
 
-  const createConversation = useCallback(async () => {
+  const createConversation = useCallback(async (targetWorkspacePath?: string) => {
+    const conversationWorkspacePath = targetWorkspacePath ?? workspacePath;
     if (onCreateConversationSession) {
-      await onCreateConversationSession(workspacePath);
+      await onCreateConversationSession(conversationWorkspacePath);
       return;
     }
     const seq = ++navigationSeqRef.current;
     try {
-      const next = await api.createConversation(workspacePath);
+      const next = await api.createConversation(conversationWorkspacePath);
       if (seq !== navigationSeqRef.current) return;
-      if (next.workspace.path !== workspacePath) return;
+      if (next.workspace.path !== conversationWorkspacePath) return;
       activeConvIdRef.current = next.activeConversation.id;
       setConversations(next.conversations);
       setActiveConv(next.activeConversation);
