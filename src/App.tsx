@@ -253,6 +253,26 @@ export default function App() {
     [],
   );
 
+  const closeProjectSession = useCallback((workspacePath: string) => {
+    setState((current) => {
+      if (current.kind !== "workspace") return current;
+      const sessions = current.sessions.filter(
+        (session) => session.workspacePath !== workspacePath,
+      );
+      if (sessions.length === 0) return { kind: "welcome" };
+      const activeStillOpen = sessions.some(
+        (session) => session.key === current.activeSessionKey,
+      );
+      return {
+        kind: "workspace",
+        sessions,
+        activeSessionKey: activeStillOpen
+          ? current.activeSessionKey
+          : sessions[0].key,
+      };
+    });
+  }, []);
+
   if (state.kind === "welcome") {
     return (
       <Welcome
@@ -288,6 +308,7 @@ export default function App() {
       onCreateConversationSession={createConversationSession}
       onRenameConversationSession={renameConversationSession}
       onDeleteConversationSession={deleteConversationSession}
+      onCloseProjectSession={closeProjectSession}
       onWorkspaceConversationsReplace={updateWorkspaceConversations}
       onBootstrapReplace={replaceBootstrap}
     />

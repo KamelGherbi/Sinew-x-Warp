@@ -1018,6 +1018,18 @@ export function ChatPane({
             event,
           );
         }
+        return applyEvent(
+          {
+            ...current,
+            blocks: current.blocks.map((block) =>
+              block.kind === "plan-writing" &&
+              block.id === planWriting.placeholderId
+                ? { ...block, label: "Finalizing plan" }
+                : block,
+            ),
+          },
+          event,
+        );
       }
       return applyEvent(current, event);
     },
@@ -2419,6 +2431,16 @@ export function ChatPane({
     [conversationId, setSubAgentViewsForConversation, workspacePath],
   );
 
+  const handleStopTurn = useCallback(() => {
+    setView((prev) => {
+      const next = applyEvent(prev, { type: "interrupted" });
+      viewRef.current = next;
+      conversationViewsRef.current.set(conversationId, next);
+      return next;
+    });
+    void onStop();
+  }, [conversationId, onStop]);
+
   const handleQueuedPromptEdit = useCallback(
     (id: string) => {
       const item = queuedPrompts.find((prompt) => prompt.id === id);
@@ -3222,13 +3244,16 @@ export function ChatPane({
                 </span>
               </button>
               <ContextMeter state={visibleContextEstimate} />
-              {view.status === "streaming" ? (
+              {view.status === "streaming" || isStreaming ? (
                 <button
                   className="composer__send"
                   data-variant="stop"
-                  onClick={() => void onStop()}
+                  onClick={handleStopTurn}
+                  disabled={view.status !== "streaming"}
                 >
-                  <span className="composer__send-label">Stop</span>
+                  <span className="composer__send-label">
+                    {view.status === "streaming" ? "Stop" : "Stopping…"}
+                  </span>
                 </button>
               ) : (
                 <button

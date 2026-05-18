@@ -1497,6 +1497,13 @@ textarea {
   color: var(--text-0);
   background: var(--bg-4);
 }
+.conv-project__action--danger:hover:not(:disabled) {
+  color: var(--danger);
+}
+.conv-project__action:disabled {
+  cursor: default;
+  opacity: 0.25;
+}
 .conv-project__streaming {
   min-width: 15px;
   height: 15px;

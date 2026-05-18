@@ -189,7 +189,18 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
 
         let mut stream_attempt: usize = 0;
         let stream_result = loop {
-            match provider.stream(request.clone()).await {
+            let stream_response = tokio::select! {
+                biased;
+                command = cmd_rx.recv() => {
+                    if matches!(command, Some(EngineCommand::Cancel)) {
+                        cancelled = true;
+                        break Err(AppError::Provider("cancelled".to_string()));
+                    }
+                    continue;
+                }
+                result = provider.stream(request.clone()) => result,
+            };
+            match stream_response {
                 Ok(stream) => break Ok(stream),
                 Err(AppError::RateLimit(message))
                     if stream_attempt < RATE_LIMIT_RETRY_DELAYS_MS.len() =>
@@ -226,6 +237,9 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                 Err(err) => break Err(err),
             }
         };
+        if cancelled {
+            break 'conversation;
+        }
         let mut stream = match stream_result {
             Ok(stream) => stream,
             Err(err) => {

@@ -24,6 +24,7 @@ type Props = {
   onCreate: (workspacePath?: string) => void;
   onRename: (id: string, title: string, workspacePath?: string) => void;
   onDelete: (id: string, workspacePath?: string) => void;
+  onCloseProject?: (workspacePath: string) => void;
   onOpenProject?: () => void;
   onOpenSessions?: () => void;
 };
@@ -38,6 +39,7 @@ export function ConversationList({
   onCreate,
   onRename,
   onDelete,
+  onCloseProject,
   onOpenProject,
   onOpenSessions,
 }: Props) {
@@ -167,6 +169,25 @@ export function ConversationList({
                       >
                         <Icon icon="solar:add-square-linear" width={14} height={14} />
                       </button>
+                      {onCloseProject && (
+                        <button
+                          type="button"
+                          className="conv-project__action conv-project__action--danger"
+                          title={
+                            streamingCount > 0
+                              ? "Stop running conversations before closing this project"
+                              : `Close ${project.name}`
+                          }
+                          aria-label={`Close ${project.name}`}
+                          disabled={streamingCount > 0}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (streamingCount === 0) onCloseProject(project.path);
+                          }}
+                        >
+                          <Icon icon="solar:close-circle-linear" width={14} height={14} />
+                        </button>
+                      )}
                       <span>{project.conversations.length}</span>
                     </span>
                   </div>

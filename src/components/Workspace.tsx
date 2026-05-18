@@ -72,6 +72,7 @@ type Props = {
     workspacePath: string,
     conversationId: string,
   ) => void | Promise<void>;
+  onCloseProjectSession?: (workspacePath: string) => void;
   onWorkspaceConversationsReplace?: (
     workspacePath: string,
     conversations: ConversationSummary[],
@@ -111,6 +112,7 @@ export function Workspace({
   onCreateConversationSession,
   onRenameConversationSession,
   onDeleteConversationSession,
+  onCloseProjectSession,
   onWorkspaceConversationsReplace,
 }: Props) {
   const workspacePath = bootstrap.workspace.path;
@@ -2102,6 +2104,7 @@ export function Workspace({
             onCreate={createConversation}
             onRename={renameConversationFromList}
             onDelete={deleteConversationFromList}
+            onCloseProject={onCloseProjectSession}
             onOpenProject={onOpenProject || onOpenWorkspace ? openProjectPicker : undefined}
             onOpenSessions={openSessionSwitcher}
           />
