@@ -365,14 +365,17 @@ export function Workspace({
       }
       const seq = ++navigationSeqRef.current;
       try {
-        const next = await api.deleteConversation(workspacePath, id);
+        const summaries = await api.deleteConversation(workspacePath, id);
         if (seq !== navigationSeqRef.current) return;
-        if (next.workspace.path !== workspacePath) return;
-        activeConvIdRef.current = next.activeConversation.id;
-        setConversations(next.conversations);
-        setActiveConv(next.activeConversation);
-        setGlobalModeModelSettings(next.modeModelSettings);
-        onBootstrapReplace(next);
+        setConversations(summaries);
+        onWorkspaceConversationsReplace?.(workspacePath, summaries);
+        if (id !== activeConvIdRef.current) return;
+        const nextSummary = summaries[0];
+        if (!nextSummary) return;
+        const nextConversation = await api.loadConversation(workspacePath, nextSummary.id);
+        if (seq !== navigationSeqRef.current) return;
+        activeConvIdRef.current = nextConversation.id;
+        setActiveConv(nextConversation);
       } catch (err) {
         console.error(err);
         if (seq === navigationSeqRef.current) {
@@ -380,7 +383,12 @@ export function Workspace({
         }
       }
     },
-    [workspacePath, onBootstrapReplace, streamingConversationIds, onDeleteConversationSession],
+    [
+      workspacePath,
+      streamingConversationIds,
+      onDeleteConversationSession,
+      onWorkspaceConversationsReplace,
+    ],
   );
 
   // ---------------- Editor tabs ----------------

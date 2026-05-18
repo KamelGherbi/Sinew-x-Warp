@@ -88,7 +88,7 @@ pub(super) async fn rename_conversation(
 pub(super) async fn delete_conversation(
     state: State<'_, DesktopState>,
     input: ConversationInput,
-) -> std::result::Result<WorkspaceBootstrap, String> {
+) -> std::result::Result<Vec<ConversationSummary>, String> {
     let workspace_root =
         normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
     let workspace_id = workspace_root.display().to_string();
@@ -104,7 +104,7 @@ pub(super) async fn delete_conversation(
         .map_err(error_to_string)?;
     state
         .store
-        .bootstrap_workspace(&workspace_root, &state.default_model, &state.system_prompt)
+        .list_conversations(&workspace_id)
         .map_err(error_to_string)
 }
 

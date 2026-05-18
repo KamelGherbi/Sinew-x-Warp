@@ -234,7 +234,7 @@ export const api = {
     });
   },
   deleteConversation(workspacePath: string, conversationId: string) {
-    return invoke<WorkspaceBootstrap>("delete_conversation", {
+    return invoke<ConversationSummary[]>("delete_conversation", {
       input: { workspacePath, conversationId },
     });
   },

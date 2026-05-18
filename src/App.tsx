@@ -229,21 +229,30 @@ export default function App() {
   const deleteConversationSession = useCallback(
     async (workspacePath: string, conversationId: string) => {
       try {
-        const bootstrap = await api.deleteConversation(workspacePath, conversationId);
+        const conversations = await api.deleteConversation(workspacePath, conversationId);
         const deletedKey = workspaceSessionKey(workspacePath, conversationId);
-        const replacementKey = sessionKeyFromBootstrap(bootstrap);
         setState((current) => {
           const remainingSessions =
             current.kind === "workspace"
               ? current.sessions.filter((session) => session.key !== deletedKey)
               : [];
-          const sessions = upsertBootstrap(remainingSessions, bootstrap);
+          const sessions = remainingSessions.map((session) =>
+            session.workspacePath === workspacePath
+              ? {
+                  ...session,
+                  bootstrap: {
+                    ...session.bootstrap,
+                    conversations,
+                  },
+                }
+              : session,
+          );
+          if (sessions.length === 0) return { kind: "welcome" };
           const activeSessionKey =
             current.kind === "workspace" &&
-            current.activeSessionKey !== deletedKey &&
             sessions.some((session) => session.key === current.activeSessionKey)
               ? current.activeSessionKey
-              : replacementKey;
+              : sessions[0].key;
           return { kind: "workspace", sessions, activeSessionKey };
         });
       } catch (err) {
