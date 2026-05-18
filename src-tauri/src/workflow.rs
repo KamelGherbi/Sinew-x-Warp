@@ -42,7 +42,11 @@ pub(super) fn plan_turn_policy(
                 attach_plan: false,
             }),
             Some(PlanControlInput::ImplementPlan) => Ok(PlanTurnPolicy {
-                mode: AgentMode::Act,
+                mode: if requested_mode == AgentMode::Goal {
+                    AgentMode::Goal
+                } else {
+                    AgentMode::Act
+                },
                 stop_questions: false,
                 next_workflow: PlanWorkflowState::Idle,
                 attach_plan: false,
@@ -91,7 +95,11 @@ pub(super) fn plan_turn_policy(
         },
         PlanWorkflowState::PlanReady { .. } => match control {
             Some(PlanControlInput::ImplementPlan) => Ok(PlanTurnPolicy {
-                mode: AgentMode::Act,
+                mode: if requested_mode == AgentMode::Goal {
+                    AgentMode::Goal
+                } else {
+                    AgentMode::Act
+                },
                 stop_questions: false,
                 next_workflow: PlanWorkflowState::Idle,
                 attach_plan: false,

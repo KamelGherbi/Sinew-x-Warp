@@ -166,6 +166,7 @@ type Props = {
     plan: PlanArtifact,
     prompt?: string,
     planImplementationOptions?: PlanImplementationOptions,
+    mode?: AgentMode,
   ) => Promise<void>;
   onStop: () => Promise<void>;
   onOpenFile: (path: string) => void;
@@ -296,8 +297,13 @@ const MENTION_MAX_RESULTS = 10;
 const EMPTY_ACTIVE_TEAM_NAMES: ReadonlySet<string> = new Set();
 const EMPTY_QUEUED_PROMPTS: QueuedPrompt[] = [];
 const AUTO_COMPACT_OUTPUT_TOKEN_MAX = 32_000;
+const GOAL_AUTO_CONTINUE_LIMIT = 25;
 const GOAL_CONTINUATION_PROMPT =
-  "Continue working toward the active goal. Do not repeat completed work. If the goal is now truly complete, audit it and call update_goal with status complete.";
+  "Continue working toward the active goal. Do not repeat completed work. Take the next concrete implementation step now. Keep the ToDoList updated for multi-step work. If the goal is now truly complete, audit it and call update_goal with status complete.";
+const GOAL_PLAN_PROMPT =
+  "Use Goal mode to implement this plan completely. Treat the attached plan as the source of truth, keep a ToDoList for the plan, continue autonomously across turns until every relevant item is implemented and validated, then audit the result and call update_goal with status complete.";
+const GOAL_PLAN_FRESH_PROMPT =
+  "Use Goal mode to implement this plan completely in this fresh conversation. Treat the attached plan as the source of truth, keep a ToDoList for the plan, continue autonomously across turns until every relevant item is implemented and validated, then audit the result and call update_goal with status complete.";
 const PROVIDERS_CHANGED_EVENT = "sinew:providers-changed";
 const TOOL_SETTINGS_CHANGED_EVENT = "sinew:tool-settings-changed";
 const AGENT_TEAMS_TOOL_NAME = "TeamRun";
@@ -454,6 +460,7 @@ export function ChatPane({
   const contextEstimateSignatureRef = useRef<string | null>(null);
   const autoCompactAttemptKeysRef = useRef<Set<string>>(new Set());
   const goalContinuationKeysRef = useRef<Set<string>>(new Set());
+  const goalAutoContinueCountRef = useRef(0);
   const [contextEstimate, setContextEstimate] =
     useState<ConversationContextEstimateState>({
       conversationId,
@@ -722,6 +729,11 @@ export function ChatPane({
       setMode("goal");
     }
   }, [goalWorkflow.status, planWorkflow.status]);
+
+  useEffect(() => {
+    goalAutoContinueCountRef.current = 0;
+    goalContinuationKeysRef.current.clear();
+  }, [conversationId, goalWorkflow.status]);
 
   useEffect(() => {
     if (view.status === "streaming" || isStreaming) return;
@@ -1597,13 +1609,25 @@ export function ChatPane({
     if (history.length === 0) return;
     if (rewriteState !== null) return;
     if (text.trim() || composerAttachments.length > 0) return;
-    if (contextEstimate.conversationId !== conversationId) return;
-    if (contextEstimate.status !== "ready") return;
-    if (contextEstimateSignatureRef.current !== autoCompactHistorySignature(history)) return;
+    if (goalAutoContinueCountRef.current >= GOAL_AUTO_CONTINUE_LIMIT) {
+      setView((prev) => ({
+        ...prev,
+        status: "stopped",
+        streamPhase: "idle",
+        lastError: `Goal paused after ${GOAL_AUTO_CONTINUE_LIMIT} automatic continuations. Send another message to continue, or stop/change mode.`,
+        turnStartedAtMs: null,
+      }));
+      return;
+    }
 
-    const estimate = contextEstimate.estimate;
+    const estimate =
+      contextEstimate.conversationId === conversationId &&
+      contextEstimate.status === "ready" &&
+      contextEstimateSignatureRef.current === autoCompactHistorySignature(history)
+        ? contextEstimate.estimate
+        : null;
     if (
-      estimate.exact &&
+      estimate?.exact &&
       autoCompactWindow(estimate) > 0 &&
       estimate.usedTokens >= autoCompactWindow(estimate) &&
       hasContentAfterLatestCompaction(history)
@@ -1614,6 +1638,7 @@ export function ChatPane({
     const key = `${conversationId}:${history.length}:${goalWorkflow.updatedAtMs}`;
     if (goalContinuationKeysRef.current.has(key)) return;
     goalContinuationKeysRef.current.add(key);
+    goalAutoContinueCountRef.current += 1;
 
     const goalSelection = selectionForAvailableModels(
       modeSelections.goal ?? modeSelections.act ?? selectionFromRef(activeModel),
@@ -1631,6 +1656,10 @@ export function ChatPane({
       undefined,
       "systemReminder",
     ).catch((err) => {
+      goalAutoContinueCountRef.current = Math.max(
+        0,
+        goalAutoContinueCountRef.current - 1,
+      );
       goalContinuationKeysRef.current.delete(key);
       setView((prev) => ({
         ...prev,
@@ -2059,6 +2088,52 @@ export function ChatPane({
       }
     },
     [agentTeamsEnabled, onImplementPlanFresh, view.status],
+  );
+
+  const handlePlanFollowWithGoal = useCallback(
+    (plan: PlanArtifact, planImplementationOptions?: PlanImplementationOptions) => {
+      pendingPlanWriteModeRef.current = null;
+      goalAutoContinueCountRef.current = 0;
+      goalContinuationKeysRef.current.clear();
+      setMode("goal");
+      void sendPlanCommand(
+        plan,
+        GOAL_PLAN_PROMPT,
+        "goal",
+        "implementPlan",
+        "systemReminder",
+        planImplementationOptions,
+      );
+    },
+    [sendPlanCommand],
+  );
+
+  const handlePlanFollowWithGoalFresh = useCallback(
+    async (plan: PlanArtifact, planImplementationOptions?: PlanImplementationOptions) => {
+      if (view.status === "streaming") return;
+      pendingPlanWriteModeRef.current = null;
+      goalAutoContinueCountRef.current = 0;
+      goalContinuationKeysRef.current.clear();
+      setMode("goal");
+      setSendTick((t) => t + 1);
+      try {
+        await onImplementPlanFresh(
+          plan,
+          GOAL_PLAN_FRESH_PROMPT,
+          planImplementationOptions,
+          "goal",
+        );
+      } catch (err) {
+        setView((prev) => ({
+          ...prev,
+          status: "stopped",
+          streamPhase: "idle",
+          lastError: String(err),
+          turnStartedAtMs: null,
+        }));
+      }
+    },
+    [onImplementPlanFresh, view.status],
   );
 
   const handleRewindToMessage = useCallback(
@@ -2777,6 +2852,10 @@ export function ChatPane({
                   onPlanImplementFresh={viewingSubAgent ? () => {} : handlePlanImplementFresh}
                   onPlanImplementFreshWithSwarm={
                     viewingSubAgent ? () => {} : handlePlanImplementFreshWithSwarm
+                  }
+                  onPlanFollowWithGoal={viewingSubAgent ? () => {} : handlePlanFollowWithGoal}
+                  onPlanFollowWithGoalFresh={
+                    viewingSubAgent ? () => {} : handlePlanFollowWithGoalFresh
                   }
                   planActionDisabled={viewingSubAgent || view.status === "streaming"}
                   agentTeamsEnabled={!viewingSubAgent && agentTeamsEnabled}
@@ -5235,6 +5314,8 @@ function ChatBlocks({
   onPlanImplementWithSwarm,
   onPlanImplementFresh,
   onPlanImplementFreshWithSwarm,
+  onPlanFollowWithGoal,
+  onPlanFollowWithGoalFresh,
   planActionDisabled,
   agentTeamsEnabled,
   onOpenSubAgent,
@@ -5262,6 +5343,8 @@ function ChatBlocks({
   onPlanImplementWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
   onPlanImplementFresh: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
   onPlanImplementFreshWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onPlanFollowWithGoal: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onPlanFollowWithGoalFresh: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
   planActionDisabled: boolean;
   agentTeamsEnabled: boolean;
   onOpenSubAgent: (block: Extract<ChatBlock, { kind: "tool" }>) => void;
@@ -5307,6 +5390,8 @@ function ChatBlocks({
             onPlanImplementWithSwarm={onPlanImplementWithSwarm}
             onPlanImplementFresh={onPlanImplementFresh}
             onPlanImplementFreshWithSwarm={onPlanImplementFreshWithSwarm}
+            onPlanFollowWithGoal={onPlanFollowWithGoal}
+            onPlanFollowWithGoalFresh={onPlanFollowWithGoalFresh}
             planActionDisabled={planActionDisabled}
             agentTeamsEnabled={agentTeamsEnabled}
             onOpenSubAgent={onOpenSubAgent}
@@ -5335,6 +5420,8 @@ function BlockView({
   onPlanImplementWithSwarm,
   onPlanImplementFresh,
   onPlanImplementFreshWithSwarm,
+  onPlanFollowWithGoal,
+  onPlanFollowWithGoalFresh,
   planActionDisabled,
   agentTeamsEnabled,
   onOpenSubAgent,
@@ -5356,6 +5443,8 @@ function BlockView({
   onPlanImplementWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
   onPlanImplementFresh: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
   onPlanImplementFreshWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onPlanFollowWithGoal: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onPlanFollowWithGoalFresh: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
   planActionDisabled: boolean;
   agentTeamsEnabled: boolean;
   onOpenSubAgent: (block: Extract<ChatBlock, { kind: "tool" }>) => void;
@@ -5489,6 +5578,8 @@ function BlockView({
             onImplementWithSwarm={onPlanImplementWithSwarm}
             onImplementFresh={onPlanImplementFresh}
             onImplementFreshWithSwarm={onPlanImplementFreshWithSwarm}
+            onFollowWithGoal={onPlanFollowWithGoal}
+            onFollowWithGoalFresh={onPlanFollowWithGoalFresh}
           />
         </div>
       );
@@ -5633,6 +5724,8 @@ function PlanCard({
   onImplementWithSwarm,
   onImplementFresh,
   onImplementFreshWithSwarm,
+  onFollowWithGoal,
+  onFollowWithGoalFresh,
 }: {
   artifact: PlanArtifact;
   workspacePath: string;
@@ -5644,6 +5737,8 @@ function PlanCard({
   onImplementWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
   onImplementFresh: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
   onImplementFreshWithSwarm: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onFollowWithGoal: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
+  onFollowWithGoalFresh: (plan: PlanArtifact, options?: PlanImplementationOptions) => void;
 }) {
   const [step, setStep] = useState<"choose" | "target" | "runner">("choose");
   const [implementMode, setImplementMode] =
@@ -5704,6 +5799,17 @@ function PlanCard({
     }
     if (implementMode === "continue") onImplement(artifact, options);
     else onImplementFresh(artifact, options);
+  };
+
+  const launchGoal = () => {
+    if (disabled) return;
+    const options = implementationOptions();
+    if (!options) return;
+    if (options.implementationWorkspacePath || implementMode === "fresh") {
+      onFollowWithGoalFresh(artifact, options);
+    } else {
+      onFollowWithGoal(artifact, options);
+    }
   };
 
   const launchSwarm = () => {
@@ -5852,6 +5958,27 @@ function PlanCard({
                 <span className="plan-card__tile-title">Normal</span>
                 <span className="plan-card__tile-sub">
                   Single agent works through the plan.
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              className="plan-card__tile"
+              data-variant="goal"
+              onClick={launchGoal}
+              disabled={disabled}
+            >
+              <span className="plan-card__tile-icon">
+                <Icon
+                  icon="solar:flag-2-bold-duotone"
+                  width={20}
+                  height={20}
+                />
+              </span>
+              <span className="plan-card__tile-text">
+                <span className="plan-card__tile-title">Goal</span>
+                <span className="plan-card__tile-sub">
+                  Single agent keeps auto-continuing through the plan.
                 </span>
               </span>
             </button>

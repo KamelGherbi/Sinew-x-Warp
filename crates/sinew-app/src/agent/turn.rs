@@ -34,6 +34,7 @@ use super::{
 use crate::{system_prompt_with_todo, ToolRunResult};
 
 const RATE_LIMIT_RETRY_DELAYS_MS: &[u64] = &[2_000, 5_000, 15_000, 30_000, 60_000];
+const TRANSIENT_PROVIDER_RETRY_DELAYS_MS: &[u64] = &[2_000, 5_000, 15_000];
 
 pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
     let TurnContext {
@@ -231,6 +232,39 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                     }
                     if cancelled {
                         break Err(AppError::RateLimit(message));
+                    }
+                    continue;
+                }
+                Err(AppError::Provider(message))
+                    if is_transient_provider_error(&message)
+                        && stream_attempt < TRANSIENT_PROVIDER_RETRY_DELAYS_MS.len() =>
+                {
+                    let delay_ms = TRANSIENT_PROVIDER_RETRY_DELAYS_MS[stream_attempt];
+                    stream_attempt += 1;
+                    send_event(
+                        &event_tx,
+                        event_scope.as_ref(),
+                        AgentEvent::Notice {
+                            message: format!(
+                                "Temporary provider error ({message}). Retrying in {}s (attempt {}/{}).",
+                                delay_ms / 1000,
+                                stream_attempt,
+                                TRANSIENT_PROVIDER_RETRY_DELAYS_MS.len()
+                            ),
+                        },
+                    );
+                    tokio::select! {
+                        biased;
+                        command = cmd_rx.recv() => {
+                            if matches!(command, Some(EngineCommand::Cancel)) {
+                                cancelled = true;
+                                break Err(AppError::Provider(message));
+                            }
+                        }
+                        _ = sleep(Duration::from_millis(delay_ms)) => {}
+                    }
+                    if cancelled {
+                        break Err(AppError::Provider(message));
                     }
                     continue;
                 }
@@ -735,6 +769,12 @@ fn append_plan_fallback_question(
         input,
         meta: None,
     });
+}
+
+fn is_transient_provider_error(message: &str) -> bool {
+    ["HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504"]
+        .iter()
+        .any(|needle| message.contains(needle))
 }
 
 fn assistant_has_question_tool(message: &ChatMessage) -> bool {

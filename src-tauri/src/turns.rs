@@ -86,11 +86,13 @@ pub(super) async fn send_message(
     let next_plan_workflow = policy.next_workflow.clone();
     conversation.plan_workflow = next_plan_workflow.clone();
     conversation.goal_workflow = if policy.mode == AgentMode::Goal {
-        match message_visibility {
-            MessageVisibilityInput::Normal => start_goal_workflow(text),
-            MessageVisibilityInput::SystemReminder => {
-                resume_goal_workflow(std::mem::take(&mut conversation.goal_workflow))
+        let current_goal = std::mem::take(&mut conversation.goal_workflow);
+        match (message_visibility, &current_goal) {
+            (MessageVisibilityInput::Normal, _) => start_goal_workflow(text),
+            (MessageVisibilityInput::SystemReminder, GoalWorkflowState::Idle) => {
+                start_goal_workflow(text)
             }
+            (MessageVisibilityInput::SystemReminder, _) => resume_goal_workflow(current_goal),
         }
     } else {
         pause_goal_workflow(std::mem::take(&mut conversation.goal_workflow))
@@ -923,7 +925,7 @@ pub(super) fn plan_implementation_turn_reminder(
     .ok_or_else(|| "plan implementation requires an attached plan".to_string())?;
 
     let mut lines = vec![
-        "You are implementing this plan for the current turn.".to_string(),
+        "You are implementing this plan.".to_string(),
         format!("Plan path: {}", plan.path),
     ];
     if let Some(title) = plan.title.filter(|title| !title.trim().is_empty()) {
@@ -936,6 +938,7 @@ pub(super) fn plan_implementation_turn_reminder(
     lines.extend([
         "Treat the plan as the source of truth for this implementation run.".to_string(),
         "Use the ToDoList tool to track implementation progress when the plan has multiple steps, and keep it updated until the plan is complete.".to_string(),
+        "If this turn runs in Goal mode, continue following the plan across automatic continuations until all planned work is complete, then audit and call update_goal with status complete.".to_string(),
         "Read the plan file when you need details, keep changes aligned with it, and complete the implementation before your final response.".to_string(),
     ]);
 

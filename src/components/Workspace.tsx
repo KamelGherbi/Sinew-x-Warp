@@ -1506,6 +1506,7 @@ export function Workspace({
       plan: PlanArtifact,
       prompt = "Implement completely this plan. Use the attached markdown plan as the source of truth.",
       planImplementationOptions?: PlanImplementationOptions,
+      mode: AgentMode = "act",
     ) => {
       const implementationWorkspacePath =
         planImplementationOptions?.implementationWorkspacePath?.trim() || workspacePath;
@@ -1516,7 +1517,7 @@ export function Workspace({
       // the plan, every brand-new conversation must use that seed (not the
       // preference of whatever conversation the user was sitting in when
       // they triggered the action).
-      const seedModel = next.activeConversation.modeModelSettings.act;
+      const seedModel = next.activeConversation.modeModelSettings[mode];
       const seedThinking = thinkingFromRef(seedModel);
       const title = titleFromPlanImplementation(plan);
       const titledActiveConversation = {
@@ -1552,7 +1553,7 @@ export function Workspace({
           ],
           seedModel,
           seedThinking,
-          "act",
+          mode,
           undefined,
           "implementPlan",
           "systemReminder",

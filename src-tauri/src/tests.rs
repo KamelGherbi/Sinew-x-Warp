@@ -103,6 +103,19 @@ fn plan_policy_allows_implementation_after_plan_is_ready() {
 }
 
 #[test]
+fn plan_policy_can_follow_ready_plan_in_goal_mode() {
+    let policy = plan_turn_policy(
+        &sample_plan_ready(),
+        AgentMode::Goal,
+        Some(PlanControlInput::ImplementPlan),
+    )
+    .unwrap();
+
+    assert_eq!(policy.mode, AgentMode::Goal);
+    assert_eq!(policy.next_workflow, PlanWorkflowState::Idle);
+}
+
+#[test]
 fn plan_policy_returns_to_question_loop_when_updating_ready_plan() {
     let policy = plan_turn_policy(
         &sample_plan_ready(),
@@ -141,7 +154,7 @@ fn plan_implementation_reminder_uses_ready_plan_artifact() {
 
     assert!(reminder.contains("Plan path: .sinew/plans/test.md"));
     assert!(reminder.contains("Plan title: Test plan"));
-    assert!(reminder.contains("current turn"));
+    assert!(reminder.contains("You are implementing this plan"));
     assert!(reminder.contains("Use the ToDoList tool"));
 }
 
