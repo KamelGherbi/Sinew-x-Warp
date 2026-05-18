@@ -8,7 +8,12 @@ import {
 } from "react";
 import { Icon } from "@iconify/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { FileChange, TodoStatus, ToolResultImage } from "../../types";
+import type {
+  FileChange,
+  TodoListState,
+  TodoStatus,
+  ToolResultImage,
+} from "../../types";
 import { FileChangeBlock } from "./FileChangeBlock";
 
 export type ToolCardProps = {
@@ -257,6 +262,43 @@ function parseTodoOutput(output?: string):
   return { state, tasks };
 }
 
+function parseTodoFromMeta(
+  meta?: Record<string, unknown> | null,
+): { state: "active" | "closed"; tasks: ParsedTodoTask[] } | null {
+  const raw = meta?.todo_list;
+  if (!isTodoListState(raw)) return null;
+  return {
+    state: raw.active ? "active" : "closed",
+    tasks: raw.tasks.map((task) => ({
+      id: task.id,
+      status: task.status,
+      text: task.text.trim(),
+    })),
+  };
+}
+
+function isTodoListState(value: unknown): value is TodoListState {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.active !== "boolean") return false;
+  if (!Array.isArray(record.tasks)) return false;
+  return record.tasks.every(isTodoTask);
+}
+
+function isTodoTask(value: unknown): value is TodoListState["tasks"][number] {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === "string" &&
+    typeof record.text === "string" &&
+    isTodoStatus(record.status)
+  );
+}
+
+function isTodoStatus(value: unknown): value is TodoStatus {
+  return value === "pending" || value === "in_progress" || value === "done";
+}
+
 function parseCleanContextOutput(output?: string): number | null {
   if (!output) return null;
   const cleaned = output.match(/^cleaned:\s*(\d+)$/m)?.[1];
@@ -273,13 +315,17 @@ function TodoListCard({
   summary,
   argsPretty,
   output,
+  meta,
   isError,
 }: Pick<
   ToolCardProps,
-  "status" | "summary" | "argsPretty" | "output" | "isError"
+  "status" | "summary" | "argsPretty" | "output" | "meta" | "isError"
 >) {
   const [open, setOpen] = useState(false);
-  const parsed = useMemo(() => parseTodoOutput(output), [output]);
+  const parsed = useMemo(
+    () => parseTodoFromMeta(meta) ?? parseTodoOutput(output),
+    [meta, output],
+  );
   const taskCount = parsed?.tasks.length ?? 0;
   const title =
     status === "running"
@@ -999,6 +1045,7 @@ export function ToolCard({
         summary={summary}
         argsPretty={argsPretty}
         output={output}
+        meta={meta}
         isError={isError}
       />
     );

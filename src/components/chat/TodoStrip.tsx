@@ -10,7 +10,7 @@ import {
 import { Icon } from "@iconify/react";
 import type { ChatBlock } from "./stream";
 import { Markdown } from "./Markdown";
-import type { AttachmentInput, TodoStatus } from "../../types";
+import type { AttachmentInput, TodoListState, TodoStatus } from "../../types";
 
 type ParsedTask = {
   id: string;
@@ -85,6 +85,41 @@ function parseTodoOutput(output?: string): ParsedTodo | null {
     });
   }
   return { state, tasks };
+}
+
+function parseTodoFromMeta(meta?: Record<string, unknown> | null): ParsedTodo | null {
+  const raw = meta?.todo_list;
+  if (!isTodoListState(raw)) return null;
+  return {
+    state: raw.active ? "active" : "closed",
+    tasks: raw.tasks.map((task) => ({
+      id: task.id,
+      status: task.status,
+      text: task.text.trim(),
+    })),
+  };
+}
+
+function isTodoListState(value: unknown): value is TodoListState {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.active !== "boolean") return false;
+  if (!Array.isArray(record.tasks)) return false;
+  return record.tasks.every(isTodoTask);
+}
+
+function isTodoTask(value: unknown): value is TodoListState["tasks"][number] {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.id === "string" &&
+    typeof record.text === "string" &&
+    isTodoStatus(record.status)
+  );
+}
+
+function isTodoStatus(value: unknown): value is TodoStatus {
+  return value === "pending" || value === "in_progress" || value === "done";
 }
 
 function parseTeamTasksFromOutput(output?: string): {
@@ -227,7 +262,7 @@ function latestActiveTodo(blocks: ChatBlock[]): {
     if (b.kind !== "tool") continue;
     if (b.name !== "ToDoList") continue;
     if (b.status === "error") continue;
-    const parsed = parseTodoOutput(b.output);
+    const parsed = parseTodoFromMeta(b.meta) ?? parseTodoOutput(b.output);
     if (!parsed) continue;
     if (parsed.state === "closed") return null;
     if (parsed.tasks.length === 0) return null;
