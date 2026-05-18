@@ -156,6 +156,11 @@ fn plan_implementation_reminder_uses_ready_plan_artifact() {
     assert!(reminder.contains("Plan title: Test plan"));
     assert!(reminder.contains("You are implementing this plan"));
     assert!(reminder.contains("Use the ToDoList tool"));
+    assert!(reminder.contains("MUST keep the plan Markdown file itself updated"));
+    assert!(reminder.contains("Suivi d’exécution"));
+    assert!(reminder.contains("never check every item at once"));
+    assert!(reminder.contains("implemented and verified"));
+    assert!(reminder.contains("audit each checked item"));
 }
 
 #[test]

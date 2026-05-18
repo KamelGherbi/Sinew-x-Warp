@@ -938,7 +938,13 @@ pub(super) fn plan_implementation_turn_reminder(
     lines.extend([
         "Treat the plan as the source of truth for this implementation run.".to_string(),
         "Use the ToDoList tool to track implementation progress when the plan has multiple steps, and keep it updated until the plan is complete.".to_string(),
-        "If this turn runs in Goal mode, continue following the plan across automatic continuations until all planned work is complete, then audit and call update_goal with status complete.".to_string(),
+        "You MUST keep the plan Markdown file itself updated during implementation. Read the plan file before or at the start of execution, then use apply_patch to update its `Suivi d’exécution` checklist/progress notes after meaningful progress and again before your final response.".to_string(),
+        "Checklist updates must be strict and granular: never check every item at once, never check items based on intent or assumptions, and never mark an item complete before the corresponding block of work has actually been implemented and verified.".to_string(),
+        "Mark checklist items complete one by one, immediately after each independently verifiable block is finished. If a block is only partially done or still unverified, leave it unchecked and add a short progress note instead of checking it.".to_string(),
+        "Before your final response, audit each checked item against the actual workspace changes and validation results. Revert any checkmark that is not fully supported by completed work.".to_string(),
+        "When an item is completed, mark only that item checked in the plan file. If scope changes or blockers appear, record them in that same progress section so the raw Markdown file remains an accurate implementation log.".to_string(),
+        "If the plan file does not already contain a `Suivi d’exécution` section, add one with checklist items derived from the plan before making implementation changes.".to_string(),
+        "If this turn runs in Goal mode, continue following the plan across automatic continuations until all planned work is complete, keep the plan file updated across continuations, then audit and call update_goal with status complete.".to_string(),
         "Read the plan file when you need details, keep changes aligned with it, and complete the implementation before your final response.".to_string(),
     ]);
 

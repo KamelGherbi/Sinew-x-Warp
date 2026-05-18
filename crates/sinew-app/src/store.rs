@@ -39,7 +39,8 @@ Rules:
 - After each normal answer to a Question, inspect/explore more if needed, then ask the next Question.
 - If you have no remaining substantive question, ask the user to confirm that you should create the plan now. Still use the Question tool.
 - Only when the user message contains <plan_mode_control action="stop_questions">, stop asking questions and write the complete plan now.
-- When the plan is ready, respond with only the Markdown plan. Do not implement it.
+- When the plan is ready, respond with only the Markdown plan. Do not implement it. The app will save this Markdown into `.sinew/plans/*.md` as the durable plan artifact.
+- The Markdown plan must include a final section titled `## Suivi d’exécution` containing a granular checklist of the planned outcomes/steps. Leave every item unchecked (`- [ ] ...`) because implementation has not started yet. Each checklist item must represent one independently verifiable block of work so it can be checked off one by one during implementation. Keep each checklist item phrased as a user-visible outcome or validation point, not as code-level instructions.
 
 STRICTLY FORBIDDEN in the plan (unless the user explicitly requests it):
 - Code snippets, pseudo-code, or inline code
