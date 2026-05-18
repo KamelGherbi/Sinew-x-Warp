@@ -209,16 +209,25 @@ function readArgs(argsPretty?: string): { path?: string; offset?: number; limit?
   }
 }
 
-function grepArgs(argsPretty?: string): { path?: string; include?: string } {
+function grepArgs(argsPretty?: string): { path?: string | string[]; include?: string } {
   if (!argsPretty) return {};
   try {
     return JSON.parse(argsPretty) as {
-      path?: string;
+      path?: string | string[];
       include?: string;
     };
   } catch {
     return {};
   }
+}
+
+function grepPathScope(path?: string | string[]): string | undefined {
+  if (Array.isArray(path)) {
+    const paths = path.map((value) => value.trim()).filter(Boolean);
+    return paths.length > 0 ? paths.join(" ") : undefined;
+  }
+  const trimmed = path?.trim();
+  return trimmed || undefined;
 }
 
 function globArgs(argsPretty?: string): { pattern?: string; path?: string } {
@@ -484,7 +493,7 @@ function parseReadOutput(output?: string) {
 function grepTitleParts(argsPretty?: string, output?: string, isError?: boolean) {
   const args = grepArgs(argsPretty);
   const outputPath = output?.match(/^path:\s*(.+)$/m)?.[1]?.trim();
-  const rawScope = outputPath || args.path || args.include || "workspace";
+  const rawScope = outputPath || grepPathScope(args.path) || args.include || "workspace";
   const scope = rawScope === "." ? args.include || "workspace" : rawScope;
   const matches = output?.match(/^matches:\s*(.+)$/m)?.[1]?.trim();
 

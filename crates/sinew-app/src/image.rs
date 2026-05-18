@@ -86,7 +86,7 @@ impl CreateImageTool {
         match self.image_provider {
             ImageProvider::GptImage2 => ToolDescriptor {
                 name: "CreateImage".into(),
-                description: "Create images with GPT Image 2. Use this when the user asks to generate or create a new image. Returns the generated image visually.".into(),
+                description: "Use this when the user asks to generate or create a new image. Returns the generated image visually.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {

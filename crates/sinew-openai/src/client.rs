@@ -14,6 +14,7 @@ const API_BASE_URL: &str = "https://api.openai.com/v1";
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const USER_AGENT: &str = "sinew/0.1";
 const FALLBACK_INSTRUCTIONS: &str = "You are Sinew, a concise coding assistant.";
+const SSE_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 #[derive(Clone)]
 pub struct OpenAiConfig {
@@ -217,21 +218,25 @@ where
     let parser = EventParser::new(default_model);
 
     stream::unfold(
-        (source, parser, Vec::<StreamEvent>::new(), false),
-        |(mut source, mut parser, mut pending, mut done)| async move {
+        (source, parser, Vec::<StreamEvent>::new(), false, false),
+        |(mut source, mut parser, mut pending, mut completed, mut saw_any_event)| async move {
             loop {
                 if let Some(next) = pending.pop() {
-                    return Some((Ok(next), (source, parser, pending, done)));
+                    return Some((
+                        Ok(next),
+                        (source, parser, pending, completed, saw_any_event),
+                    ));
                 }
-                if done {
+                if completed {
                     return None;
                 }
 
-                match source.next().await {
-                    Some(Ok(event)) => {
+                match tokio::time::timeout(SSE_IDLE_TIMEOUT, source.next()).await {
+                    Ok(Some(Ok(event))) => {
+                        saw_any_event = true;
                         let data = event.data.trim();
                         if data == "[DONE]" {
-                            done = true;
+                            completed = true;
                             continue;
                         }
 
@@ -240,7 +245,7 @@ where
                             Err(err) => {
                                 return Some((
                                     Err(AppError::Decode(format!("bad openai SSE event: {err}"))),
-                                    (source, parser, pending, true),
+                                    (source, parser, pending, true, saw_any_event),
                                 ));
                             }
                         };
@@ -248,28 +253,50 @@ where
                         match parser.push(event) {
                             Ok(mut produced) => {
                                 if terminal {
-                                    done = true;
+                                    completed = true;
                                 }
                                 produced.reverse();
                                 pending.extend(produced);
                             }
-                            Err(err) => return Some((Err(err), (source, parser, pending, true))),
+                            Err(err) => {
+                                return Some((
+                                    Err(err),
+                                    (source, parser, pending, true, saw_any_event),
+                                ));
+                            }
                         }
                     }
-                    Some(Err(err)) => {
+                    Ok(Some(Err(err))) => {
                         return Some((
                             Err(AppError::Stream(format!("openai SSE error: {err}"))),
-                            (source, parser, pending, true),
+                            (source, parser, pending, true, saw_any_event),
                         ));
                     }
-                    None => {
-                        let mut produced = parser.finish_if_needed();
-                        if produced.is_empty() {
-                            return None;
+                    Ok(None) => {
+                        if !saw_any_event {
+                            return Some((
+                                Err(AppError::Stream(
+                                    "openai SSE closed before any event; \
+                                     the server likely dropped the connection"
+                                        .into(),
+                                )),
+                                (source, parser, pending, true, saw_any_event),
+                            ));
                         }
-                        produced.reverse();
-                        pending.extend(produced);
-                        done = true;
+                        return Some((
+                            Err(AppError::Stream(
+                                "openai SSE stream closed before response.completed".into(),
+                            )),
+                            (source, parser, pending, true, saw_any_event),
+                        ));
+                    }
+                    Err(_) => {
+                        return Some((
+                            Err(AppError::Stream(
+                                "idle timeout waiting for OpenAI SSE".into(),
+                            )),
+                            (source, parser, pending, true, saw_any_event),
+                        ));
                     }
                 }
             }

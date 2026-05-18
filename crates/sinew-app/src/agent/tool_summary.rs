@@ -46,11 +46,17 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
     if name == "Grep" {
         let scope = input
             .get("path")
-            .or_else(|| input.get("include"))
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty() && *value != ".")
-            .unwrap_or("workspace");
+            .and_then(grep_path_scope)
+            .or_else(|| {
+                input
+                    .get("include")
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+            })
+            .filter(|value| value != ".")
+            .unwrap_or_else(|| "workspace".to_string());
         return format!("Grep in {scope}");
     }
     if name == "Glob" {
@@ -350,6 +356,30 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
 
 pub(super) fn should_stream_tool_args(name: &str) -> bool {
     matches!(name, "apply_patch" | "read")
+}
+
+fn grep_path_scope(value: &Value) -> Option<String> {
+    if let Some(path) = value
+        .as_str()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        return Some(path.to_string());
+    }
+
+    let paths = value.as_array()?;
+    let scope = paths
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if scope.is_empty() {
+        None
+    } else {
+        Some(scope)
+    }
 }
 
 pub(super) fn display_mcp_server_name(value: &str) -> String {

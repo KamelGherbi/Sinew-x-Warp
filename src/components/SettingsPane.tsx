@@ -142,6 +142,20 @@ export function SettingsPane({ workspacePath }: Props) {
     setSelectedSkillName(null);
   }, [workspacePath]);
 
+  // Outside callers (e.g. the composer's "Connect a provider" CTA) can jump
+  // straight to a specific section by dispatching this window event. We
+  // listen unconditionally so it works whether or not the pane has been
+  // opened before.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ section?: Section }>).detail;
+      if (detail?.section) setSection(detail.section);
+    };
+    window.addEventListener("sinew:open-settings-section", handler);
+    return () =>
+      window.removeEventListener("sinew:open-settings-section", handler);
+  }, []);
+
   // ---- MCP load ---------------------------------------------------------
   useEffect(() => {
     let disposed = false;

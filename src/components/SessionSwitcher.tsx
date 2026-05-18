@@ -20,6 +20,15 @@ type GroupedSessions = {
   sessions: SessionSummary[];
 };
 
+type ProjectGroupedSessions = {
+  workspaceId: string;
+  workspaceName: string;
+  isCurrentProject: boolean;
+  sessionCount: number;
+  updatedAtMs: number;
+  dateGroups: GroupedSessions[];
+};
+
 type SessionScope = "current" | "all";
 
 export function SessionSwitcher({
@@ -40,6 +49,9 @@ export function SessionSwitcher({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [scope, setScope] = useState<SessionScope>("current");
+  const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -83,15 +95,19 @@ export function SessionSwitcher({
     [activeWorkspacePath, scope, sessions],
   );
 
-  const grouped = useMemo(
-    () => groupSessions(filterSessions(scopedSessions, query)),
+  const filteredSessions = useMemo(
+    () => filterSessions(scopedSessions, query),
     [scopedSessions, query],
   );
 
-  const resultCount = grouped.reduce(
-    (total, group) => total + group.sessions.length,
-    0,
+  const grouped = useMemo(() => groupSessions(filteredSessions), [filteredSessions]);
+
+  const projectGrouped = useMemo(
+    () => groupSessionsByProject(filteredSessions, activeWorkspacePath),
+    [activeWorkspacePath, filteredSessions],
   );
+
+  const resultCount = filteredSessions.length;
 
   const beginRename = (session: SessionSummary) => {
     setEditingId(sessionKey(session));
@@ -112,6 +128,120 @@ export function SessionSwitcher({
         ),
       );
     }
+  };
+
+  const toggleProject = (workspaceId: string) => {
+    setCollapsedProjectIds((current) => {
+      const next = new Set(current);
+      if (next.has(workspaceId)) {
+        next.delete(workspaceId);
+      } else {
+        next.add(workspaceId);
+      }
+      return next;
+    });
+  };
+
+  const renderSessionRow = (session: SessionSummary) => {
+    const key = sessionKey(session);
+    const isActive = key === activeSessionKey;
+    const isStreaming = streamingSessionKeys.has(key);
+    const isEditing = editingId === key;
+    return (
+      <div
+        className="session-switcher__row"
+        data-active={isActive ? "true" : "false"}
+        data-streaming={isStreaming ? "true" : "false"}
+        key={key}
+        onClick={() => {
+          if (isEditing) return;
+          onSelect(session.workspaceId, session.id);
+        }}
+      >
+        <span className="session-switcher__row-icon">
+          {isStreaming ? (
+            <span className="session-switcher__spinner" />
+          ) : (
+            <Icon
+              icon={
+                isActive
+                  ? "solar:chat-round-dots-bold"
+                  : "solar:chat-round-dots-linear"
+              }
+              width={16}
+              height={16}
+            />
+          )}
+        </span>
+        <div className="session-switcher__row-main">
+          {isEditing ? (
+            <input
+              className="session-switcher__rename"
+              value={editingTitle}
+              autoFocus
+              onChange={(event) => setEditingTitle(event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              onBlur={commitRename}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitRename();
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  setEditingId(null);
+                  setEditingTitle("");
+                }
+              }}
+            />
+          ) : (
+            <>
+              <div className="session-switcher__row-title">
+                {session.title || "Untitled"}
+              </div>
+              <div className="session-switcher__row-meta">
+                {scope === "current" && (
+                  <span title={session.workspaceId}>{session.workspaceName}</span>
+                )}
+                {isActive ? "Current session" : formatSessionTime(session.updatedAtMs)}
+                <span>{session.messageCount} messages</span>
+                {scope === "all" && session.workspaceId === activeWorkspacePath && (
+                  <span>Current project</span>
+                )}
+                {isStreaming && <span>Running</span>}
+              </div>
+            </>
+          )}
+        </div>
+        <div className="session-switcher__row-actions">
+          <button
+            type="button"
+            title="Rename"
+            onClick={(event) => {
+              event.stopPropagation();
+              beginRename(session);
+            }}
+          >
+            <Icon icon="solar:pen-linear" width={14} height={14} />
+          </button>
+          <button
+            type="button"
+            title="Delete"
+            className="session-switcher__danger"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (confirm("Delete this session?")) {
+                onDelete(session.workspaceId, session.id);
+                setSessions((items) =>
+                  items.filter((item) => sessionKey(item) !== key),
+                );
+              }
+            }}
+          >
+            <Icon icon="solar:trash-bin-minimalistic-linear" width={14} height={14} />
+          </button>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -189,108 +319,53 @@ export function SessionSwitcher({
                 : "No matching sessions."}
             </div>
           )}
-          {grouped.map((group) => (
-            <section className="session-switcher__group" key={group.label}>
-              <div className="session-switcher__group-label">{group.label}</div>
-              {group.sessions.map((session) => {
-                const key = sessionKey(session);
-                const isActive = key === activeSessionKey;
-                const isStreaming = streamingSessionKeys.has(key);
-                const isEditing = editingId === key;
+          {scope === "current"
+            ? grouped.map((group) => (
+                <section className="session-switcher__group" key={group.label}>
+                  <div className="session-switcher__group-label">{group.label}</div>
+                  {group.sessions.map(renderSessionRow)}
+                </section>
+              ))
+            : projectGrouped.map((project) => {
+                const collapsed = collapsedProjectIds.has(project.workspaceId);
                 return (
-                  <div
-                    className="session-switcher__row"
-                    data-active={isActive ? "true" : "false"}
-                    data-streaming={isStreaming ? "true" : "false"}
-                    key={key}
-                    onClick={() => {
-                      if (isEditing) return;
-                      onSelect(session.workspaceId, session.id);
-                    }}
-                  >
-                    <span className="session-switcher__row-icon">
-                      {isStreaming ? (
-                        <span className="session-switcher__spinner" />
-                      ) : (
-                        <Icon
-                          icon={
-                            isActive
-                              ? "solar:chat-round-dots-bold"
-                              : "solar:chat-round-dots-linear"
-                          }
-                          width={16}
-                          height={16}
-                        />
+                  <section className="session-switcher__project" key={project.workspaceId}>
+                    <button
+                      type="button"
+                      className="session-switcher__project-toggle"
+                      aria-expanded={!collapsed}
+                      onClick={() => toggleProject(project.workspaceId)}
+                    >
+                      <Icon
+                        icon="solar:alt-arrow-down-linear"
+                        width={16}
+                        height={16}
+                      />
+                      <span className="session-switcher__project-title" title={project.workspaceId}>
+                        {project.workspaceName}
+                      </span>
+                      {project.isCurrentProject && (
+                        <span className="session-switcher__project-badge">Current</span>
                       )}
-                    </span>
-                    <div className="session-switcher__row-main">
-                      {isEditing ? (
-                        <input
-                          className="session-switcher__rename"
-                          value={editingTitle}
-                          autoFocus
-                          onChange={(event) => setEditingTitle(event.target.value)}
-                          onClick={(event) => event.stopPropagation()}
-                          onBlur={commitRename}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              commitRename();
-                            } else if (event.key === "Escape") {
-                              event.preventDefault();
-                              setEditingId(null);
-                              setEditingTitle("");
-                            }
-                          }}
-                        />
-                      ) : (
-                        <>
-                          <div className="session-switcher__row-title">
-                            {session.title || "Untitled"}
+                      <span className="session-switcher__project-count">
+                        {project.sessionCount} sessions
+                      </span>
+                    </button>
+                    {!collapsed && (
+                      <div className="session-switcher__project-sessions">
+                        {project.dateGroups.map((group) => (
+                          <div className="session-switcher__project-date" key={group.label}>
+                            <div className="session-switcher__group-label">
+                              {group.label}
+                            </div>
+                            {group.sessions.map(renderSessionRow)}
                           </div>
-                          <div className="session-switcher__row-meta">
-                            <span title={session.workspaceId}>{session.workspaceName}</span>
-                            {isActive ? "Current session" : formatSessionTime(session.updatedAtMs)}
-                            <span>{session.messageCount} messages</span>
-                            {session.workspaceId !== activeWorkspacePath && <span>Other project</span>}
-                            {isStreaming && <span>Running</span>}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                    <div className="session-switcher__row-actions">
-                      <button
-                        type="button"
-                        title="Rename"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          beginRename(session);
-                        }}
-                      >
-                        <Icon icon="solar:pen-linear" width={14} height={14} />
-                      </button>
-                      <button
-                        type="button"
-                        title="Delete"
-                        className="session-switcher__danger"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (confirm("Delete this session?")) {
-                            onDelete(session.workspaceId, session.id);
-                            setSessions((items) =>
-                              items.filter((item) => sessionKey(item) !== key),
-                            );
-                          }
-                        }}
-                      >
-                        <Icon icon="solar:trash-bin-minimalistic-linear" width={14} height={14} />
-                      </button>
-                    </div>
-                  </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
                 );
               })}
-            </section>
-          ))}
         </div>
       </div>
     </div>
@@ -321,6 +396,37 @@ function groupSessions(sessions: SessionSummary[]): GroupedSessions[] {
     label,
     sessions: groupedSessions,
   }));
+}
+
+function groupSessionsByProject(
+  sessions: SessionSummary[],
+  activeWorkspacePath: string,
+): ProjectGroupedSessions[] {
+  const groups = new Map<string, SessionSummary[]>();
+  for (const session of sessions) {
+    groups.set(session.workspaceId, [
+      ...(groups.get(session.workspaceId) ?? []),
+      session,
+    ]);
+  }
+
+  return Array.from(groups, ([workspaceId, projectSessions]) => {
+    const sorted = [...projectSessions].sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+    const first = sorted[0];
+    return {
+      workspaceId,
+      workspaceName: first?.workspaceName ?? workspaceNameFromPath(workspaceId),
+      isCurrentProject: workspaceId === activeWorkspacePath,
+      sessionCount: sorted.length,
+      updatedAtMs: first?.updatedAtMs ?? 0,
+      dateGroups: groupSessions(sorted),
+    };
+  }).sort((a, b) => {
+    if (a.isCurrentProject !== b.isCurrentProject) {
+      return a.isCurrentProject ? -1 : 1;
+    }
+    return b.updatedAtMs - a.updatedAtMs;
+  });
 }
 
 function sessionKey(session: SessionSummary): string {

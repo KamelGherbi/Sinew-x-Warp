@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "Sinew"
-version = "0.1.9"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3467,9 +3467,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.12"
+version = "0.103.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8279bb85272c9f10811ae6a6c547ff594d6a7f3c6c6b02ee9726d1d0dcfcdd06"
+checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -3889,7 +3889,7 @@ checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "sinew-anthropic"
-version = "0.1.9"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3911,7 +3911,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-app"
-version = "0.1.9"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3920,6 +3920,7 @@ dependencies = [
  "futures-util",
  "kuchikiki",
  "portable-pty",
+ "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
@@ -3935,7 +3936,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-core"
-version = "0.1.9"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "futures",
@@ -3946,7 +3947,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-google"
-version = "0.1.9"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3967,7 +3968,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-kimi"
-version = "0.1.9"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3986,7 +3987,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-openai"
-version = "0.1.9"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4007,7 +4008,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-openrouter"
-version = "0.1.9"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "bytes",

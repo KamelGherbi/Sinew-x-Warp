@@ -52,7 +52,9 @@ STRICTLY FORBIDDEN in the plan (unless the user explicitly requests it):
 
 The plan should read as a clear description of intent and expected behavior that anyone could understand without technical background. Bullet points and paragraphs are both acceptable. The focus is on WHAT the system should do, not HOW the code should be written.
 
-If technical specifics become necessary to avoid ambiguity, the AI may include them at its discretion, integrated naturally into the plan - but this should remain the exception, not the default."#;
+If technical specifics become necessary to avoid ambiguity, the AI may include them at its discretion, integrated naturally into the plan - but this should remain the exception, not the default.
+
+You may include Mermaid diagrams (in ```mermaid fenced blocks) when a flow, decision tree, sequence, or set of relationships would be clearer as a picture than as prose. Keep diagram labels at the same level of abstraction as the rest of the plan: describe intent and behavior, not files, functions, or implementation details."#;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -251,9 +253,14 @@ pub enum WebSearchProvider {
 #[serde(rename_all = "camelCase")]
 pub struct ToolConfig {
     pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub description_override: bool,
+    #[serde(default, skip_serializing)]
+    pub default_description: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -334,10 +341,32 @@ impl ToolSettings {
                 {
                     return None;
                 }
+                tool.default_description.clear();
+                if !tool.description_override {
+                    tool.description.clear();
+                }
                 Some(tool)
             })
             .collect();
         self
+    }
+
+    pub fn normalized_for_catalog(mut self, catalog: &[ToolDescriptor]) -> Self {
+        let defaults = catalog
+            .iter()
+            .map(|descriptor| (descriptor.name.as_str(), descriptor.description.as_str()))
+            .collect::<HashMap<_, _>>();
+
+        for tool in &mut self.tools {
+            let name = tool.name.trim();
+            if let Some(default_description) = defaults.get(name).copied().or_else(|| {
+                (!tool.default_description.is_empty()).then_some(tool.default_description.as_str())
+            }) {
+                tool.description_override = tool.description != default_description;
+            }
+        }
+
+        self.normalized()
     }
 
     pub fn apply_to_descriptors(&self, descriptors: Vec<ToolDescriptor>) -> Vec<ToolDescriptor> {
@@ -357,7 +386,7 @@ impl ToolSettings {
                 if !enabled {
                     return None;
                 }
-                if let Some(setting) = setting {
+                if let Some(setting) = setting.filter(|tool| tool.description_override) {
                     descriptor.description = setting.description.clone();
                 }
                 Some(descriptor)
@@ -447,6 +476,7 @@ pub fn tool_settings_view(settings: &ToolSettings, catalog: &[ToolDescriptor]) -
                     name: descriptor.name.clone(),
                     display_name: tool_display_name(&descriptor.name),
                     description: setting
+                        .filter(|tool| tool.description_override)
                         .map(|tool| tool.description.clone())
                         .unwrap_or_else(|| descriptor.description.clone()),
                     default_description: descriptor.description.clone(),
@@ -1122,7 +1152,15 @@ impl AppStore {
     }
 
     pub fn save_tool_settings(&self, settings: &ToolSettings) -> Result<ToolSettings> {
-        let normalized = settings.clone().normalized();
+        self.save_tool_settings_for_catalog(settings, &[])
+    }
+
+    pub fn save_tool_settings_for_catalog(
+        &self,
+        settings: &ToolSettings,
+        catalog: &[ToolDescriptor],
+    ) -> Result<ToolSettings> {
+        let normalized = settings.clone().normalized_for_catalog(catalog);
         let conn = self.connection()?;
         conn.execute(
             "insert into app_settings (key, value_json, updated_at_ms)
@@ -1492,6 +1530,10 @@ fn default_enabled() -> bool {
     true
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 fn default_tool_enabled(name: &str) -> bool {
     !matches!(name, "CreateImage" | "WebSearch")
 }
@@ -1653,5 +1695,85 @@ mod tests {
         ];
 
         assert_eq!(title_from_history(&history), None);
+    }
+
+    fn descriptor(name: &str, description: &str) -> ToolDescriptor {
+        ToolDescriptor {
+            name: name.to_string(),
+            description: description.to_string(),
+            input_schema: json!({ "type": "object" }),
+        }
+    }
+
+    #[test]
+    fn tool_settings_ignore_legacy_saved_descriptions_without_user_override() {
+        let settings = ToolSettings {
+            tools: vec![ToolConfig {
+                name: "apply_patch".to_string(),
+                description: "old default from database".to_string(),
+                enabled: true,
+                description_override: false,
+                default_description: String::new(),
+            }],
+            ..ToolSettings::default()
+        }
+        .normalized();
+
+        let tools =
+            settings.apply_to_descriptors(vec![descriptor("apply_patch", "new code default")]);
+
+        assert_eq!(tools[0].description, "new code default");
+    }
+
+    #[test]
+    fn tool_settings_persist_only_descriptions_that_differ_from_catalog_default() {
+        let settings = ToolSettings {
+            tools: vec![
+                ToolConfig {
+                    name: "read".to_string(),
+                    description: "read default".to_string(),
+                    enabled: true,
+                    description_override: false,
+                    default_description: "read default".to_string(),
+                },
+                ToolConfig {
+                    name: "apply_patch".to_string(),
+                    description: "custom patch instructions".to_string(),
+                    enabled: true,
+                    description_override: false,
+                    default_description: "patch default".to_string(),
+                },
+            ],
+            ..ToolSettings::default()
+        }
+        .normalized_for_catalog(&[
+            descriptor("read", "read default"),
+            descriptor("apply_patch", "patch default"),
+        ]);
+
+        assert_eq!(settings.tools[0].description, "");
+        assert!(!settings.tools[0].description_override);
+        assert_eq!(settings.tools[1].description, "custom patch instructions");
+        assert!(settings.tools[1].description_override);
+    }
+
+    #[test]
+    fn tool_settings_apply_user_description_override() {
+        let settings = ToolSettings {
+            tools: vec![ToolConfig {
+                name: "apply_patch".to_string(),
+                description: "custom patch instructions".to_string(),
+                enabled: true,
+                description_override: true,
+                default_description: String::new(),
+            }],
+            ..ToolSettings::default()
+        }
+        .normalized();
+
+        let tools =
+            settings.apply_to_descriptors(vec![descriptor("apply_patch", "new code default")]);
+
+        assert_eq!(tools[0].description, "custom patch instructions");
     }
 }

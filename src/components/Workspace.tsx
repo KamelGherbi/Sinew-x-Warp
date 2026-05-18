@@ -604,8 +604,8 @@ export function Workspace({
     setSettingsActive(false);
   }, []);
 
-  const openSettings = useCallback(() => {
-    if (settingsActive) {
+  const openSettings = useCallback((section?: "providers") => {
+    if (settingsActive && !section) {
       setSettingsOpen(false);
       setSettingsActive(false);
       return;
@@ -613,6 +613,13 @@ export function Workspace({
     setSettingsOpen(true);
     setSettingsActive(true);
     setViewMode((current) => (current === "chat" ? "all" : current));
+    if (section) {
+      window.dispatchEvent(
+        new CustomEvent("sinew:open-settings-section", {
+          detail: { section },
+        }),
+      );
+    }
   }, [settingsActive]);
 
   const closeSettings = useCallback(() => {
@@ -974,7 +981,7 @@ export function Workspace({
   const replayActiveTurnEvents = useCallback(
     async (conversationId: string, afterSequence = 0) => {
       const workspaceAtRequest = workspacePathRef.current;
-      const replay = await api.replayActiveTurnEvents(
+      let replay = await api.replayActiveTurnEvents(
         workspaceAtRequest,
         conversationId,
         afterSequence,
@@ -984,6 +991,20 @@ export function Workspace({
         markConversationStreaming(workspaceAtRequest, conversationId, false);
         return;
       }
+      if (replay.latestSequence < afterSequence) {
+        const sequenceKey = workspaceSessionKey(workspaceAtRequest, conversationId);
+        lastAgentEventSequenceByConversationRef.current.delete(sequenceKey);
+        replay = await api.replayActiveTurnEvents(
+          workspaceAtRequest,
+          conversationId,
+          0,
+        );
+        if (workspacePathRef.current !== workspaceAtRequest) return;
+        if (!replay.active) {
+          markConversationStreaming(workspaceAtRequest, conversationId, false);
+          return;
+        }
+      }
       markConversationStreaming(workspaceAtRequest, conversationId, true);
       const sortedEvents = [...replay.events].sort(
         (a, b) => a.sequence - b.sequence,
@@ -992,7 +1013,7 @@ export function Workspace({
         const sequenceKey = workspaceSessionKey(workspaceAtRequest, conversationId);
         const last =
           lastAgentEventSequenceByConversationRef.current.get(sequenceKey) ?? 0;
-        if (entry.sequence <= last) continue;
+        if (entry.sequence === last && last !== 0) continue;
         lastAgentEventSequenceByConversationRef.current.set(
           sequenceKey,
           entry.sequence,
@@ -1056,8 +1077,12 @@ export function Workspace({
       for (const turn of activeTurns) {
         if (turn.workspaceId !== workspacePathRef.current) continue;
         const sequenceKey = workspaceSessionKey(turn.workspaceId, turn.conversationId);
-        const last =
+        let last =
           lastAgentEventSequenceByConversationRef.current.get(sequenceKey) ?? 0;
+        if (turn.latestSequence < last) {
+          lastAgentEventSequenceByConversationRef.current.delete(sequenceKey);
+          last = 0;
+        }
         if (turn.latestSequence > last) {
           void replayActiveTurnEvents(turn.conversationId, last).catch((err) => {
             console.error(err);
@@ -1334,6 +1359,7 @@ export function Workspace({
       planControl?: PlanControl,
       messageVisibility?: MessageVisibility,
       planImplementationOptions?: PlanImplementationOptions,
+      revertWorkspaceChanges?: boolean,
     ) => {
       const conversationId = activeConv.id;
       const workspaceAtRequest = workspacePath;
@@ -1363,6 +1389,7 @@ export function Workspace({
           planControl,
           messageVisibility,
           planImplementationOptions,
+          revertWorkspaceChanges,
         );
       } catch (err) {
         markConversationStreaming(conversationId, false);
@@ -1393,8 +1420,10 @@ export function Workspace({
     async (
       model: SavedConversation["model"],
       thinking: ThinkingLevel,
+      options?: { continueAfter?: boolean; instruction?: string },
     ) => {
       const conversationId = activeConv.id;
+      const continueAfter = options?.continueAfter ?? true;
       const continuationMode = conversationContinuationMode(activeConv);
       const continuationPrompt =
         continuationMode === "goal"
@@ -1408,6 +1437,7 @@ export function Workspace({
           conversationId,
           model,
           thinking,
+          options?.instruction,
         );
 
         markConversationStreaming(conversationId, false);
@@ -1422,6 +1452,8 @@ export function Workspace({
         if (activeConvIdRef.current === conversationId) {
           setActiveConv(loaded);
         }
+
+        if (!continueAfter) return;
 
         await sleep(0);
 
@@ -1995,7 +2027,7 @@ export function Workspace({
           <button
             className="titlebar__btn titlebar__settings-right"
             data-on={settingsActive ? "true" : "false"}
-            onClick={openSettings}
+            onClick={() => openSettings()}
             title="Settings"
         >
           <Icon icon="solar:settings-linear" width={12} height={12} />
@@ -2244,6 +2276,7 @@ export function Workspace({
               onStop={stopTurn}
               onOpenFile={openChatFile}
               onOpenSessions={openSessionSwitcher}
+              onOpenSettings={openSettings}
               externalDrops={externalDropFeed}
               dropZoneRef={chatDropZoneRef}
             />

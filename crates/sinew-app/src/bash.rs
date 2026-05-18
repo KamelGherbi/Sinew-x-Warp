@@ -75,9 +75,9 @@ impl ShellKind {
     fn command_description(self) -> &'static str {
         match self {
             #[cfg(not(windows))]
-            Self::Bash => "Run a Bash shell command. Commands run in a temporary terminal session, so interactive prompts can stay open and be answered with bash_input. Use POSIX/Bash syntax.",
+            Self::Bash => "Run a Bash command.",
             #[cfg(windows)]
-            Self::PowerShell => "Run a Windows PowerShell command. Commands run silently inside Sinew, so do not expect an external PowerShell window. Use PowerShell syntax, not Bash/POSIX syntax.",
+            Self::PowerShell => "Run a Windows PowerShell command.",
         }
     }
 

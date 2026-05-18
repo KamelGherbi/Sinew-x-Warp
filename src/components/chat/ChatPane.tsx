@@ -83,6 +83,7 @@ type RewriteState = {
   historyIndex: number;
   originalText: string;
   originalAttachments: Attachment[];
+  revertWorkspaceChanges: boolean;
 };
 
 type QueuedPrompt = QueuedPromptStripItem & {
@@ -154,8 +155,13 @@ type Props = {
     planControl?: PlanControl,
     messageVisibility?: MessageVisibility,
     planImplementationOptions?: PlanImplementationOptions,
+    revertWorkspaceChanges?: boolean,
   ) => Promise<void>;
-  onCompact: (model: ModelRef, thinking: ThinkingLevel) => Promise<void>;
+  onCompact: (
+    model: ModelRef,
+    thinking: ThinkingLevel,
+    options?: { continueAfter?: boolean; instruction?: string },
+  ) => Promise<void>;
   onModeChange: (mode: AgentMode) => Promise<void>;
   onModelPreferenceChange: (
     mode: AgentMode,
@@ -171,6 +177,7 @@ type Props = {
   onStop: () => Promise<void>;
   onOpenFile: (path: string) => void;
   onOpenSessions?: () => void;
+  onOpenSettings: (section?: "providers") => void;
   externalDrops: ExternalDropFeed;
   dropZoneRef: RefObject<HTMLDivElement>;
 };
@@ -380,6 +387,7 @@ export function ChatPane({
   onStop,
   onOpenFile,
   onOpenSessions,
+  onOpenSettings,
   externalDrops,
   dropZoneRef,
 }: Props) {
@@ -596,6 +604,8 @@ export function ChatPane({
   const availableThinking = modelEntry
     ? THINKING_LEVELS.filter((l) => modelEntry.thinking.includes(l.value))
     : [];
+  const noProvidersConfigured =
+    !selectorLocked && configuredProviders.length === 0;
   const thinkingLabel =
     thinkingLevelLabel(
       THINKING_LEVELS.find((l) => l.value === thinking),
@@ -1406,6 +1416,7 @@ export function ChatPane({
       return;
     }
     const rewriteFromHistoryIndex = rewriteState?.historyIndex;
+    const revertWorkspaceChanges = rewriteState?.revertWorkspaceChanges ?? true;
     const nextHistoryIndex = rewriteFromHistoryIndex ?? history.length;
     setView((prev) => {
       const base =
@@ -1434,6 +1445,10 @@ export function ChatPane({
         thinking,
         effectiveMode,
         rewriteFromHistoryIndex,
+        undefined,
+        undefined,
+        undefined,
+        revertWorkspaceChanges,
       );
     } catch (err) {
       setView((prev) => ({
@@ -1609,6 +1624,10 @@ export function ChatPane({
     if (history.length === 0) return;
     if (rewriteState !== null) return;
     if (text.trim() || composerAttachments.length > 0) return;
+    if (!hasContentAfterLatestCompaction(history)) return;
+    if (contextEstimate.conversationId !== conversationId) return;
+    if (contextEstimate.status !== "ready") return;
+    if (contextEstimateSignatureRef.current !== autoCompactHistorySignature(history)) return;
     if (goalAutoContinueCountRef.current >= GOAL_AUTO_CONTINUE_LIMIT) {
       setView((prev) => ({
         ...prev,
@@ -2158,6 +2177,7 @@ export function ChatPane({
         historyIndex: block.historyIndex,
         originalText: prev?.originalText ?? text,
         originalAttachments: prev?.originalAttachments ?? attachments,
+        revertWorkspaceChanges: prev?.revertWorkspaceChanges ?? true,
       }));
     },
     [attachments, text, view.status, workspacePath],
@@ -3117,6 +3137,17 @@ export function ChatPane({
               >
                 <Icon icon="solar:add-circle-linear" width={18} height={18} />
               </button>
+              {noProvidersConfigured ? (
+                <button
+                  type="button"
+                  className="composer__connect-cta"
+                  onClick={() => onOpenSettings("providers")}
+                >
+                  <Icon icon="solar:plug-circle-linear" width={14} height={14} />
+                  <span>Connect a provider</span>
+                </button>
+              ) : (
+                <>
               <div className="composer__picker" data-kind="mode" ref={modeRef}>
                 <button
                   type="button"
@@ -3303,6 +3334,8 @@ export function ChatPane({
                   </div>
                 )}
               </div>
+                </>
+              )}
             </div>
             <div className="composer__actions-right">
               <button

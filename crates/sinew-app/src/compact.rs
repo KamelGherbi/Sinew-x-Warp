@@ -41,6 +41,7 @@ pub async fn compact_conversation_history(
     history: Vec<ChatMessage>,
     cache_key: Option<String>,
     cache_stable_message_count: usize,
+    user_instruction: Option<String>,
     cmd_rx: &mut mpsc::UnboundedReceiver<EngineCommand>,
     summary_delta_tx: Option<mpsc::UnboundedSender<String>>,
 ) -> Result<CompactConversationOutput> {
@@ -49,7 +50,9 @@ pub async fn compact_conversation_history(
     }
 
     let mut request_history = history.clone();
-    request_history.push(ChatMessage::user_text(COMPACTION_PROMPT));
+    request_history.push(ChatMessage::user_text(compaction_prompt(
+        user_instruction.as_deref(),
+    )));
 
     let mut request = ProviderRequest::new(model, request_history)
         .with_system(system_prompt)
@@ -143,6 +146,24 @@ pub async fn compact_conversation_history(
         history: compacted.history,
         summary: summary.to_string(),
     })
+}
+
+fn compaction_prompt(user_instruction: Option<&str>) -> String {
+    let Some(instruction) = user_instruction
+        .map(str::trim)
+        .filter(|instruction| !instruction.is_empty())
+    else {
+        return COMPACTION_PROMPT.to_string();
+    };
+
+    format!(
+        r#"{COMPACTION_PROMPT}
+
+Additional user instruction for this compaction:
+{instruction}
+
+Honor this instruction when deciding what to keep. If it asks to focus on a topic or subset, summarize only the relevant context and omit unrelated details unless they are necessary for continuity."#
+    )
 }
 
 struct BuiltCompactedHistory {
@@ -289,4 +310,25 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     let mut output = value.chars().take(keep).collect::<String>();
     output.push_str(MARKER);
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compaction_prompt_without_instruction_is_default_prompt() {
+        assert_eq!(compaction_prompt(None), COMPACTION_PROMPT);
+        assert_eq!(compaction_prompt(Some("   \n  ")), COMPACTION_PROMPT);
+    }
+
+    #[test]
+    fn compaction_prompt_includes_manual_instruction() {
+        let prompt = compaction_prompt(Some("  Keep only topic X.  "));
+
+        assert!(prompt.starts_with(COMPACTION_PROMPT));
+        assert!(prompt.contains("Additional user instruction for this compaction:"));
+        assert!(prompt.contains("Keep only topic X."));
+        assert!(prompt.contains("Honor this instruction"));
+    }
 }

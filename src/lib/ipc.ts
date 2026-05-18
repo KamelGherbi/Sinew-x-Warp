@@ -389,6 +389,7 @@ export const api = {
     planControl?: PlanControl,
     messageVisibility?: MessageVisibility,
     planImplementationOptions?: PlanImplementationOptions,
+    revertWorkspaceChanges?: boolean,
   ) {
     return invoke<void>("send_message", {
       input: {
@@ -403,6 +404,7 @@ export const api = {
         planControl,
         messageVisibility,
         planImplementationOptions,
+        revertWorkspaceChanges,
       },
     });
   },
@@ -411,9 +413,10 @@ export const api = {
     conversationId: string,
     model: ModelRef,
     thinking: ThinkingLevel,
+    instruction?: string,
   ) {
     return invoke<void>("compact_conversation", {
-      input: { workspacePath, conversationId, model, thinking },
+      input: { workspacePath, conversationId, model, thinking, instruction },
     });
   },
   listActiveTurns() {

@@ -196,6 +196,9 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            #[cfg(target_os = "windows")]
+            let _ = app;
+
             #[cfg(target_os = "macos")]
             {
                 install_macos_dock_menu(app.handle());
@@ -329,6 +332,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building sinew desktop")
         .run(|app, event| {
+            #[cfg(not(target_os = "macos"))]
+            let _ = (&app, &event);
+
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 if !focus_existing_window(app) {

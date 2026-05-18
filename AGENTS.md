@@ -21,10 +21,12 @@ Code map:
 │   │   ├── architecture.png
 │   │   ├── harness.png
 │   │   ├── hero.png
+│   │   ├── modes.png
 │   │   ├── screenshot.png
 │   │   └── swarm.png
 │   └── workflows
-│       └── release.yml
+│       ├── release.yml
+│       └── security.yml
 ├── crates
 │   ├── sinew-anthropic
 │   │   ├── Cargo.toml
@@ -164,7 +166,6 @@ Code map:
 │   │   ├── icon.icns
 │   │   ├── icon.ico
 │   │   ├── icon.png
-│   │   ├── nsis-header.bmp
 │   │   ├── nsis-sidebar.bmp
 │   │   ├── source.svg
 │   │   ├── android
@@ -254,6 +255,7 @@ Code map:
     │       ├── DotmSquare5.tsx
     │       ├── FileChangeBlock.tsx
     │       ├── Markdown.tsx
+    │       ├── MermaidDiagram.tsx
     │       ├── PlanningNextMoveBlock.tsx
     │       ├── Questionnaire.tsx
     │       ├── TodoStrip.tsx

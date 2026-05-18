@@ -41,6 +41,7 @@ pub(super) fn create_new_window_detached(app: &AppHandle) {
     });
 }
 
+#[cfg(target_os = "macos")]
 pub(super) fn focus_existing_window(app: &AppHandle) -> bool {
     let mut windows = app.webview_windows();
     let window = windows

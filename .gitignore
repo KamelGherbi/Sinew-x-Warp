@@ -1,6 +1,8 @@
 /target
 /dist
 /node_modules
+/FEATURES.md
+/idea.md
 /src-tauri/binaries/rg-*
 /.history
 /.sinew/

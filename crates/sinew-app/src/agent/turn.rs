@@ -1,9 +1,9 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, time::Duration};
 
 use futures_util::StreamExt;
 use serde_json::{json, Map, Value};
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
+use tokio::time::sleep;
 use uuid::Uuid;
 
 use sinew_core::{
@@ -33,6 +33,7 @@ use super::{
 
 use crate::{system_prompt_with_todo, ToolRunResult};
 
+const SAFE_STREAM_MAX_RETRIES: usize = 2;
 const RATE_LIMIT_RETRY_DELAYS_MS: &[u64] = &[2_000, 5_000, 15_000, 30_000, 60_000];
 const TRANSIENT_PROVIDER_RETRY_DELAYS_MS: &[u64] = &[2_000, 5_000, 15_000];
 
@@ -188,96 +189,299 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
             None => request,
         };
 
-        let mut stream_attempt: usize = 0;
-        let stream_result = loop {
+        let mut stream_retry_attempts = 0usize;
+        let mut rate_limit_retry_attempts = 0usize;
+        let mut transient_provider_retry_attempts = 0usize;
+        let (message_builder, mut stop_reason, response_usage) = 'stream_attempt: loop {
             let stream_response = tokio::select! {
                 biased;
                 command = cmd_rx.recv() => {
                     if matches!(command, Some(EngineCommand::Cancel)) {
                         cancelled = true;
-                        break Err(AppError::Provider("cancelled".to_string()));
+                        break 'conversation;
                     }
-                    continue;
+                    continue 'stream_attempt;
                 }
                 result = provider.stream(request.clone()) => result,
             };
-            match stream_response {
-                Ok(stream) => break Ok(stream),
-                Err(AppError::RateLimit(message))
-                    if stream_attempt < RATE_LIMIT_RETRY_DELAYS_MS.len() =>
-                {
-                    let delay_ms = rate_limit_retry_delay_ms(stream_attempt);
-                    stream_attempt += 1;
+
+            let mut stream = match stream_response {
+                Ok(stream) => stream,
+                Err(err) => {
+                    match &err {
+                        AppError::RateLimit(message)
+                            if rate_limit_retry_attempts < RATE_LIMIT_RETRY_DELAYS_MS.len() =>
+                        {
+                            let delay_ms = rate_limit_retry_delay_ms(rate_limit_retry_attempts);
+                            rate_limit_retry_attempts += 1;
+                            send_event(
+                                &event_tx,
+                                event_scope.as_ref(),
+                                AgentEvent::Notice {
+                                    message: format!(
+                                        "Rate limited by provider ({message}). Retrying in {}s (attempt {}/{}).",
+                                        delay_ms / 1000,
+                                        rate_limit_retry_attempts,
+                                        rate_limit_retry_attempts_count()
+                                    ),
+                                },
+                            );
+                            tokio::select! {
+                                biased;
+                                command = cmd_rx.recv() => {
+                                    if matches!(command, Some(EngineCommand::Cancel)) {
+                                        cancelled = true;
+                                        break 'conversation;
+                                    }
+                                }
+                                _ = sleep(Duration::from_millis(delay_ms)) => {}
+                            }
+                            continue 'stream_attempt;
+                        }
+                        AppError::Provider(message)
+                            if is_transient_provider_error(message)
+                                && transient_provider_retry_attempts
+                                    < TRANSIENT_PROVIDER_RETRY_DELAYS_MS.len() =>
+                        {
+                            let delay_ms =
+                                TRANSIENT_PROVIDER_RETRY_DELAYS_MS[transient_provider_retry_attempts];
+                            transient_provider_retry_attempts += 1;
+                            send_event(
+                                &event_tx,
+                                event_scope.as_ref(),
+                                AgentEvent::Notice {
+                                    message: format!(
+                                        "Temporary provider error ({message}). Retrying in {}s (attempt {}/{}).",
+                                        delay_ms / 1000,
+                                        transient_provider_retry_attempts,
+                                        TRANSIENT_PROVIDER_RETRY_DELAYS_MS.len()
+                                    ),
+                                },
+                            );
+                            tokio::select! {
+                                biased;
+                                command = cmd_rx.recv() => {
+                                    if matches!(command, Some(EngineCommand::Cancel)) {
+                                        cancelled = true;
+                                        break 'conversation;
+                                    }
+                                }
+                                _ = sleep(Duration::from_millis(delay_ms)) => {}
+                            }
+                            continue 'stream_attempt;
+                        }
+                        _ => {}
+                    }
+
+                    if should_retry_before_content(&err, stream_retry_attempts) {
+                        stream_retry_attempts += 1;
+                        tracing::warn!(
+                            provider = provider.name(),
+                            attempt = stream_retry_attempts,
+                            max_attempts = SAFE_STREAM_MAX_RETRIES,
+                            error = %err,
+                            "retrying provider stream setup before content"
+                        );
+                        tokio::time::sleep(stream_retry_delay(stream_retry_attempts)).await;
+                        continue 'stream_attempt;
+                    }
+
+                    if auto_compact
+                        && is_context_length_error(&err)
+                        && can_auto_compact_history(&history, auto_compaction_attempts)
+                    {
+                        match run_auto_compaction(
+                            &provider,
+                            &model,
+                            cache_key.as_ref(),
+                            &mut cache_stable_message_count,
+                            &mut history,
+                            &mut current_turn_tool_result_ids,
+                            &current_system_prompt,
+                            &event_tx,
+                            event_scope.as_ref(),
+                            &mut cmd_rx,
+                            &mut auto_compaction_attempts,
+                        )
+                        .await
+                        {
+                            Ok(()) => continue 'conversation,
+                            Err(compaction_err) => {
+                                send_event(
+                                    &event_tx,
+                                    event_scope.as_ref(),
+                                    AgentEvent::Error {
+                                        message: format!(
+                                            "provider error: {err}; context compaction failed: {compaction_err}"
+                                        ),
+                                    },
+                                );
+                                break 'conversation;
+                            }
+                        }
+                    }
                     send_event(
                         &event_tx,
                         event_scope.as_ref(),
-                        AgentEvent::Notice {
-                            message: format!(
-                                "Rate limited by provider ({message}). Retrying in {}s (attempt {}/{}).",
-                                delay_ms / 1000,
-                                stream_attempt,
-                                rate_limit_retry_attempts()
-                            ),
+                        AgentEvent::Error {
+                            message: format!("provider error: {err}"),
                         },
                     );
-                    tokio::select! {
-                        biased;
-                        command = cmd_rx.recv() => {
-                            if matches!(command, Some(EngineCommand::Cancel)) {
-                                cancelled = true;
-                                break Err(AppError::RateLimit(message));
+                    break 'conversation;
+                }
+            };
+
+            let mut message_builder = AssistantMessageBuilder::default();
+            let mut stop_reason = StopReason::EndTurn;
+            let mut response_usage = None;
+            let mut stream_error = None;
+            let mut saw_message_stop = false;
+
+            loop {
+                tokio::select! {
+                    biased;
+
+                    command = cmd_rx.recv() => {
+                        if matches!(command, Some(EngineCommand::Cancel)) {
+                            cancelled = true;
+                            break;
+                        }
+                    }
+                    event = stream.next() => {
+                        let Some(event) = event else { break; };
+                        let event = match event {
+                            Ok(event) => event,
+                            Err(err) => {
+                                stream_error = Some(err);
+                                break;
+                            }
+                        };
+
+                        match event {
+                            StreamEvent::MessageStart { .. } => {}
+                            StreamEvent::PartStart { index, kind, tool } => {
+                                message_builder.open(index, kind);
+                                match kind {
+                                    PartKind::Text => { send_event(&event_tx, event_scope.as_ref(), AgentEvent::TextStarted); }
+                                    PartKind::Thinking => { send_event(&event_tx, event_scope.as_ref(), AgentEvent::ThinkingStarted); }
+                                    PartKind::ToolCall => {
+                                        if let Some(tool) = tool {
+                                            message_builder.register_tool(index, tool.id.clone(), tool.name.clone());
+                                            send_event(&event_tx, event_scope.as_ref(), AgentEvent::ToolStarted { id: tool.id, name: tool.name });
+                                        }
+                                    }
+                                }
+                            }
+                            StreamEvent::TextDelta { index, delta } => {
+                                message_builder.push_text(index, &delta);
+                                send_event(&event_tx, event_scope.as_ref(), AgentEvent::TextChunk { delta });
+                            }
+                            StreamEvent::ThinkingDelta { index, delta } => {
+                                message_builder.push_text(index, &delta);
+                                send_event(&event_tx, event_scope.as_ref(), AgentEvent::ThinkingChunk { delta });
+                            }
+                            StreamEvent::ToolJsonDelta { index, chunk } => {
+                                message_builder.push_tool_json(index, &chunk);
+                                if let Some((id, name)) = message_builder.tool_head(index) {
+                                    if should_stream_tool_args(&name) {
+                                        send_event(&event_tx, event_scope.as_ref(), AgentEvent::ToolArgsDelta { id, delta: chunk });
+                                    }
+                                }
+                            }
+                            StreamEvent::PartMeta { index, meta } => {
+                                message_builder.push_meta(index, meta);
+                            }
+                            StreamEvent::PartStop { index } => {
+                                match message_builder.kind(index) {
+                                    Some(PartKind::Text) => { send_event(&event_tx, event_scope.as_ref(), AgentEvent::TextFinished); }
+                                    Some(PartKind::Thinking) => {
+                                        if let Some(ms) = message_builder.thinking_duration_ms(index) {
+                                            message_builder.insert_meta_field(index, "duration_ms", json!(ms));
+                                        }
+                                        send_event(&event_tx, event_scope.as_ref(), AgentEvent::ThinkingFinished);
+                                    }
+                                    Some(PartKind::ToolCall) => {
+                                        let (id, name, args) = message_builder.finalize_tool(index);
+                                        let mcp_label = mcp.tool_label(&name).await;
+                                        let summary = mcp_label
+                                            .as_ref()
+                                            .map(|label| {
+                                                format!(
+                                                    "{} · {}",
+                                                    display_mcp_server_name(&label.server_name),
+                                                    label.tool_name
+                                                )
+                                            })
+                                            .or_else(|| {
+                                                subagents
+                                                    .as_ref()
+                                                    .and_then(|tool| tool.summary_for_tool_name(&name))
+                                            })
+                                            .or_else(|| {
+                                                teams
+                                                    .as_ref()
+                                                    .and_then(|tool| tool.summary_for_tool_name(&name))
+                                            })
+                                            .unwrap_or_else(|| summarize_tool(&name, &args));
+                                        if let Some(label) = mcp_label {
+                                            message_builder.insert_meta_field(index, "mcp", json!(label));
+                                        }
+                                        send_event(&event_tx, event_scope.as_ref(), AgentEvent::ToolReady {
+                                            id,
+                                            summary,
+                                            args_pretty: pretty_json(&args),
+                                        });
+                                    }
+                                    None => {}
+                                }
+                            }
+                            StreamEvent::Usage { usage } => {
+                                response_usage = Some(usage);
+                                send_token_usage_event(&event_tx, event_scope.as_ref(), &provider, &model, usage);
+                            }
+                            StreamEvent::MessageStop { stop_reason: reason, usage } => {
+                                saw_message_stop = true;
+                                stop_reason = reason;
+                                response_usage = Some(usage);
+                                send_token_usage_event(&event_tx, event_scope.as_ref(), &provider, &model, usage);
+                                break;
                             }
                         }
-                        _ = sleep(Duration::from_millis(delay_ms)) => {}
                     }
-                    if cancelled {
-                        break Err(AppError::RateLimit(message));
-                    }
-                    continue;
                 }
-                Err(AppError::Provider(message))
-                    if is_transient_provider_error(&message)
-                        && stream_attempt < TRANSIENT_PROVIDER_RETRY_DELAYS_MS.len() =>
-                {
-                    let delay_ms = TRANSIENT_PROVIDER_RETRY_DELAYS_MS[stream_attempt];
-                    stream_attempt += 1;
-                    send_event(
-                        &event_tx,
-                        event_scope.as_ref(),
-                        AgentEvent::Notice {
-                            message: format!(
-                                "Temporary provider error ({message}). Retrying in {}s (attempt {}/{}).",
-                                delay_ms / 1000,
-                                stream_attempt,
-                                TRANSIENT_PROVIDER_RETRY_DELAYS_MS.len()
-                            ),
-                        },
-                    );
-                    tokio::select! {
-                        biased;
-                        command = cmd_rx.recv() => {
-                            if matches!(command, Some(EngineCommand::Cancel)) {
-                                cancelled = true;
-                                break Err(AppError::Provider(message));
-                            }
-                        }
-                        _ = sleep(Duration::from_millis(delay_ms)) => {}
-                    }
-                    if cancelled {
-                        break Err(AppError::Provider(message));
-                    }
-                    continue;
-                }
-                Err(err) => break Err(err),
             }
-        };
-        if cancelled {
-            break 'conversation;
-        }
-        let mut stream = match stream_result {
-            Ok(stream) => stream,
-            Err(err) => {
+
+            // Detect a silent stream close: the underlying SSE source returned `None` (or yielded
+            // its last item) without ever emitting a `MessageStop`. This is the classic "OpenAI
+            // just stops without an error" symptom — usually a connection drop on the provider /
+            // edge proxy side. Surface it as an explicit stream error so the user gets feedback
+            // and the normal recovery path (auto-compaction, etc.) is given a chance to run.
+            if !cancelled && stream_error.is_none() && !saw_message_stop {
+                stream_error = Some(AppError::Stream(format!(
+                    "{} stream closed without sending a stop event (likely a connection drop)",
+                    provider.name()
+                )));
+            }
+
+            if let Some(err) = stream_error {
+                if message_builder.is_empty()
+                    && response_usage.is_none()
+                    && should_retry_before_content(&err, stream_retry_attempts)
+                {
+                    stream_retry_attempts += 1;
+                    tracing::warn!(
+                        provider = provider.name(),
+                        attempt = stream_retry_attempts,
+                        max_attempts = SAFE_STREAM_MAX_RETRIES,
+                        error = %err,
+                        "retrying provider stream before content"
+                    );
+                    tokio::time::sleep(stream_retry_delay(stream_retry_attempts)).await;
+                    continue 'stream_attempt;
+                }
+
                 if auto_compact
+                    && message_builder.is_empty()
                     && is_context_length_error(&err)
                     && can_auto_compact_history(&history, auto_compaction_attempts)
                 {
@@ -296,196 +500,34 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                     )
                     .await
                     {
-                        Ok(()) => continue,
+                        Ok(()) => continue 'conversation,
                         Err(compaction_err) => {
                             send_event(
                                 &event_tx,
                                 event_scope.as_ref(),
                                 AgentEvent::Error {
                                     message: format!(
-                                        "provider error: {err}; context compaction failed: {compaction_err}"
+                                        "stream error: {err}; context compaction failed: {compaction_err}"
                                     ),
                                 },
                             );
-                            break;
+                            break 'conversation;
                         }
                     }
                 }
+
                 send_event(
                     &event_tx,
                     event_scope.as_ref(),
                     AgentEvent::Error {
-                        message: format!("provider error: {err}"),
+                        message: format!("stream error: {err}"),
                     },
                 );
-                break;
+                break 'conversation;
             }
+
+            break 'stream_attempt (message_builder, stop_reason, response_usage);
         };
-
-        let mut message_builder = AssistantMessageBuilder::default();
-        let mut stop_reason = StopReason::EndTurn;
-        let mut response_usage = None;
-        let mut stream_error = None;
-
-        loop {
-            tokio::select! {
-                biased;
-
-                command = cmd_rx.recv() => {
-                    if matches!(command, Some(EngineCommand::Cancel)) {
-                        cancelled = true;
-                        break;
-                    }
-                }
-                event = stream.next() => {
-                    let Some(event) = event else { break; };
-                    let event = match event {
-                        Ok(event) => event,
-                        Err(err) => {
-                            stream_error = Some(err);
-                            break;
-                        }
-                    };
-
-                    match event {
-                        StreamEvent::MessageStart { .. } => {}
-                        StreamEvent::PartStart { index, kind, tool } => {
-                            message_builder.open(index, kind);
-                            match kind {
-                                PartKind::Text => { send_event(&event_tx, event_scope.as_ref(), AgentEvent::TextStarted); }
-                                PartKind::Thinking => { send_event(&event_tx, event_scope.as_ref(), AgentEvent::ThinkingStarted); }
-                                PartKind::ToolCall => {
-                                    if let Some(tool) = tool {
-                                        message_builder.register_tool(index, tool.id.clone(), tool.name.clone());
-                                        send_event(&event_tx, event_scope.as_ref(), AgentEvent::ToolStarted { id: tool.id, name: tool.name });
-                                    }
-                                }
-                            }
-                        }
-                        StreamEvent::TextDelta { index, delta } => {
-                            message_builder.push_text(index, &delta);
-                            send_event(&event_tx, event_scope.as_ref(), AgentEvent::TextChunk { delta });
-                        }
-                        StreamEvent::ThinkingDelta { index, delta } => {
-                            message_builder.push_text(index, &delta);
-                            send_event(&event_tx, event_scope.as_ref(), AgentEvent::ThinkingChunk { delta });
-                        }
-                        StreamEvent::ToolJsonDelta { index, chunk } => {
-                            message_builder.push_tool_json(index, &chunk);
-                            if let Some((id, name)) = message_builder.tool_head(index) {
-                                if should_stream_tool_args(&name) {
-                                    send_event(&event_tx, event_scope.as_ref(), AgentEvent::ToolArgsDelta { id, delta: chunk });
-                                }
-                            }
-                        }
-                        StreamEvent::PartMeta { index, meta } => {
-                            message_builder.push_meta(index, meta);
-                        }
-                        StreamEvent::PartStop { index } => {
-                            match message_builder.kind(index) {
-                                Some(PartKind::Text) => { send_event(&event_tx, event_scope.as_ref(), AgentEvent::TextFinished); }
-                                Some(PartKind::Thinking) => {
-                                    if let Some(ms) = message_builder.thinking_duration_ms(index) {
-                                        message_builder.insert_meta_field(index, "duration_ms", json!(ms));
-                                    }
-                                    send_event(&event_tx, event_scope.as_ref(), AgentEvent::ThinkingFinished);
-                                }
-                                Some(PartKind::ToolCall) => {
-                                    let (id, name, args) = message_builder.finalize_tool(index);
-                                    let mcp_label = mcp.tool_label(&name).await;
-                                    let summary = mcp_label
-                                        .as_ref()
-                                        .map(|label| {
-                                            format!(
-                                                "{} · {}",
-                                                display_mcp_server_name(&label.server_name),
-                                                label.tool_name
-                                            )
-                                        })
-                                        .or_else(|| {
-                                            subagents
-                                                .as_ref()
-                                                .and_then(|tool| tool.summary_for_tool_name(&name))
-                                        })
-                                        .or_else(|| {
-                                            teams
-                                                .as_ref()
-                                                .and_then(|tool| tool.summary_for_tool_name(&name))
-                                        })
-                                        .unwrap_or_else(|| summarize_tool(&name, &args));
-                                    if let Some(label) = mcp_label {
-                                        message_builder.insert_meta_field(index, "mcp", json!(label));
-                                    }
-                                    send_event(&event_tx, event_scope.as_ref(), AgentEvent::ToolReady {
-                                        id,
-                                        summary,
-                                        args_pretty: pretty_json(&args),
-                                    });
-                                }
-                                None => {}
-                            }
-                        }
-                        StreamEvent::Usage { usage } => {
-                            response_usage = Some(usage);
-                            send_token_usage_event(&event_tx, event_scope.as_ref(), &provider, &model, usage);
-                        }
-                        StreamEvent::MessageStop { stop_reason: reason, usage } => {
-                            stop_reason = reason;
-                            response_usage = Some(usage);
-                            send_token_usage_event(&event_tx, event_scope.as_ref(), &provider, &model, usage);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(err) = stream_error {
-            if auto_compact
-                && message_builder.is_empty()
-                && is_context_length_error(&err)
-                && can_auto_compact_history(&history, auto_compaction_attempts)
-            {
-                match run_auto_compaction(
-                    &provider,
-                    &model,
-                    cache_key.as_ref(),
-                    &mut cache_stable_message_count,
-                    &mut history,
-                    &mut current_turn_tool_result_ids,
-                    &current_system_prompt,
-                    &event_tx,
-                    event_scope.as_ref(),
-                    &mut cmd_rx,
-                    &mut auto_compaction_attempts,
-                )
-                .await
-                {
-                    Ok(()) => continue,
-                    Err(compaction_err) => {
-                        send_event(
-                            &event_tx,
-                            event_scope.as_ref(),
-                            AgentEvent::Error {
-                                message: format!(
-                                    "stream error: {err}; context compaction failed: {compaction_err}"
-                                ),
-                            },
-                        );
-                        break 'conversation;
-                    }
-                }
-            }
-
-            send_event(
-                &event_tx,
-                event_scope.as_ref(),
-                AgentEvent::Error {
-                    message: format!("stream error: {err}"),
-                },
-            );
-            break 'conversation;
-        }
 
         let mut assistant = message_builder.finish();
         if cancelled {
@@ -708,19 +750,41 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
     }
 }
 
-pub(crate) fn rate_limit_retry_delay_ms(attempt: usize) -> u64 {
-    RATE_LIMIT_RETRY_DELAYS_MS[attempt]
-}
-
-pub(crate) fn rate_limit_retry_attempts() -> usize {
-    RATE_LIMIT_RETRY_DELAYS_MS.len()
-}
-
 pub(super) fn retain_cancelled_visible_parts(message: &mut ChatMessage) {
     message.parts.retain(|part| match part {
         Part::Text { text, .. } | Part::Thinking { text, .. } => !text.is_empty(),
         _ => false,
     });
+}
+
+pub(crate) fn rate_limit_retry_delay_ms(attempt: usize) -> u64 {
+    RATE_LIMIT_RETRY_DELAYS_MS[attempt]
+}
+
+pub(crate) fn rate_limit_retry_attempts_count() -> usize {
+    RATE_LIMIT_RETRY_DELAYS_MS.len()
+}
+
+fn should_retry_before_content(err: &AppError, attempts: usize) -> bool {
+    attempts < SAFE_STREAM_MAX_RETRIES
+        && matches!(
+            err,
+            AppError::Network(_) | AppError::Stream(_) | AppError::Decode(_)
+        )
+}
+
+fn stream_retry_delay(attempt: usize) -> Duration {
+    Duration::from_millis(match attempt {
+        0 | 1 => 750,
+        2 => 1_500,
+        _ => 3_000,
+    })
+}
+
+fn is_transient_provider_error(message: &str) -> bool {
+    ["HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504"]
+        .iter()
+        .any(|needle| message.contains(needle))
 }
 
 fn append_plan_fallback_question(
@@ -769,12 +833,6 @@ fn append_plan_fallback_question(
         input,
         meta: None,
     });
-}
-
-fn is_transient_provider_error(message: &str) -> bool {
-    ["HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504"]
-        .iter()
-        .any(|needle| message.contains(needle))
 }
 
 fn assistant_has_question_tool(message: &ChatMessage) -> bool {

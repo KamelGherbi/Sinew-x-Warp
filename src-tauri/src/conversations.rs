@@ -245,14 +245,12 @@ pub(super) async fn save_tool_settings(
 ) -> std::result::Result<ToolSettingsView, String> {
     let workspace_root =
         normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let catalog = configurable_tool_catalog(&workspace_root);
     let saved = state
         .store
-        .save_tool_settings(&input.settings)
+        .save_tool_settings_for_catalog(&input.settings, &catalog)
         .map_err(error_to_string)?;
-    Ok(tool_settings_view(
-        &saved,
-        &configurable_tool_catalog(&workspace_root),
-    ))
+    Ok(tool_settings_view(&saved, &catalog))
 }
 
 #[tauri::command]

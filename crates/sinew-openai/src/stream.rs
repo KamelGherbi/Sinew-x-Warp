@@ -205,14 +205,6 @@ impl EventParser {
         Ok(out)
     }
 
-    pub(crate) fn finish_if_needed(&mut self) -> Vec<StreamEvent> {
-        if self.message_started && !self.stopped {
-            vec![self.message_stop(StopReason::Other)]
-        } else {
-            Vec::new()
-        }
-    }
-
     fn ensure_message_start(&mut self, event: &Value, out: &mut Vec<StreamEvent>) {
         if self.message_started {
             return;

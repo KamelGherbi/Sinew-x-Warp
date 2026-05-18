@@ -19,11 +19,11 @@ where
     let parser = EventParser::new(model);
 
     futures::stream::unfold(
-        (source, parser, Vec::<StreamEvent>::new(), false),
-        |(mut source, mut parser, mut pending, done)| async move {
+        (source, parser, Vec::<StreamEvent>::new(), false, false),
+        |(mut source, mut parser, mut pending, done, mut saw_any_event)| async move {
             loop {
                 if let Some(next) = pending.pop() {
-                    return Some((Ok(next), (source, parser, pending, done)));
+                    return Some((Ok(next), (source, parser, pending, done, saw_any_event)));
                 }
                 if done {
                     return None;
@@ -31,6 +31,7 @@ where
 
                 match source.next().await {
                     Some(Ok(event)) => {
+                        saw_any_event = true;
                         let data = event.data.trim();
                         if data.is_empty() {
                             continue;
@@ -53,7 +54,7 @@ where
                                     .unwrap_or("openrouter stream error");
                                 return Some((
                                     Err(AppError::Provider(message.to_string())),
-                                    (source, parser, pending, true),
+                                    (source, parser, pending, true, saw_any_event),
                                 ));
                             }
                         }
@@ -64,7 +65,7 @@ where
                                 if let Some(message) = chunk_error_message(&parsed) {
                                     return Some((
                                         Err(AppError::Provider(message)),
-                                        (source, parser, pending, true),
+                                        (source, parser, pending, true, saw_any_event),
                                     ));
                                 }
                                 let mut produced = parser.push(parsed);
@@ -74,7 +75,7 @@ where
                             Err(err) => {
                                 return Some((
                                     Err(AppError::Decode(format!("bad openrouter event: {err}"))),
-                                    (source, parser, pending, true),
+                                    (source, parser, pending, true, saw_any_event),
                                 ));
                             }
                         }
@@ -82,10 +83,20 @@ where
                     Some(Err(err)) => {
                         return Some((
                             Err(AppError::Stream(err.to_string())),
-                            (source, parser, pending, true),
+                            (source, parser, pending, true, saw_any_event),
                         ));
                     }
                     None => {
+                        if !saw_any_event {
+                            return Some((
+                                Err(AppError::Stream(
+                                    "openrouter SSE closed before any event; \
+                                     the server likely dropped the connection"
+                                        .into(),
+                                )),
+                                (source, parser, pending, true, saw_any_event),
+                            ));
+                        }
                         let mut produced = parser.finish();
                         produced.reverse();
                         pending = produced;

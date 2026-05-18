@@ -145,6 +145,7 @@ pub(super) async fn run_auto_compaction(
         history.clone(),
         cache_key.cloned(),
         *cache_stable_message_count,
+        None,
         cmd_rx,
         Some(summary_delta_tx),
     )

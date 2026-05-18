@@ -59,7 +59,7 @@ impl WebSearchTool {
         match self.provider {
             WebSearchProvider::LinkUp => ToolDescriptor {
                 name: "WebSearch".into(),
-                description: "Use LinkUp for web search, documentation check or fresh information."
+                description: "Use this for web search, documentation check or fresh information."
                     .into(),
                 input_schema: json!({
                     "type": "object",
@@ -261,13 +261,13 @@ impl WebFetchTool {
     pub fn descriptor(&self) -> ToolDescriptor {
         ToolDescriptor {
             name: "WebFetch".into(),
-            description: "Fetch a specific HTTP(S) URL, usually a source returned by WebSearch, and return readable text for closer inspection.".into(),
+            description: "Fetch a specific URL, usually a source returned by WebSearch, and return readable text for closer inspection.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "url": {
                         "type": "string",
-                        "description": "The HTTP(S) URL to fetch."
+                        "description": "The URL to fetch."
                     }
                 },
                 "required": ["url"],

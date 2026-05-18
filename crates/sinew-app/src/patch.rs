@@ -12,7 +12,7 @@ use sinew_core::ToolDescriptor;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
-    tool_run::{diff_snapshots, snapshot_workspace_paths, ToolRunResult},
+    tool_run::{diff_snapshots, snapshot_workspace_paths, FileChange, ToolRunResult},
     workspace::normalize_workspace_relative_path,
 };
 
@@ -58,6 +58,7 @@ Rules:
 - Update hunks start with `@@`.
 - Hunk lines must start with a space, `-`, or `+`.
 - Paths must be relative, never absolute.
+- Operations are applied sequentially. If one operation fails, earlier operations stay on disk, later operations are not attempted, and the error output lists applied/failed/not-attempted operations. Re-send only the failed and not-attempted operations.
 "#;
 
 #[derive(Debug, Clone)]
@@ -104,19 +105,23 @@ impl ApplyPatchTool {
     pub async fn run_with_read_paths(&self, input: Value) -> ToolRunResult {
         match self.apply(input).await {
             Ok(output) => output,
-            Err(err) => ToolRunResult::err(err.to_string(), Vec::new()),
+            Err(ApplyPatchError::Fatal(err)) => ToolRunResult::err(err.to_string(), Vec::new()),
+            Err(ApplyPatchError::Partial {
+                message,
+                file_changes,
+            }) => ToolRunResult::err(message, file_changes),
         }
     }
 
-    async fn apply(&self, input: Value) -> Result<ToolRunResult> {
+    async fn apply(&self, input: Value) -> std::result::Result<ToolRunResult, ApplyPatchError> {
         let parsed: ApplyPatchInput = serde_json::from_value(input)
             .map_err(|err| anyhow::anyhow!("invalid apply_patch input: {err}"))?;
 
         if parsed.patch.trim().is_empty() {
-            bail!("patch is required");
+            return Err(anyhow::anyhow!("patch is required").into());
         }
         if parsed.patch.len() > MAX_PATCH_BYTES {
-            bail!("patch is too large to apply safely");
+            return Err(anyhow::anyhow!("patch is too large to apply safely").into());
         }
 
         let operations = parse_patch(&parsed.patch)?;
@@ -124,7 +129,17 @@ impl ApplyPatchTool {
         let affected_paths = affected_patch_paths(&operations);
         let _write_permit = self.acquire_write_permit().await?;
         let before = snapshot_workspace_paths(&self.workspace_root, &affected_paths);
-        let summary = self.apply_operations(&operations)?;
+        let summary = match self.apply_operations(&operations) {
+            Ok(summary) => summary,
+            Err(partial) => {
+                let after = snapshot_workspace_paths(&self.workspace_root, &affected_paths);
+                let file_changes = diff_snapshots(before, after);
+                return Err(ApplyPatchError::Partial {
+                    message: partial.format_message(operations.len()),
+                    file_changes,
+                });
+            }
+        };
         let after = snapshot_workspace_paths(&self.workspace_root, &affected_paths);
         let file_changes = diff_snapshots(before, after);
 
@@ -144,59 +159,84 @@ impl ApplyPatchTool {
 
         Ok(ToolRunResult::ok(content, file_changes))
     }
-    fn apply_operations(&self, operations: &[PatchOperation]) -> Result<String> {
+
+    fn apply_operations(&self, operations: &[PatchOperation]) -> Result<String, PartialPatchError> {
         let mut added = Vec::new();
         let mut modified = Vec::new();
         let mut deleted = Vec::new();
 
-        for operation in operations {
-            match operation {
-                PatchOperation::AddFile { path, lines } => {
-                    let target = self.target_path(path)?;
-                    if target.exists() {
-                        bail!("file already exists: {path}");
-                    }
-                    write_text_file(&target, &join_patch_lines(lines))?;
-                    added.push(path.clone());
-                }
-                PatchOperation::DeleteFile { path } => {
-                    let target = self.existing_file_path(path)?;
-                    fs::remove_file(&target)
-                        .with_context(|| format!("unable to delete file {path}"))?;
-                    deleted.push(path.clone());
-                }
-                PatchOperation::UpdateFile {
-                    path,
-                    move_path,
-                    chunks,
-                } => {
-                    let source = self.existing_file_path(path)?;
-                    let original = fs::read_to_string(&source)
-                        .with_context(|| format!("unable to read file {path}"))?;
-                    let updated = if chunks.is_empty() {
-                        original
-                    } else {
-                        apply_chunks(&original, chunks, path)?
-                    };
-
-                    if let Some(destination_path) = move_path {
-                        let destination = self.target_path(destination_path)?;
-                        if destination.exists() && destination != source {
-                            bail!("destination already exists: {destination_path}");
-                        }
-                        write_text_file(&destination, &updated)?;
-                        fs::remove_file(&source)
-                            .with_context(|| format!("unable to remove original file {path}"))?;
-                        modified.push(path.clone());
-                    } else {
-                        write_text_file(&source, &updated)?;
-                        modified.push(path.clone());
-                    }
+        for (index, operation) in operations.iter().enumerate() {
+            let applied = AppliedPatchOperations {
+                added: added.clone(),
+                modified: modified.clone(),
+                deleted: deleted.clone(),
+            };
+            match self.apply_operation(operation) {
+                Ok(kind) => match kind {
+                    AppliedPatchKind::Added => added.push(operation.path().to_string()),
+                    AppliedPatchKind::Modified => modified.push(operation.path().to_string()),
+                    AppliedPatchKind::Deleted => deleted.push(operation.path().to_string()),
+                },
+                Err(err) => {
+                    return Err(PartialPatchError {
+                        failed_index: index,
+                        failed_operation: operation.clone(),
+                        error: err,
+                        applied,
+                        not_attempted: operations[index + 1..].to_vec(),
+                    });
                 }
             }
         }
 
         Ok(format_summary(&added, &modified, &deleted))
+    }
+
+    fn apply_operation(&self, operation: &PatchOperation) -> Result<AppliedPatchKind> {
+        match operation {
+            PatchOperation::AddFile { path, lines } => {
+                let target = self.target_path(path)?;
+                if target.exists() {
+                    bail!("file already exists: {path}");
+                }
+                write_text_file(&target, &join_patch_lines(lines))?;
+                Ok(AppliedPatchKind::Added)
+            }
+            PatchOperation::DeleteFile { path } => {
+                let target = self.existing_file_path(path)?;
+                fs::remove_file(&target)
+                    .with_context(|| format!("unable to delete file {path}"))?;
+                Ok(AppliedPatchKind::Deleted)
+            }
+            PatchOperation::UpdateFile {
+                path,
+                move_path,
+                chunks,
+            } => {
+                let source = self.existing_file_path(path)?;
+                let original = fs::read_to_string(&source)
+                    .with_context(|| format!("unable to read file {path}"))?;
+                let updated = if chunks.is_empty() {
+                    original
+                } else {
+                    apply_chunks(&original, chunks, path)?
+                };
+
+                if let Some(destination_path) = move_path {
+                    let destination = self.target_path(destination_path)?;
+                    if destination.exists() && destination != source {
+                        bail!("destination already exists: {destination_path}");
+                    }
+                    write_text_file(&destination, &updated)?;
+                    fs::remove_file(&source)
+                        .with_context(|| format!("unable to remove original file {path}"))?;
+                    Ok(AppliedPatchKind::Modified)
+                } else {
+                    write_text_file(&source, &updated)?;
+                    Ok(AppliedPatchKind::Modified)
+                }
+            }
+        }
     }
 
     fn target_path(&self, path: &str) -> Result<PathBuf> {
@@ -232,6 +272,21 @@ struct ApplyPatchInput {
     patch: String,
 }
 
+#[derive(Debug)]
+enum ApplyPatchError {
+    Fatal(anyhow::Error),
+    Partial {
+        message: String,
+        file_changes: Vec<FileChange>,
+    },
+}
+
+impl From<anyhow::Error> for ApplyPatchError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Fatal(err)
+    }
+}
+
 #[derive(Debug, Clone)]
 #[allow(clippy::enum_variant_names)]
 enum PatchOperation {
@@ -247,6 +302,96 @@ enum PatchOperation {
         move_path: Option<String>,
         chunks: Vec<PatchChunk>,
     },
+}
+
+impl PatchOperation {
+    fn path(&self) -> &str {
+        match self {
+            PatchOperation::AddFile { path, .. }
+            | PatchOperation::DeleteFile { path }
+            | PatchOperation::UpdateFile { path, .. } => path,
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            PatchOperation::AddFile { path, .. } => format!("A {path}"),
+            PatchOperation::DeleteFile { path } => format!("D {path}"),
+            PatchOperation::UpdateFile {
+                path,
+                move_path: Some(move_path),
+                ..
+            } => format!("M {path} -> {move_path}"),
+            PatchOperation::UpdateFile { path, .. } => format!("M {path}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum AppliedPatchKind {
+    Added,
+    Modified,
+    Deleted,
+}
+
+#[derive(Debug, Clone)]
+struct AppliedPatchOperations {
+    added: Vec<String>,
+    modified: Vec<String>,
+    deleted: Vec<String>,
+}
+
+#[derive(Debug)]
+struct PartialPatchError {
+    failed_index: usize,
+    failed_operation: PatchOperation,
+    error: anyhow::Error,
+    applied: AppliedPatchOperations,
+    not_attempted: Vec<PatchOperation>,
+}
+
+impl PartialPatchError {
+    fn format_message(&self, total_operations: usize) -> String {
+        let mut output = format!(
+            "Patch partially applied. Stopped at operation {}/{}.",
+            self.failed_index + 1,
+            total_operations
+        );
+
+        output.push_str("\n\nApplied (kept on disk):");
+        let mut applied_any = false;
+        for path in &self.applied.added {
+            applied_any = true;
+            output.push_str(&format!("\n  A {path}"));
+        }
+        for path in &self.applied.modified {
+            applied_any = true;
+            output.push_str(&format!("\n  M {path}"));
+        }
+        for path in &self.applied.deleted {
+            applied_any = true;
+            output.push_str(&format!("\n  D {path}"));
+        }
+        if !applied_any {
+            output.push_str("\n  none");
+        }
+
+        output.push_str("\n\nFailed:");
+        output.push_str(&format!("\n  {}", self.failed_operation.label()));
+        output.push_str(&format!("\n  Reason: {}", self.error));
+
+        output.push_str("\n\nNot attempted:");
+        if self.not_attempted.is_empty() {
+            output.push_str("\n  none");
+        } else {
+            for operation in &self.not_attempted {
+                output.push_str(&format!("\n  {}", operation.label()));
+            }
+        }
+
+        output.push_str("\n\nRe-send only the failed and not-attempted operations.");
+        output
+    }
 }
 
 fn affected_patch_paths(operations: &[PatchOperation]) -> Vec<String> {
@@ -405,6 +550,17 @@ fn parse_chunk(lines: &[String], index: &mut usize, end_index: usize) -> Result<
             _ => bail!("invalid update hunk line: lines must start with ' ', '-', or '+'"),
         }
         *index += 1;
+    }
+
+    // Reject hunks that contain only context lines. Without at least one
+    // '+' or '-', the chunk is a no-op: it would silently round-trip the
+    // file on disk and report "Patch applied" with zero added/removed
+    // lines, leaving callers convinced they made a change when they did
+    // not. Failing loudly here forces the agent to send a real diff.
+    if old_lines == new_lines {
+        bail!(
+            "invalid update hunk: must contain at least one '+' or '-' line (context-only hunks have no effect)"
+        );
     }
 
     Ok(PatchChunk {
@@ -790,6 +946,69 @@ mod tests {
             fs::read_to_string(root.join("to.txt")).expect("read renamed file"),
             "same"
         );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn partial_patch_error_reports_applied_failed_and_not_attempted_operations() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        fs::write(root.join("first.txt"), "old first\n").expect("write first file");
+        fs::write(root.join("second.txt"), "actual second\n").expect("write second file");
+        fs::write(root.join("third.txt"), "old third\n").expect("write third file");
+
+        let tool = ApplyPatchTool::new(&root);
+        let result = tool
+            .run(json!({
+                "patch": concat!(
+                    "*** Begin Patch\n",
+                    "*** Update File: first.txt\n",
+                    "@@\n",
+                    "-old first\n",
+                    "+new first\n",
+                    "*** Update File: second.txt\n",
+                    "@@\n",
+                    "-missing second\n",
+                    "+new second\n",
+                    "*** Update File: third.txt\n",
+                    "@@\n",
+                    "-old third\n",
+                    "+new third\n",
+                    "*** End Patch\n"
+                )
+            }))
+            .await;
+
+        assert!(result.is_error);
+        assert_eq!(
+            fs::read_to_string(root.join("first.txt")).expect("read first file"),
+            "new first\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("second.txt")).expect("read second file"),
+            "actual second\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("third.txt")).expect("read third file"),
+            "old third\n"
+        );
+        assert!(result
+            .content
+            .contains("Patch partially applied. Stopped at operation 2/3."));
+        assert!(result
+            .content
+            .contains("Applied (kept on disk):\n  M first.txt"));
+        assert!(result.content.contains("Failed:\n  M second.txt"));
+        assert!(result
+            .content
+            .contains("Reason: failed to find expected lines in second.txt"));
+        assert!(result.content.contains("Not attempted:\n  M third.txt"));
+        assert!(result
+            .content
+            .contains("Re-send only the failed and not-attempted operations."));
+        assert_eq!(result.file_changes.len(), 1);
+        assert_eq!(result.file_changes[0].relative_path, "first.txt");
+
         fs::remove_dir_all(root).ok();
     }
 
