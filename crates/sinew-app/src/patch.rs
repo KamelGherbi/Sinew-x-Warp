@@ -435,6 +435,12 @@ fn parse_patch(patch: &str) -> Result<Vec<PatchOperation>> {
         .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
         .collect::<Vec<_>>();
 
+    // Silent-fix a missing envelope opener when the payload starts directly
+    // with a valid file operation header. This keeps the canonical language
+    // strict while accepting the unambiguous shorthand models sometimes emit:
+    // `*** Update File: path ... *** End Patch`.
+    ensure_begin_patch_marker(&mut lines);
+
     // Silent-fix the patch envelope: '+*** Begin Patch' / '+*** End Patch' (or
     // '-' variants, or several signs stacked). These framing markers are
     // positional and reserved: there is no legitimate use case for them to
@@ -868,6 +874,20 @@ fn sanitize_envelope_markers(lines: &mut [String]) {
         if strip_all_signs(last).trim() == END_PATCH_MARKER {
             *last = END_PATCH_MARKER.to_string();
         }
+    }
+}
+
+/// Insert the missing `*** Begin Patch` envelope line when the first line is
+/// already an official file-operation header. This is intentionally narrower
+/// than a generic wrapper: we do not try to infer patches from arbitrary text,
+/// git diffs, or prose. The correction is safe because Add/Update/Delete file
+/// headers only have meaning inside this patch language.
+fn ensure_begin_patch_marker(lines: &mut Vec<String>) {
+    let Some(first) = lines.first() else {
+        return;
+    };
+    if is_file_operation_header(first) {
+        lines.insert(0, BEGIN_PATCH_MARKER.to_string());
     }
 }
 
@@ -1377,6 +1397,31 @@ mod tests {
         let updated = fs::read_to_string(root.join("a.txt")).expect("read");
         assert!(updated.contains("ALPHA"));
         assert!(updated.contains("ZETA"));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn silently_inserts_missing_begin_patch_for_file_operation_header() {
+        // Regression: models sometimes send a valid file operation as the
+        // first line and still include `*** End Patch`, omitting only the
+        // envelope opener. Since the first line is already an official
+        // Add/Update/Delete header, auto-wrapping is unambiguous.
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        fs::write(root.join("lib.rs"), "pub use skill::{\n    old_symbol,\n};\n").expect("write file");
+
+        let tool = ApplyPatchTool::new(&root);
+        let patch = "*** Update File: lib.rs\n@@ pub use skill::{\n-    old_symbol,\n+    new_symbol,\n };\n*** End Patch\n";
+        let result = tool.run(json!({ "patch": patch })).await;
+
+        assert!(
+            !result.is_error,
+            "missing Begin Patch should be auto-wrapped, got: {}",
+            result.content
+        );
+        let updated = fs::read_to_string(root.join("lib.rs")).expect("read");
+        assert!(updated.contains("new_symbol"));
+        assert!(!updated.contains("old_symbol"));
         fs::remove_dir_all(root).ok();
     }
 
