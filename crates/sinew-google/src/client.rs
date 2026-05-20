@@ -17,13 +17,14 @@ use crate::{
     wire,
 };
 
-const BASE_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
+const BASE_URL: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
 const PROD_BASE_URL: &str = "https://cloudcode-pa.googleapis.com/v1internal";
+const SANDBOX_BASE_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
 const AUTOPUSH_BASE_URL: &str = "https://autopush-cloudcode-pa.sandbox.googleapis.com/v1internal";
 const USER_AGENT: &str = "sinew/0.1";
-const DEFAULT_ANTIGRAVITY_VERSION: &str = "1.107.0";
+const DEFAULT_ANTIGRAVITY_VERSION: &str = "2.0.0";
 const ANTIGRAVITY_SYSTEM_INSTRUCTION: &str = "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.**Absolute paths only****Proactiveness**";
-const FREE_TIER_ID: &str = "free-tier";
+const FALLBACK_PROJECT_ID: &str = "rising-fact-p41fc";
 
 #[derive(Clone)]
 pub struct GoogleConfig {
@@ -117,23 +118,25 @@ impl GoogleProvider {
     }
 
     async fn setup_user(&self) -> Result<GoogleUserData> {
-        let antigravity_user = GoogleUserData::antigravity_default();
         let env_project = google_project_from_env()?;
         let load = match self.load_code_assist(env_project.clone()).await {
             Ok(load) => load,
             Err(err) => {
-                tracing::warn!(error = %err, "failed to discover Antigravity project; using fallback project");
-                return Ok(antigravity_user.clone());
+                tracing::warn!(error = %err, "failed to discover Antigravity project; using hardcoded fallback project");
+                return Ok(GoogleUserData {
+                    project_id: env_project.unwrap_or_else(|| FALLBACK_PROJECT_ID.into()),
+                    user_tier: None,
+                    user_tier_name: None,
+                });
             }
         };
 
-        if let Some(current_tier) = load.current_tier.clone() {
-            if let Some(project_id) = load
-                .cloudaicompanion_project
-                .clone()
-                .and_then(|project| project.into_id())
-                .or_else(|| env_project.clone())
-            {
+        if let Some(project_id) = load
+            .cloudaicompanion_project
+            .clone()
+            .and_then(|project| project.into_id())
+        {
+            if let Some(current_tier) = load.current_tier.clone() {
                 return Ok(GoogleUserData {
                     project_id,
                     user_tier: load
@@ -149,33 +152,45 @@ impl GoogleProvider {
                 });
             }
 
-            return Ok(antigravity_user.clone());
+            return Ok(GoogleUserData {
+                project_id,
+                user_tier: None,
+                user_tier_name: None,
+            });
         }
 
         let Some(tier) = default_tier(&load) else {
-            return Ok(antigravity_user.clone());
+            return Ok(GoogleUserData {
+                project_id: env_project.unwrap_or_else(|| FALLBACK_PROJECT_ID.into()),
+                user_tier: None,
+                user_tier_name: None,
+            });
         };
-        let tier_id = tier.id.clone().unwrap_or_else(|| FREE_TIER_ID.into());
-        let onboard_project = if tier_id == FREE_TIER_ID {
-            None
-        } else {
-            env_project.clone()
-        };
+        let tier_id = tier.id.clone().unwrap_or_else(|| "FREE".into());
+        let onboard_project = env_project.clone();
         let operation = match self
             .onboard_user(Some(tier_id.clone()), onboard_project.clone())
             .await
         {
             Ok(operation) => operation,
             Err(err) => {
-                tracing::warn!(error = %err, "failed to onboard Antigravity project; using fallback project");
-                return Ok(antigravity_user.clone());
+                tracing::warn!(error = %err, "failed to onboard Antigravity project; using hardcoded fallback project");
+                return Ok(GoogleUserData {
+                    project_id: onboard_project.unwrap_or_else(|| FALLBACK_PROJECT_ID.into()),
+                    user_tier: Some(tier_id),
+                    user_tier_name: tier.name,
+                });
             }
         };
         let operation = match self.wait_for_operation(operation).await {
             Ok(operation) => operation,
             Err(err) => {
-                tracing::warn!(error = %err, "failed to wait for Antigravity onboarding; using fallback project");
-                return Ok(antigravity_user.clone());
+                tracing::warn!(error = %err, "failed to wait for Antigravity onboarding; using hardcoded fallback project");
+                return Ok(GoogleUserData {
+                    project_id: onboard_project.unwrap_or_else(|| FALLBACK_PROJECT_ID.into()),
+                    user_tier: Some(tier_id),
+                    user_tier_name: tier.name,
+                });
             }
         };
         let project_id = operation
@@ -184,7 +199,7 @@ impl GoogleProvider {
             .and_then(|project| project.id)
             .or(onboard_project)
             .or(env_project)
-            .unwrap_or_else(|| antigravity_user.project_id.clone());
+            .unwrap_or_else(|| FALLBACK_PROJECT_ID.into());
 
         Ok(GoogleUserData {
             project_id,
@@ -202,19 +217,39 @@ impl GoogleProvider {
             metadata: client_metadata(project_id),
             mode: None,
         };
-        let response = self
-            .post("loadCodeAssist")
-            .await?
-            .json(&body)
-            .send()
-            .await
-            .map_err(|err| AppError::Network(err.to_string()))?;
-        if !response.status().is_success() {
-            return Err(read_http_error(response).await);
-        }
+        let response = self.post_code_assist_load(&body).await?;
         response.json().await.map_err(|err| {
             AppError::Decode(format!("invalid Antigravity loadCodeAssist body: {err}"))
         })
+    }
+
+    async fn post_code_assist_load(
+        &self,
+        body: &wire::LoadCodeAssistRequest,
+    ) -> Result<reqwest::Response> {
+        let bases = [PROD_BASE_URL, BASE_URL, SANDBOX_BASE_URL, AUTOPUSH_BASE_URL];
+        let mut last_error = None;
+        for base_url in bases {
+            let token = self.config.credential.bearer(&self.http).await?;
+            let response = self
+                .http
+                .post(method_url(base_url, "loadCodeAssist"))
+                .bearer_auth(token)
+                .header("user-agent", antigravity_load_code_assist_user_agent())
+                .header("x-goog-api-client", "gl-node/22.21.1")
+                .header("content-type", "application/json")
+                .header("accept", "application/json")
+                .json(body)
+                .send()
+                .await
+                .map_err(|err| AppError::Network(err.to_string()))?;
+            if response.status().is_success() {
+                return Ok(response);
+            }
+            last_error = Some(read_http_error(response).await);
+        }
+        Err(last_error
+            .unwrap_or_else(|| AppError::Provider("Antigravity project discovery failed".into())))
     }
 
     async fn onboard_user(
@@ -322,7 +357,7 @@ impl GoogleProvider {
         &self,
         body: &wire::CodeAssistGenerateRequest,
     ) -> Result<reqwest::Response> {
-        let bases = [&self.config.base_url[..], AUTOPUSH_BASE_URL, PROD_BASE_URL];
+        let bases = [self.config.base_url.as_str(), PROD_BASE_URL];
         let mut last_error = None;
         for base_url in bases {
             let request = self
@@ -406,19 +441,14 @@ fn system_instruction(text: Option<&str>) -> Option<wire::Content> {
 
 fn generation_config(
     request: &ProviderRequest,
-    caps: &ModelCapabilities,
+    _caps: &ModelCapabilities,
     thinking_level: Option<&'static str>,
 ) -> wire::GenerationConfig {
     wire::GenerationConfig {
         temperature: request.temperature.or(Some(1.0)),
         top_p: Some(0.95),
         top_k: Some(64),
-        max_output_tokens: Some(
-            request
-                .max_output_tokens
-                .unwrap_or(caps.max_output_tokens)
-                .min(caps.max_output_tokens),
-        ),
+        max_output_tokens: None,
         thinking_config: thinking_level.map(|level| wire::ThinkingConfig {
             include_thoughts: Some(true),
             thinking_budget: None,
@@ -725,6 +755,8 @@ fn part_meta(part: &Part) -> Option<&Value> {
 fn client_metadata(project_id: Option<String>) -> wire::ClientMetadata {
     wire::ClientMetadata {
         ide_type: "ANTIGRAVITY",
+        ide_version: Some(antigravity_version()),
+        ide_name: Some("antigravity"),
         platform: antigravity_metadata_platform(),
         plugin_type: "GEMINI",
         duet_project: project_id,
@@ -805,12 +837,23 @@ fn method_url(base_url: &str, method: &str) -> String {
 }
 
 fn antigravity_user_agent() -> String {
+    format!("antigravity/{} darwin/arm64", antigravity_version())
+}
+
+fn antigravity_version() -> String {
     let version = std::env::var("PI_AI_ANTIGRAVITY_VERSION")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| DEFAULT_ANTIGRAVITY_VERSION.into());
-    format!("antigravity/{version} darwin/arm64")
+    version
+}
+
+fn antigravity_load_code_assist_user_agent() -> String {
+    format!(
+        "{} google-api-nodejs-client/10.3.0",
+        antigravity_user_agent()
+    )
 }
 
 fn rough_token_estimate(request: &ProviderRequest) -> u32 {

@@ -58,10 +58,11 @@ use sinew_core::{
 };
 use sinew_google::{
     delete_default_auth as delete_default_google_auth,
-    exchange_oauth_code as exchange_google_oauth_code, generate_state as generate_google_state,
+    exchange_oauth_code as exchange_google_oauth_code, generate_pkce as generate_google_pkce,
+    generate_state as generate_google_state,
     load_default_auth_status as load_default_google_auth_status,
     oauth_authorize_url as google_oauth_authorize_url, GoogleAuthStatus, GoogleProvider,
-    MODEL_ID as GOOGLE_MODEL_ID,
+    PkceCodes as GooglePkceCodes, MODEL_ID as GOOGLE_MODEL_ID,
 };
 use sinew_kimi::{
     delete_default_auth as delete_default_kimi_auth, generate_state as generate_kimi_state,

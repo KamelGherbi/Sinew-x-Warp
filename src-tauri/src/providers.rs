@@ -544,6 +544,7 @@ pub(super) async fn run_google_oauth_server(
     listener: tokio::net::TcpListener,
     redirect_uri: String,
     expected_state: String,
+    pkce: GooglePkceCodes,
     cancel: Arc<Notify>,
 ) -> Result<()> {
     let http = reqwest::Client::builder()
@@ -563,6 +564,7 @@ pub(super) async fn run_google_oauth_server(
                     &mut stream,
                     &redirect_uri,
                     &expected_state,
+                    &pkce,
                 ).await? {
                     return result;
                 }
@@ -576,6 +578,7 @@ pub(super) async fn handle_google_oauth_request(
     stream: &mut tokio::net::TcpStream,
     redirect_uri: &str,
     expected_state: &str,
+    pkce: &GooglePkceCodes,
 ) -> Result<Option<Result<()>>> {
     let mut buffer = [0u8; 8192];
     let read = stream
@@ -629,7 +632,7 @@ pub(super) async fn handle_google_oauth_request(
                 return Ok(Some(Err(anyhow::anyhow!("Missing authorization code"))));
             };
 
-            match exchange_google_oauth_code(http, code, redirect_uri).await {
+            match exchange_google_oauth_code(http, code, redirect_uri, pkce).await {
                 Ok(_) => {
                     write_html_response(stream, 200, google_login_success_html()).await?;
                     Ok(Some(Ok(())))
@@ -1131,8 +1134,9 @@ pub(super) async fn start_google_oauth_login(
     // Antigravity OAuth client whitelists this exact redirect URI.
     let _ = port;
     let redirect_uri = "http://localhost:51121/oauth-callback".to_string();
+    let pkce = generate_google_pkce();
     let oauth_state = generate_google_state();
-    let auth_url = google_oauth_authorize_url(&redirect_uri, &oauth_state);
+    let auth_url = google_oauth_authorize_url(&redirect_uri, &pkce, &oauth_state);
     let login_id = generate_google_state();
     let cancel = Arc::new(Notify::new());
     let outcome = Arc::new(StdMutex::new(None));
@@ -1148,7 +1152,8 @@ pub(super) async fn start_google_oauth_login(
 
     let providers = state.providers.clone();
     tauri::async_runtime::spawn(async move {
-        let result = run_google_oauth_server(listener, redirect_uri, oauth_state, cancel).await;
+        let result =
+            run_google_oauth_server(listener, redirect_uri, oauth_state, pkce, cancel).await;
         let login_outcome = match result {
             Ok(()) => match install_google_provider(&providers) {
                 Ok(()) => GoogleLoginOutcome {

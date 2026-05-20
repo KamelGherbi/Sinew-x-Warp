@@ -73,7 +73,9 @@ pub fn antigravity_model_and_thinking(
         Effort::High | Effort::Xhigh | Effort::Max => "high",
     };
 
-    if is_gemini_pro_model(&base) {
+    if base == "gemini-3.1-pro" && thinking_level == "high" {
+        ("gemini-pro-agent".into(), Some(thinking_level))
+    } else if is_gemini_pro_model(&base) {
         (format!("{base}-{thinking_level}"), Some(thinking_level))
     } else {
         (base, Some(thinking_level))

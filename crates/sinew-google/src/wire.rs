@@ -252,6 +252,10 @@ impl CloudProjectRef {
 #[serde(rename_all = "camelCase")]
 pub struct ClientMetadata {
     pub ide_type: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ide_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ide_name: Option<&'static str>,
     pub platform: &'static str,
     pub plugin_type: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]

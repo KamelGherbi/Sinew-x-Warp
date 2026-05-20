@@ -8,6 +8,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use directories::ProjectDirs;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
 use sinew_core::{AppError, Result};
@@ -77,6 +78,16 @@ impl GoogleUserData {
             user_tier_name: None,
         }
     }
+
+    pub fn is_stale_antigravity_default(&self) -> bool {
+        self.project_id == "default" && self.user_tier.as_deref() == Some("free-tier")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PkceCodes {
+    pub code_verifier: String,
+    pub code_challenge: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -334,7 +345,9 @@ pub fn load_default_user_data() -> Result<Option<GoogleUserData>> {
     if payload.provider != "google" || payload.auth_mode != "oauth" {
         return Ok(None);
     }
-    Ok(payload.user)
+    Ok(payload
+        .user
+        .filter(|user| !user.is_stale_antigravity_default()))
 }
 
 pub fn save_default_user_data(user: &GoogleUserData) -> Result<()> {
@@ -367,13 +380,25 @@ pub fn generate_state() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-pub fn oauth_authorize_url(redirect_uri: &str, state: &str) -> String {
+pub fn generate_pkce() -> PkceCodes {
+    let code_verifier = generate_state();
+    let digest = Sha256::digest(code_verifier.as_bytes());
+    let code_challenge = URL_SAFE_NO_PAD.encode(digest);
+    PkceCodes {
+        code_verifier,
+        code_challenge,
+    }
+}
+
+pub fn oauth_authorize_url(redirect_uri: &str, pkce: &PkceCodes, state: &str) -> String {
     let mut serializer = url::form_urlencoded::Serializer::new(String::new());
     serializer
         .append_pair("response_type", "code")
         .append_pair("client_id", GOOGLE_CLIENT_ID)
         .append_pair("redirect_uri", redirect_uri)
         .append_pair("scope", GOOGLE_OAUTH_SCOPE)
+        .append_pair("code_challenge", &pkce.code_challenge)
+        .append_pair("code_challenge_method", "S256")
         .append_pair("access_type", "offline")
         .append_pair("prompt", "consent")
         .append_pair("state", state);
@@ -384,6 +409,7 @@ pub async fn exchange_oauth_code(
     http: &reqwest::Client,
     code: &str,
     redirect_uri: &str,
+    pkce: &PkceCodes,
 ) -> Result<GoogleAuthStatus> {
     let response = http
         .post(GOOGLE_OAUTH_TOKEN_URL)
@@ -395,6 +421,7 @@ pub async fn exchange_oauth_code(
             ("redirect_uri", redirect_uri),
             ("client_id", GOOGLE_CLIENT_ID),
             ("client_secret", GOOGLE_CLIENT_SECRET),
+            ("code_verifier", &pkce.code_verifier),
         ])
         .send()
         .await
