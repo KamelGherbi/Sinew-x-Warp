@@ -1330,14 +1330,23 @@ mod tests {
         let tool = ApplyPatchTool::new(&root);
         let patch = "*** Begin Patch\n*** Update File: a.txt\n@@ -2,2 +2,2 @@\n-beta\n+BETA\n*** End Patch\n";
         let result = tool.run(json!({ "patch": patch })).await;
-        assert!(!result.is_error, "with leading dash, got: {}", result.content);
+        assert!(
+            !result.is_error,
+            "with leading dash, got: {}",
+            result.content
+        );
         let updated = fs::read_to_string(root.join("a.txt")).expect("read");
         assert!(updated.contains("BETA"));
 
         fs::write(root.join("a.txt"), "alpha\nbeta\ngamma\ndelta\n").expect("rewrite");
-        let patch_no_dash = "*** Begin Patch\n*** Update File: a.txt\n@@ 2,2 +2,2 @@\n-beta\n+B2\n*** End Patch\n";
+        let patch_no_dash =
+            "*** Begin Patch\n*** Update File: a.txt\n@@ 2,2 +2,2 @@\n-beta\n+B2\n*** End Patch\n";
         let result = tool.run(json!({ "patch": patch_no_dash })).await;
-        assert!(!result.is_error, "without leading dash, got: {}", result.content);
+        assert!(
+            !result.is_error,
+            "without leading dash, got: {}",
+            result.content
+        );
         let updated = fs::read_to_string(root.join("a.txt")).expect("read");
         assert!(updated.contains("B2"));
 
@@ -1360,7 +1369,11 @@ mod tests {
         let tool = ApplyPatchTool::new(&root);
         let patch = "*** Begin Patch\n*** Update File: a.txt\n@@\n-alpha\n+ALPHA\n\n@@\n-zeta\n+ZETA\n*** End Patch\n";
         let result = tool.run(json!({ "patch": patch })).await;
-        assert!(!result.is_error, "should silently skip blank, got: {}", result.content);
+        assert!(
+            !result.is_error,
+            "should silently skip blank, got: {}",
+            result.content
+        );
         let updated = fs::read_to_string(root.join("a.txt")).expect("read");
         assert!(updated.contains("ALPHA"));
         assert!(updated.contains("ZETA"));

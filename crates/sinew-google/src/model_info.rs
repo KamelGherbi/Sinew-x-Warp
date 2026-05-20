@@ -34,6 +34,13 @@ const MODELS: &[GoogleModelInfo] = &[
         max_output_tokens: GEMINI_MAX_OUTPUT,
         supports_images: true,
     },
+    GoogleModelInfo {
+        id: "gemini-3.1-flash-lite",
+        context_window: GEMINI_WINDOW,
+        preferred_window: 950_000,
+        max_output_tokens: GEMINI_MAX_OUTPUT,
+        supports_images: true,
+    },
 ];
 
 fn model_info(model_id: &str) -> &'static GoogleModelInfo {
@@ -73,6 +80,11 @@ pub fn antigravity_model_and_thinking(
         Effort::High | Effort::Xhigh | Effort::Max => "high",
     };
 
+    // Antigravity exposes 3.5-flash uniquement sous l'ID `gemini-3.5-flash-low`.
+    // Le thinkingLevel reste libre, mais l'ID modèle est figé.
+    if base == "gemini-3.5-flash" {
+        return ("gemini-3.5-flash-low".into(), Some(thinking_level));
+    }
     if base == "gemini-3.1-pro" && thinking_level == "high" {
         ("gemini-pro-agent".into(), Some(thinking_level))
     } else if is_gemini_pro_model(&base) {

@@ -765,9 +765,15 @@ fn client_metadata(project_id: Option<String>) -> wire::ClientMetadata {
 
 fn antigravity_metadata_platform() -> &'static str {
     if cfg!(target_os = "windows") {
-        "WINDOWS"
+        "WINDOWS_AMD64"
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "DARWIN_ARM64"
+    } else if cfg!(target_os = "macos") {
+        "DARWIN_AMD64"
+    } else if cfg!(target_arch = "aarch64") {
+        "LINUX_ARM64"
     } else {
-        "MACOS"
+        "LINUX_AMD64"
     }
 }
 

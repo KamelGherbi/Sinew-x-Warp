@@ -24,6 +24,15 @@ const GOOGLE_CLIENT_SECRET: &str = "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";
 const GOOGLE_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs";
 const REFRESH_SKEW_MS: i64 = 60_000;
 
+// Bump this number whenever we need to force a one-shot OAuth reset for
+// existing installations (e.g. when the schema of the auth file or the
+// upstream expectations change in a breaking way). The current value reflects
+// the migration that fixes the Antigravity platform/project flow shipped in
+// v0.1.14: legacy tokens were valid but the cached project/tier metadata was
+// wrong, so we wipe the file and ask users to reconnect once.
+const CURRENT_AUTH_MIGRATION: u32 = 1;
+const AUTH_MIGRATION_FILE: &str = "google-auth-migrations.json";
+
 #[derive(Clone)]
 pub enum Credential {
     OAuth(Arc<Mutex<OAuthToken>>),
@@ -372,6 +381,61 @@ pub fn delete_default_auth() -> Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(AppError::Auth(format!("unable to delete auth file: {err}"))),
     }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthMigrations {
+    #[serde(default)]
+    applied: u32,
+}
+
+fn default_migration_path() -> Result<PathBuf> {
+    let dirs = ProjectDirs::from("dev", "hyrak", "sinew")
+        .ok_or_else(|| AppError::Auth("unable to resolve local data directory".into()))?;
+    Ok(dirs.data_local_dir().join(AUTH_MIGRATION_FILE))
+}
+
+fn read_applied_migration(path: &Path) -> u32 {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice::<AuthMigrations>(&bytes)
+            .map(|m| m.applied)
+            .unwrap_or(0),
+        Err(_) => 0,
+    }
+}
+
+fn write_applied_migration(path: &Path, applied: u32) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            AppError::Auth(format!("unable to create auth migrations directory: {err}"))
+        })?;
+    }
+    let payload = AuthMigrations { applied };
+    let bytes = serde_json::to_vec_pretty(&payload).map_err(|err| {
+        AppError::Decode(format!("unable to serialize auth migrations file: {err}"))
+    })?;
+    std::fs::write(path, bytes)
+        .map_err(|err| AppError::Auth(format!("unable to write auth migrations file: {err}")))
+}
+
+/// One-shot purge of legacy Google OAuth state.
+///
+/// Returns `Ok(true)` when the migration ran and the legacy auth file was
+/// (potentially) removed, `Ok(false)` when the migration was already applied
+/// for this install.
+pub fn purge_legacy_oauth_if_needed() -> Result<bool> {
+    let migration_path = default_migration_path()?;
+    let applied = read_applied_migration(&migration_path);
+    if applied >= CURRENT_AUTH_MIGRATION {
+        return Ok(false);
+    }
+    // Best-effort wipe of the legacy auth file. If it does not exist, that's
+    // fine; the goal is purely to make sure no stale project/tier metadata is
+    // reused after the v0.1.14 fixes.
+    delete_default_auth()?;
+    write_applied_migration(&migration_path, CURRENT_AUTH_MIGRATION)?;
+    Ok(true)
 }
 
 pub fn generate_state() -> String {

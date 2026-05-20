@@ -61,7 +61,8 @@ use sinew_google::{
     exchange_oauth_code as exchange_google_oauth_code, generate_pkce as generate_google_pkce,
     generate_state as generate_google_state,
     load_default_auth_status as load_default_google_auth_status,
-    oauth_authorize_url as google_oauth_authorize_url, GoogleAuthStatus, GoogleProvider,
+    oauth_authorize_url as google_oauth_authorize_url,
+    purge_legacy_oauth_if_needed as purge_legacy_google_oauth, GoogleAuthStatus, GoogleProvider,
     PkceCodes as GooglePkceCodes, MODEL_ID as GOOGLE_MODEL_ID,
 };
 use sinew_kimi::{
@@ -199,6 +200,18 @@ pub fn run() {
         .setup(|app| {
             #[cfg(target_os = "windows")]
             let _ = app;
+
+            // One-shot purge of legacy Google OAuth tokens so users coming from
+            // pre-0.1.14 builds reconnect against the fixed Antigravity flow.
+            match purge_legacy_google_oauth() {
+                Ok(true) => {
+                    tracing::info!("purged legacy Google OAuth state (forced re-login)");
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, "google auth migration check failed");
+                }
+            }
 
             #[cfg(target_os = "macos")]
             {
