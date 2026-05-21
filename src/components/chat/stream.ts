@@ -940,6 +940,16 @@ function summaryFromInput(
     const changes = fileChangesFromPatchInput(input);
     return changes ? patchSummary(changes) : "Apply patch";
   }
+  if (name === "edit_file") {
+    return editFileSummary(input);
+  }
+  if (name === "write_file" && input && typeof input === "object") {
+    const record = input as Record<string, unknown>;
+    if (typeof record.path === "string" && record.path.trim()) {
+      return `Write ${record.path.trim()}`;
+    }
+    return "Write file";
+  }
   if (name === "clean_context") {
     return "Clean context";
   }
@@ -1130,6 +1140,7 @@ function pendingSummary(name: string): string | undefined {
   if (name === "bash") return "Running command";
   if (name === "bash_input") return "Interacting with command";
   if (name === "apply_patch") return "Preparing patch";
+  if (name === "write_file") return "Preparing write";
   if (name === "clean_context") return "Cleaning context";
   if (name === "context_compaction") return "Compacting context";
   if (name === "update_goal") return "Finishing goal";
@@ -1237,9 +1248,47 @@ function partialArgsFromToolJson(
   name: string,
   input: string,
 ): Record<string, unknown> | null {
-  if (name !== "read") return null;
-  const path = readPathFromPartialJson(input);
-  return path ? { path } : null;
+  if (name === "read") {
+    const path = readPathFromPartialJson(input);
+    return path ? { path } : null;
+  }
+  if (name === "edit_file") {
+    return partialEditFileArgs(input);
+  }
+  if (name === "write_file") {
+    const path = readPathFromPartialJson(input);
+    return path ? { path } : null;
+  }
+  return null;
+}
+
+function editFileSummary(input: unknown): string {
+  if (!input || typeof input !== "object") return "Edit file";
+  const edits = (input as Record<string, unknown>).edits;
+  if (!Array.isArray(edits) || edits.length === 0) return "Edit file";
+  if (edits.length === 1) {
+    const first = edits[0];
+    if (first && typeof first === "object") {
+      const path = (first as Record<string, unknown>).path;
+      if (typeof path === "string" && path.trim()) return `Edit ${path.trim()}`;
+    }
+    return "Edit file";
+  }
+  return `Edit files · ${edits.length} edits`;
+}
+
+function partialEditFileArgs(input: string): Record<string, unknown> | null {
+  const paths = [...input.matchAll(/"path"\s*:\s*"((?:\\.|[^"\\])*)/g)]
+    .map((match) => {
+      try {
+        return JSON.parse(`"${match[1]}"`) as string;
+      } catch {
+        return match[1].replace(/\\"/g, '"');
+      }
+    })
+    .filter((path) => path.trim());
+  if (paths.length === 0) return null;
+  return { edits: paths.map((path) => ({ path })) };
 }
 
 // -----------------------------------------------------------------

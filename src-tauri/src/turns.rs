@@ -159,6 +159,8 @@ pub(super) async fn send_message(
         grep: Arc::new(GrepTool::new(workspace_root.clone())),
         read: Arc::new(ReadTool::new(workspace_root.clone())),
         apply_patch: Arc::new(ApplyPatchTool::new(workspace_root.clone())),
+        edit_file: Arc::new(EditFileTool::new(workspace_root.clone())),
+        write_file: Arc::new(WriteFileTool::new(workspace_root.clone())),
         create_image: Arc::new(CreateImageTool::with_settings(
             workspace_root.clone(),
             tool_settings.image_provider,
@@ -1399,6 +1401,8 @@ pub(super) fn tool_descriptors_for_workspace(
     }
     if mode != AgentMode::Plan {
         tools.insert(4, ApplyPatchTool::new(workspace_root).descriptor());
+        tools.insert(5, EditFileTool::new(workspace_root).descriptor());
+        tools.insert(6, WriteFileTool::new(workspace_root).descriptor());
         tools.push(CreateImageTool::new(workspace_root).descriptor());
     }
     tools

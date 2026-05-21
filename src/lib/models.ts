@@ -53,6 +53,7 @@ export const PROVIDERS: {
 
 export const THINKING_LEVELS: { value: ThinkingLevel; label: string }[] = [
   { value: "off", label: "Off" },
+  { value: "minimal", label: "Minimal" },
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
@@ -135,21 +136,21 @@ export const MODELS: ModelEntry[] = [
     value: "google:gemini-3.1-pro",
     provider: "google",
     label: "Gemini 3.1 Pro",
-    thinking: ["low", "high"],
+    thinking: ["low", "medium", "high"],
     defaultThinking: "high",
   },
   {
     value: "google:gemini-3-flash",
     provider: "google",
     label: "Gemini 3 Flash",
-    thinking: ["low", "medium", "high"],
+    thinking: ["minimal", "low", "medium", "high"],
     defaultThinking: "high",
   },
   {
     value: "google:gemini-3.5-flash",
     provider: "google",
     label: "Gemini 3.5 Flash",
-    thinking: ["low", "medium", "high"],
+    thinking: ["minimal", "low", "medium", "high"],
     defaultThinking: "high",
   },
   {
@@ -224,13 +225,16 @@ export function thinkingFromRef(
 ): ThinkingLevel {
   if (model?.provider === "google") {
     if (model.name.endsWith("-low")) return "low";
-    if (model.name.endsWith("-medium")) return model.name.includes("-pro") ? "low" : "medium";
+    if (model.name.endsWith("-medium")) return "medium";
     if (model.name.endsWith("-high")) return "high";
     if (model.effort === "low" || model.effort === "medium" || model.effort === "high") {
-      if (model.name.includes("-pro") && model.effort === "medium") return "low";
       return model.effort;
     }
-    if (model.effort === "none") return "low";
+    if (model.effort === "none") {
+      // Pro variants don't support `minimal`; clamp to low so we never send
+      // an invalid thinking level for those models.
+      return model.name.includes("-pro") ? "low" : "minimal";
+    }
     return "high";
   }
   if (model?.provider === "kimi") {
@@ -276,7 +280,12 @@ export function modelRefWithThinking(
   if (model.provider === "google") {
     const name = normalizedGoogleModelName(model.name);
     if (thinking === "off") return { ...model, name, effort: "low" };
-    if (name.includes("-pro") && thinking === "medium") return { ...model, name, effort: "low" };
+    if (thinking === "minimal") {
+      // Pro variants reject `minimal` server-side; clamp to low.
+      return name.includes("-pro")
+        ? { ...model, name, effort: "low" }
+        : { ...model, name, effort: "none" };
+    }
     if (thinking === "xhigh" || thinking === "max") return { ...model, name, effort: "high" };
     return { ...model, name, effort: thinking };
   }
@@ -292,6 +301,9 @@ export function modelRefWithThinking(
   if (model.provider === "openrouter" && (thinking === "xhigh" || thinking === "max")) {
     return { ...model, effort: "high" };
   }
+  // `minimal` is Gemini-only on the backend. The Google branch above already
+  // handled it; for any other provider that ever surfaces it, clamp to low.
+  if (thinking === "minimal") return { ...model, effort: "low" };
   return { ...model, effort: thinking };
 }
 

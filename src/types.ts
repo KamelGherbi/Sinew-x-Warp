@@ -562,7 +562,14 @@ export type ClipboardImageAttachment = {
   name: string;
 };
 
-export type ThinkingLevel = "off" | "low" | "medium" | "high" | "max" | "xhigh";
+export type ThinkingLevel =
+  | "off"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "max"
+  | "xhigh";
 
 export type TerminalCommandResult = {
   content: string;

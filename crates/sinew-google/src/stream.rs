@@ -197,10 +197,17 @@ impl EventParser {
                 index,
                 chunk: call.args.unwrap_or_else(|| json!({})).to_string(),
             });
-            out.push(StreamEvent::PartMeta {
-                index,
-                meta: json!({ "provider": "google", "raw_id": raw_id }),
-            });
+            // Gemini 3 models attach a `thoughtSignature` to functionCall parts.
+            // Propagate it so it can be replayed on follow-up turns; the server
+            // rejects requests that drop it ("Function call is missing a
+            // thought_signature in functionCall parts").
+            let mut meta = json!({ "provider": "google", "raw_id": raw_id });
+            if let Some(signature) = part.thought_signature.as_ref() {
+                if !signature.trim().is_empty() {
+                    meta["signature"] = json!(signature);
+                }
+            }
+            out.push(StreamEvent::PartMeta { index, meta });
             out.push(StreamEvent::PartStop { index });
             return;
         }

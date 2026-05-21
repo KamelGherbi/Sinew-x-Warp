@@ -334,6 +334,66 @@ pub fn list_installed_skills(
     skills
 }
 
+/// Create a new empty skill under `~/.agents/skills/<name>/SKILL.md`.
+///
+/// Picks a unique folder name (`new-skill`, `new-skill-1`, …) so the user can
+/// just click "Add" without having to think about naming. Returns the path of
+/// the freshly written `SKILL.md` along with the resolved skill name.
+pub fn create_installed_skill() -> Result<(String, PathBuf)> {
+    let base = BaseDirs::new()
+        .map(|base| base.home_dir().to_path_buf())
+        .context("unable to locate home directory")?
+        .join(".agents/skills");
+    fs::create_dir_all(&base)
+        .with_context(|| format!("unable to create skills folder {}", base.display()))?;
+
+    let (name, folder) = pick_unique_skill_folder(&base);
+    fs::create_dir_all(&folder)
+        .with_context(|| format!("unable to create skill folder {}", folder.display()))?;
+
+    let skill_path = folder.join(SKILL_FILE_NAME);
+    if skill_path.exists() {
+        bail!("skill file already exists at {}", skill_path.display());
+    }
+    let template = default_skill_template(&name);
+    fs::write(&skill_path, template)
+        .with_context(|| format!("unable to write {}", skill_path.display()))?;
+
+    Ok((name, skill_path))
+}
+
+fn pick_unique_skill_folder(base: &Path) -> (String, PathBuf) {
+    const STEM: &str = "new-skill";
+    let candidate = base.join(STEM);
+    if !candidate.exists() {
+        return (STEM.to_string(), candidate);
+    }
+    let mut index = 1u32;
+    loop {
+        let name = format!("{STEM}-{index}");
+        let candidate = base.join(&name);
+        if !candidate.exists() {
+            return (name, candidate);
+        }
+        index = index.saturating_add(1);
+        if index == u32::MAX {
+            // Extremely unlikely; fall back to a timestamp suffix.
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or_default();
+            let name = format!("{STEM}-{stamp}");
+            return (name.clone(), base.join(name));
+        }
+    }
+}
+
+fn default_skill_template(name: &str) -> String {
+    format!(
+        "---\nname: {name}\ndescription: Describe what this skill helps with\n---\n\n# {name}\n\nWrite the instructions the agent should follow when this skill is enabled.\n"
+    )
+}
+
 fn format_root_label(root: &Path, workspace_root: &Path, home_dir: Option<&Path>) -> String {
     if let Ok(rel) = root.strip_prefix(workspace_root) {
         return rel.display().to_string();

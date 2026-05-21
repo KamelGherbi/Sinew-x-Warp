@@ -488,6 +488,8 @@ fn default_tool_display_name(name: &str) -> String {
     match name {
         "read" => "Read".to_string(),
         "apply_patch" => "Patch".to_string(),
+        "edit_file" => "Edit file".to_string(),
+        "write_file" => "Write file".to_string(),
         "Glob" => "Glob".to_string(),
         "Grep" => "Grep".to_string(),
         "WebSearch" => "Web search".to_string(),

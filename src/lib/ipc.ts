@@ -152,6 +152,18 @@ export const api = {
       input: { workspacePath, path },
     });
   },
+  createSkill(workspacePath: string) {
+    return invoke<{ name: string; skills: InstalledSkill[] }>(
+      "create_skill_command",
+      { input: { workspacePath } },
+    );
+  },
+  updateSkillContent(workspacePath: string, path: string, content: string) {
+    return invoke<{ name: string; skills: InstalledSkill[] }>(
+      "update_skill_content_command",
+      { input: { workspacePath, path, content } },
+    );
+  },
   openExternalUrl(url: string) {
     return invoke<void>("open_external_url_command", {
       input: { url },

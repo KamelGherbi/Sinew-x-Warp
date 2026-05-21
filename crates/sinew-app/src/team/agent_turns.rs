@@ -75,6 +75,14 @@ impl TeamTool {
                 ApplyPatchTool::new(self.workspace_root.clone())
                     .with_workspace_write_lock(workspace_write_lock.clone()),
             ),
+            edit_file: Arc::new(
+                EditFileTool::new(self.workspace_root.clone())
+                    .with_workspace_write_lock(workspace_write_lock.clone()),
+            ),
+            write_file: Arc::new(
+                WriteFileTool::new(self.workspace_root.clone())
+                    .with_workspace_write_lock(workspace_write_lock.clone()),
+            ),
             create_image: Arc::new(
                 CreateImageTool::with_settings(
                     self.workspace_root.clone(),

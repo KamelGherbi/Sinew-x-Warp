@@ -68,15 +68,18 @@ pub fn antigravity_model_and_thinking(
 ) -> (String, Option<&'static str>) {
     let base = canonical_model(model).name;
     let requested = effort.or(model.effort).unwrap_or(Effort::High);
+    let is_pro = is_gemini_pro_model(&base);
     let thinking_level = match requested {
-        Effort::None | Effort::Low => "low",
-        Effort::Medium => {
-            if is_gemini_flash_model(&base) {
-                "medium"
-            } else {
+        // Antigravity's pro models do not accept `minimal`; clamp them to low.
+        Effort::None => {
+            if is_pro {
                 "low"
+            } else {
+                "minimal"
             }
         }
+        Effort::Low => "low",
+        Effort::Medium => "medium",
         Effort::High | Effort::Xhigh | Effort::Max => "high",
     };
 
@@ -85,9 +88,13 @@ pub fn antigravity_model_and_thinking(
     if base == "gemini-3.5-flash" {
         return ("gemini-3.5-flash-low".into(), Some(thinking_level));
     }
-    if base == "gemini-3.1-pro" && thinking_level == "high" {
-        ("gemini-pro-agent".into(), Some(thinking_level))
-    } else if is_gemini_pro_model(&base) {
+    // Gemini 3.1 Pro on Antigravity is always routed to the agentic variant
+    // (`gemini-pro-agent`), which is the fine-tuned artefact for tool use and
+    // long thinking. The `thinkingLevel` is still variable.
+    if base == "gemini-3.1-pro" {
+        return ("gemini-pro-agent".into(), Some(thinking_level));
+    }
+    if is_pro {
         (format!("{base}-{thinking_level}"), Some(thinking_level))
     } else {
         (base, Some(thinking_level))
@@ -111,13 +118,15 @@ pub fn capabilities(model: &ModelRef) -> ModelCapabilities {
 }
 
 pub fn is_gemini3_model(model_id: &str) -> bool {
-    model_id.to_ascii_lowercase().contains("gemini-3")
+    let lower = model_id.to_ascii_lowercase();
+    // Antigravity exposes several aliases for Gemini 3.x family. They all
+    // share the same thought_signature / multimodal function response
+    // requirements, so treat them uniformly.
+    lower.contains("gemini-3")
+        || lower == "gemini-pro-agent"
+        || lower.starts_with("gemini-pro-agent")
 }
 
 fn is_gemini_pro_model(model_id: &str) -> bool {
     model_id.to_ascii_lowercase().contains("-pro")
-}
-
-fn is_gemini_flash_model(model_id: &str) -> bool {
-    model_id.to_ascii_lowercase().contains("-flash")
 }

@@ -351,6 +351,14 @@ pub(super) struct SkillPathInput {
     pub(super) path: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct UpdateSkillContentInput {
+    pub(super) workspace_path: String,
+    pub(super) path: String,
+    pub(super) content: String,
+}
+
 #[tauri::command]
 pub(super) async fn reveal_absolute_path_command(
     input: AbsolutePathInput,
@@ -397,6 +405,51 @@ pub(super) async fn delete_skill_command(
         emit_workspace_file_change(&app, &workspace_root, &relative_path);
     }
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct CreateSkillOutput {
+    pub(super) name: String,
+    pub(super) skills: Vec<InstalledSkill>,
+}
+
+#[tauri::command]
+pub(super) async fn create_skill_command(
+    state: State<'_, DesktopState>,
+    input: WorkspaceInput,
+) -> std::result::Result<CreateSkillOutput, String> {
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let (name, _path) = create_installed_skill().map_err(error_to_string)?;
+    let settings = state.store.load_skill_settings().map_err(error_to_string)?;
+    let skills = list_installed_skills(workspace_root, &settings);
+    Ok(CreateSkillOutput { name, skills })
+}
+
+#[tauri::command]
+pub(super) async fn update_skill_content_command(
+    app: AppHandle,
+    state: State<'_, DesktopState>,
+    input: UpdateSkillContentInput,
+) -> std::result::Result<CreateSkillOutput, String> {
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let skill_md = PathBuf::from(&input.path);
+    let written = write_installed_skill(&workspace_root, &skill_md, &input.content)
+        .map_err(error_to_string)?;
+    if let Ok(relative) = written.strip_prefix(&workspace_root) {
+        let relative_path = relative.to_string_lossy().to_string();
+        emit_workspace_file_change(&app, &workspace_root, &relative_path);
+    }
+    let settings = state.store.load_skill_settings().map_err(error_to_string)?;
+    let skills = list_installed_skills(&workspace_root, &settings);
+    let name = skills
+        .iter()
+        .find(|skill| skill.absolute_path == written.display().to_string())
+        .map(|skill| skill.name.clone())
+        .unwrap_or_default();
+    Ok(CreateSkillOutput { name, skills })
 }
 
 #[tauri::command]

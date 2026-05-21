@@ -35,8 +35,9 @@ use sinew_anthropic::{
 };
 use sinew_app::{
     checkpoint_from_snapshots, clean_context_descriptor, compact_conversation_history,
-    copy_workspace_entries, create_workspace_directory, create_workspace_file,
-    delete_workspace_entry, import_workspace_paths, list_installed_skills, list_workspace_entries,
+    copy_workspace_entries, create_installed_skill, create_workspace_directory,
+    create_workspace_file, delete_workspace_entry, import_workspace_paths, list_installed_skills,
+    list_workspace_entries,
     list_workspace_files, normalize_workspace_root, probe_mcp_servers, read_external_file,
     read_workspace_file, rename_workspace_entry, resolve_terminal_path, restore_turn_checkpoints,
     restore_workspace_deleted_entries, run_turn, search_workspace_files, shell_system_prompt,
@@ -44,13 +45,13 @@ use sinew_app::{
     system_prompt_for_mode_with_plan_prompt, system_prompt_with_todo, todo_list_from_history,
     tool_settings_view, trash_workspace_entry, write_workspace_file, AgentEvent, AgentMode,
     AppStore, ApplyPatchTool, BashTool, ConversationEvent, ConversationSummary, CreateImageTool,
-    GlobTool, GoalWorkflowState, GrepTool, ImportedEntry, InstalledSkill, McpSettings,
+    EditFileTool, GlobTool, GoalWorkflowState, GrepTool, ImportedEntry, InstalledSkill, McpSettings,
     McpToolRegistry, ModeModelSettings, OpenRouterModelRecord, PlanArtifactState,
     PlanWorkflowState, QuestionTool, ReadTool, SavedConversation, SkillSettings, SkillTool,
     SubAgentConfig, SubAgentSettings, SubAgentTool, TeamRuntime, TeamTool, TerminalPathResolution,
     ToDoListTool, TodoListState, ToolSettings, ToolSettingsView, TurnCancel, TurnContext,
     WebFetchTool, WebSearchTool, WorkspaceBootstrap, WorkspaceCopyOperation, WorkspaceDeletedEntry,
-    WorkspaceFileChangeEvent, WorkspaceSearchResult,
+    WorkspaceFileChangeEvent, WorkspaceSearchResult, WriteFileTool,
 };
 use sinew_core::{
     ChatMessage, Effort, ModelCapabilities, ModelRef, Part, Provider, ProviderRequest, Role,
@@ -277,6 +278,8 @@ pub fn run() {
             workspace::resolve_terminal_path_command,
             workspace::read_external_file_command,
             workspace::delete_skill_command,
+            workspace::create_skill_command,
+            workspace::update_skill_content_command,
             workspace::open_external_url_command,
             workspace::open_path_with_default_app_command,
             workspace::copy_file_to_path_command,

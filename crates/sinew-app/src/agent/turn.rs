@@ -24,14 +24,14 @@ use super::{
     history::{
         append_interrupted_tool_results, history_with_current_tool_result_ids,
         normalize_tool_call_inputs, repair_missing_tool_results, strip_all_visible_tool_result_ids,
-        successful_read_paths,
+        successful_read_fingerprints, successful_read_paths,
     },
     mode::{run_update_goal, system_prompt_for_turn, update_goal_descriptor},
     tool_dispatch::{run_tool, should_wait_for_cooperative_cancel},
     tool_summary::{display_mcp_server_name, pretty_json, should_stream_tool_args, summarize_tool},
 };
 
-use crate::{system_prompt_with_todo, ToolRunResult};
+use crate::{system_prompt_with_todo, ReadFingerprint, ToolRunResult};
 
 const SAFE_STREAM_MAX_RETRIES: usize = 5;
 
@@ -53,6 +53,8 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
         grep,
         read,
         apply_patch,
+        edit_file,
+        write_file,
         create_image,
         todo_list_tool,
         question,
@@ -82,6 +84,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
     let mut auto_compaction_attempts = 0usize;
     let mut current_turn_tool_result_ids = BTreeSet::new();
     let mut read_paths = successful_read_paths(&history, &read);
+    let mut read_fingerprints = successful_read_fingerprints(&history, &read);
     todo_list.normalize();
 
     'conversation: loop {
@@ -118,6 +121,8 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
         }
         if mode != AgentMode::Plan {
             tool_descriptors.insert(4, apply_patch.descriptor());
+            tool_descriptors.insert(5, edit_file.descriptor());
+            tool_descriptors.insert(6, write_file.descriptor());
             tool_descriptors.push(create_image.descriptor());
         }
         if mode == AgentMode::Goal {
@@ -517,6 +522,8 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         &grep,
                         &read,
                         &apply_patch,
+                        &edit_file,
+                        &write_file,
                         &create_image,
                         todo_list_tool.as_deref(),
                         question.as_deref(),
@@ -528,6 +535,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         teams.as_deref(),
                         &tool_settings,
                         &read_paths,
+                        &read_fingerprints,
                         &mut todo_list,
                         mode,
                         &event_tx,
@@ -558,6 +566,8 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                             &grep,
                             &read,
                             &apply_patch,
+                            &edit_file,
+                            &write_file,
                             &create_image,
                             todo_list_tool.as_deref(),
                             question.as_deref(),
@@ -569,6 +579,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                             teams.as_deref(),
                             &tool_settings,
                             &read_paths,
+                            &read_fingerprints,
                             &mut todo_list,
                             mode,
                             &event_tx,
@@ -585,6 +596,9 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                             read_paths.insert(normalized);
                         }
                     }
+                }
+                if (name == "read" || name == "edit_file" || name == "write_file") && !result.is_error {
+                    update_read_fingerprint_cache(&mut read_fingerprints, result.meta.as_ref());
                 }
                 let result_images = result.images.clone();
                 let result_content = result.content.clone();
@@ -708,6 +722,30 @@ pub(super) fn retain_cancelled_visible_parts(message: &mut ChatMessage) {
         Part::Text { text, .. } | Part::Thinking { text, .. } => !text.is_empty(),
         _ => false,
     });
+}
+
+fn update_read_fingerprint_cache(
+    cache: &mut std::collections::HashMap<String, ReadFingerprint>,
+    meta: Option<&serde_json::Value>,
+) {
+    let Some(meta) = meta else {
+        return;
+    };
+    if let Some(fingerprint) = meta
+        .get("read_fingerprint")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<ReadFingerprint>(value).ok())
+    {
+        cache.insert(fingerprint.relative_path.clone(), fingerprint);
+    }
+    if let Some(values) = meta.get("read_fingerprints").and_then(Value::as_array) {
+        for fingerprint in values
+            .iter()
+            .filter_map(|value| serde_json::from_value::<ReadFingerprint>(value.clone()).ok())
+        {
+            cache.insert(fingerprint.relative_path.clone(), fingerprint);
+        }
+    }
 }
 
 fn should_retry_stream(err: &AppError, attempts: usize) -> bool {

@@ -1,12 +1,14 @@
 use std::{
     fs,
     path::{Component, Path, PathBuf},
+    time::UNIX_EPOCH,
 };
 
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use sinew_core::ToolDescriptor;
 
 use crate::{
@@ -22,6 +24,15 @@ const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 #[derive(Debug, Clone)]
 pub struct ReadTool {
     workspace_root: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadFingerprint {
+    pub relative_path: String,
+    pub size: u64,
+    pub modified_ms: i64,
+    pub sha256: String,
 }
 
 impl ReadTool {
@@ -129,9 +140,10 @@ impl ReadTool {
             .collect::<Vec<_>>();
         let numbered = number_lines(&selected_lines, offset, total_lines);
 
-        Ok(ToolRunResult::ok(
+        Ok(ToolRunResult::ok_with_meta(
             format!("path: {display_path}\ntotal: {total_lines}\n\n{numbered}"),
             Vec::new(),
+            json!({ "read_fingerprint": fingerprint_for_bytes(display_path.clone(), metadata.len(), &metadata, &bytes) }),
         ))
     }
 }
@@ -201,6 +213,45 @@ fn normalize_read_path(root: &Path, raw: &str) -> Result<String> {
 
 fn display_read_path(root: &Path, path: &Path) -> String {
     relative_from_root(root, path).unwrap_or_else(|_| path.display().to_string())
+}
+
+pub fn fingerprint_path(root: &Path, path: &Path) -> Result<ReadFingerprint> {
+    let metadata = fs::metadata(path)
+        .with_context(|| format!("unable to read file metadata {}", path.display()))?;
+    if !metadata.is_file() {
+        bail!("path is not a file");
+    }
+    let bytes = fs::read(path).with_context(|| format!("unable to read file {}", path.display()))?;
+    Ok(fingerprint_for_bytes(
+        display_read_path(root, path),
+        metadata.len(),
+        &metadata,
+        &bytes,
+    ))
+}
+
+fn fingerprint_for_bytes(
+    relative_path: String,
+    size: u64,
+    metadata: &fs::Metadata,
+    bytes: &[u8],
+) -> ReadFingerprint {
+    let modified_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_millis() as i64)
+        .unwrap_or_default();
+    let sha256 = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    ReadFingerprint {
+        relative_path,
+        size,
+        modified_ms,
+        sha256,
+    }
 }
 
 fn relative_from_root(root: &Path, path: &Path) -> Result<String> {
