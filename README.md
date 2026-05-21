@@ -27,11 +27,11 @@
 - [The three modes](#the-three-modes) — Act, Goal, Plan
 - [`AGENTS.md` & `DESIGN.md`](#agentsmd--designmd) — system prompt injection
 - [Multi-provider, one harness](#multi-provider-one-harness) — Anthropic, OpenAI, Google, Kimi, OpenRouter
-- [Tools](#tools) — the 19 tools the agent has access to
+- [Tools](#tools) — the agent's toolset
   - [`clean_context`](#clean_context) — the model cleans its own context
   - [`bash` / `bash_input`](#bash--bash_input) — PTY-backed shell sessions
   - [Why dedicated `read`, `Glob`, `Grep`](#why-dedicated-tools-for-read-glob-and-grep)
-  - [`read`](#read) · [`Glob`](#glob) · [`Grep`](#grep) · [`apply_patch`](#apply_patch)
+  - [`read`](#read) · [`Glob`](#glob) · [`Grep`](#grep) · [`edit_file`](#edit_file) · [`write_file`](#write_file)
   - [`WebSearch`](#websearch) · [`WebFetch`](#webfetch) · [`CreateImage`](#createimage)
   - [`Question`](#question) · [`ToDoList`](#todolist)
   - [`LoadMcpTool`](#loadmcptool) · [`skill`](#skill)
@@ -124,7 +124,8 @@ The agent has access to a full set of tools:
 | `read` | Read files |
 | `Glob` | Find files by pattern |
 | `Grep` | Search text / regex in files |
-| `apply_patch` | Create, modify, delete, rename files |
+| `edit_file` | Edit existing files by line number |
+| `write_file` | Write complete files with overwrite guardrails |
 | `WebSearch` | Web search |
 | `WebFetch` | Fetch the contents of a URL |
 | `CreateImage` | Generate images |
@@ -274,60 +275,17 @@ Three counters in the header: **`matches`** (total matches), **`files`** (number
 
 ---
 
-### `apply_patch`
+### `edit_file`
 
-The only tool allowed to touch the filesystem: create, modify, delete, rename. A single parameter, `patch`, that carries the whole payload at once.
+Edits existing workspace text files by line number. The agent sends an array of edits, each with `path`, `lines`, `mode` (`replace`, `insert_before`, `insert_after`) and `content`.
 
-The format is identical to Codex's. Most other harnesses (Cursor, Pi, Claude Code, etc.) prefer to split that across several tools — `write_file`, `edit_file`, `delete_file` — that take full file content. Sinew commits to the unified approach.
+The tool requires a successful prior `read` and refuses to write if the file changed since that read. Multiple edits in the same file use the original line numbers from the last read and are applied bottom-to-top automatically.
 
-It's a deliberate choice. Producing an exact diff (with `@@` markers, `+`, `-` and the right spaces in the right places) is more demanding on the model: if a line is misaligned, the patch fails. Weaker models struggle. But models keep getting more powerful and this format is going to be the norm — might as well support it now.
+### `write_file`
 
-On the harness side, the benefits are concrete:
+Writes a complete text file with `path` and `content`.
 
-- **Atomic multi-file.** A single call can create a file, modify two others, delete a third, rename a fourth. All in one.
-- **Diff visible natively.** The format **is** already a diff. We render a real diff in the UI without parsing anything, and the agent sees exactly what it touched.
-- **Token economy.** No need to rewrite whole files for every change, just the hunks. Huge on large files.
-- **Surgical edits** instead of full rewrites, the classic trap of `write_file`-style tools.
-
-Here's what a patch touching four files in a single call looks like:
-
-```
-*** Begin Patch
-*** Add File: src/components/Modal.tsx
-+import { useState } from "react";
-+
-+export function Modal() { ... }
-
-*** Update File: src/App.tsx
-@@
--import { OldThing } from "./old";
-+import { Modal } from "./components/Modal";
-
-*** Delete File: src/old.tsx
-
-*** Update File: src/utils.ts
-*** Move to: src/lib/utils.ts
-@@
--export const x = 1;
-+export const x = 2;
-*** End Patch
-```
-
-And what the agent gets back:
-
-```
-Patch applied. 4 files changed.
-
-Success. Updated the following files:
-A src/components/Modal.tsx
-M src/App.tsx
-D src/old.tsx
-M src/utils.ts
-```
-
-Git-status style (A / M / D). In parallel, the UI receives the detailed line-by-line diffs and renders them visually.
-
-And since `apply_patch` is the **only** way to write to the filesystem, no `bash` sneaking in file edits. Everything goes through here, so everything is traceable and reviewable.
+It creates new files directly, including parent directories. If the file already exists, the agent must read it first; `write_file` refuses to overwrite if the file changed since that read. For targeted changes, the agent should prefer `edit_file`.
 
 ---
 
@@ -482,9 +440,9 @@ tasks:
 - #3 [blocked] @frontend Migrate the React client to the new endpoint (blocked by #2)
 - #4 [pending] @reviewer Security review of the JWT flow
 recent file changes (newest -> oldest):
-newest -> @backend apply_patch modified crates/auth/src/jwt.rs (+128 -42)
-            @backend apply_patch added crates/auth/src/lib.rs (+86 -0)
-oldest -> @frontend apply_patch modified src/lib/api.ts (+12 -8)
+newest -> @backend edit_file modified crates/auth/src/jwt.rs (+128 -42)
+            @backend write_file added crates/auth/src/lib.rs (+86 -0)
+oldest -> @frontend edit_file modified src/lib/api.ts (+12 -8)
 </agent_team_state>
 
 <queued_peer_messages>

@@ -74,9 +74,6 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
             .unwrap_or("workspace");
         return format!("Glob {pattern} in {scope}");
     }
-    if name == "apply_patch" {
-        return "Apply patch".to_string();
-    }
     if name == "edit_file" {
         if let Some(edits) = input.get("edits").and_then(Value::as_array) {
             let count = edits.len();
@@ -374,7 +371,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
 }
 
 pub(super) fn should_stream_tool_args(name: &str) -> bool {
-    matches!(name, "apply_patch" | "edit_file" | "write_file" | "read")
+    matches!(name, "edit_file" | "write_file" | "read")
 }
 
 fn grep_path_scope(value: &Value) -> Option<String> {

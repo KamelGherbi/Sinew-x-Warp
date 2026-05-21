@@ -211,57 +211,6 @@ pub(super) fn tool_result_exposes_id(content: &str) -> bool {
     content.starts_with("tool_call_id:")
 }
 
-pub(super) fn successful_read_paths(history: &[ChatMessage], read: &ReadTool) -> BTreeSet<String> {
-    let mut pending_reads = HashMap::new();
-    let mut successful = BTreeSet::new();
-
-    for message in history {
-        match message.role {
-            Role::Assistant => {
-                for part in &message.parts {
-                    let Part::ToolCall {
-                        id, name, input, ..
-                    } = part
-                    else {
-                        continue;
-                    };
-                    if name != "read" {
-                        continue;
-                    }
-                    let Some(path) = input.get("path").and_then(|value| value.as_str()) else {
-                        continue;
-                    };
-                    if let Ok(normalized) = read.normalize_path(path) {
-                        pending_reads.insert(id.clone(), normalized);
-                    }
-                }
-            }
-            Role::User => {
-                for part in &message.parts {
-                    let Part::ToolResult {
-                        tool_call_id,
-                        is_error,
-                        meta,
-                        ..
-                    } = part
-                    else {
-                        continue;
-                    };
-                    if *is_error || tool_result_cleaned(meta) {
-                        pending_reads.remove(tool_call_id);
-                        continue;
-                    }
-                    if let Some(path) = pending_reads.remove(tool_call_id) {
-                        successful.insert(path);
-                    }
-                }
-            }
-        }
-    }
-
-    successful
-}
-
 pub(super) fn successful_read_fingerprints(
     history: &[ChatMessage],
     read: &ReadTool,

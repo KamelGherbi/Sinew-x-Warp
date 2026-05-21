@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use crate::tool_run::{DiffLineKind, FileChange, FileChangeKind, ToolRunImage};
 use crate::{
-    run_turn, subagent_system_prompt, AgentEvent, AgentEventScope, AgentMode, ApplyPatchTool,
-    BashTool, CreateImageTool, EditFileTool, GlobTool, GoalWorkflowState, GrepTool, McpSettings,
+    run_turn, subagent_system_prompt, AgentEvent, AgentEventScope, AgentMode, BashTool,
+    CreateImageTool, EditFileTool, GlobTool, GoalWorkflowState, GrepTool, McpSettings,
     McpToolRegistry, ReadTool, SkillSettings, SkillTool, SubAgentConfig, SubAgentSettings,
     TodoListState, ToolRunResult, ToolSettings, TurnCancel, TurnContext, WebFetchTool,
     WebSearchTool, WriteFileTool,

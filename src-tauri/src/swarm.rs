@@ -344,7 +344,6 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
         glob: Arc::new(GlobTool::new(workspace_root.clone())),
         grep: Arc::new(GrepTool::new(workspace_root.clone())),
         read: Arc::new(ReadTool::new(workspace_root.clone())),
-        apply_patch: Arc::new(ApplyPatchTool::new(workspace_root.clone())),
         edit_file: Arc::new(EditFileTool::new(workspace_root.clone())),
         write_file: Arc::new(WriteFileTool::new(workspace_root.clone())),
         create_image: Arc::new(CreateImageTool::with_settings(

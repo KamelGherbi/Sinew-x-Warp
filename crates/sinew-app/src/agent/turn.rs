@@ -24,7 +24,7 @@ use super::{
     history::{
         append_interrupted_tool_results, history_with_current_tool_result_ids,
         normalize_tool_call_inputs, repair_missing_tool_results, strip_all_visible_tool_result_ids,
-        successful_read_fingerprints, successful_read_paths,
+        successful_read_fingerprints,
     },
     mode::{run_update_goal, system_prompt_for_turn, update_goal_descriptor},
     tool_dispatch::{run_tool, should_wait_for_cooperative_cancel},
@@ -52,7 +52,6 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
         glob,
         grep,
         read,
-        apply_patch,
         edit_file,
         write_file,
         create_image,
@@ -83,7 +82,6 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
     let mut loops = 0usize;
     let mut auto_compaction_attempts = 0usize;
     let mut current_turn_tool_result_ids = BTreeSet::new();
-    let mut read_paths = successful_read_paths(&history, &read);
     let mut read_fingerprints = successful_read_fingerprints(&history, &read);
     todo_list.normalize();
 
@@ -120,9 +118,8 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
             tool_descriptors.push(descriptor);
         }
         if mode != AgentMode::Plan {
-            tool_descriptors.insert(4, apply_patch.descriptor());
-            tool_descriptors.insert(5, edit_file.descriptor());
-            tool_descriptors.insert(6, write_file.descriptor());
+            tool_descriptors.insert(4, edit_file.descriptor());
+            tool_descriptors.insert(5, write_file.descriptor());
             tool_descriptors.push(create_image.descriptor());
         }
         if mode == AgentMode::Goal {
@@ -521,7 +518,6 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         &glob,
                         &grep,
                         &read,
-                        &apply_patch,
                         &edit_file,
                         &write_file,
                         &create_image,
@@ -534,7 +530,6 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         subagents.as_deref(),
                         teams.as_deref(),
                         &tool_settings,
-                        &read_paths,
                         &read_fingerprints,
                         &mut todo_list,
                         mode,
@@ -565,7 +560,6 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                             &glob,
                             &grep,
                             &read,
-                            &apply_patch,
                             &edit_file,
                             &write_file,
                             &create_image,
@@ -578,7 +572,6 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                             subagents.as_deref(),
                             teams.as_deref(),
                             &tool_settings,
-                            &read_paths,
                             &read_fingerprints,
                             &mut todo_list,
                             mode,
@@ -590,13 +583,6 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         ) => result,
                     }
                 };
-                if name == "read" && !result.is_error {
-                    if let Some(path) = input.get("path").and_then(|value| value.as_str()) {
-                        if let Ok(normalized) = read.normalize_path(path) {
-                            read_paths.insert(normalized);
-                        }
-                    }
-                }
                 if (name == "read" || name == "edit_file" || name == "write_file") && !result.is_error {
                     update_read_fingerprint_cache(&mut read_fingerprints, result.meta.as_ref());
                 }

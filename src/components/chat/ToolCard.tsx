@@ -975,7 +975,6 @@ export function ToolCard({
   const isBash = name === "bash" || name === "bash_input";
   const isGlob = name === "Glob";
   const isGrep = name === "Grep";
-  const isPatch = name === "apply_patch";
   const isEditFile = name === "edit_file";
   const isWriteFile = name === "write_file";
   const isCleanContext = name === "clean_context";
@@ -1051,7 +1050,7 @@ export function ToolCard({
     );
   }
 
-  if ((isPatch || isEditFile || isWriteFile) && !isError && fileChanges && fileChanges.length > 0) {
+  if ((isEditFile || isWriteFile) && !isError && fileChanges && fileChanges.length > 0) {
     return (
       <div className="tool-card__changes" data-bare="true">
         {fileChanges.map((change, idx) => (
@@ -1157,7 +1156,7 @@ export function ToolCard({
               <TerminalGlyph />
             ) : isGlob || isGrep ? (
               <AsteriskGlyph />
-            ) : isPatch || isEditFile || isWriteFile ? (
+            ) : isEditFile || isWriteFile ? (
               <Icon icon="solar:pen-new-square-linear" width={12} height={12} />
             ) : isWebSearch ? (
               <Icon icon="solar:magnifer-linear" width={12} height={12} />

@@ -1,14 +1,11 @@
-use std::{
-    collections::{BTreeSet, HashMap},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::{
-    ApplyPatchTool, BashTool, CreateImageTool, EditFileTool, GlobTool, GrepTool, McpToolRegistry,
-    QuestionTool, ReadFingerprint, ReadTool, SkillTool, SubAgentTool, TeamTool, ToDoListTool,
+    BashTool, CreateImageTool, EditFileTool, GlobTool, GrepTool, McpToolRegistry, QuestionTool,
+    ReadFingerprint, ReadTool, SkillTool, SubAgentTool, TeamTool, ToDoListTool,
     TodoListState, ToolRunResult, ToolSettings, WebFetchTool, WebSearchTool, WriteFileTool,
 };
 
@@ -33,7 +30,6 @@ pub(super) async fn run_tool(
     glob: &GlobTool,
     grep: &GrepTool,
     read: &ReadTool,
-    apply_patch: &ApplyPatchTool,
     edit_file: &EditFileTool,
     write_file: &WriteFileTool,
     create_image: &CreateImageTool,
@@ -46,7 +42,6 @@ pub(super) async fn run_tool(
     subagents: Option<&SubAgentTool>,
     teams: Option<&TeamTool>,
     tool_settings: &ToolSettings,
-    _read_paths: &BTreeSet<String>,
     read_fingerprints: &HashMap<String, ReadFingerprint>,
     todo_list: &mut TodoListState,
     mode: AgentMode,
@@ -69,11 +64,6 @@ pub(super) async fn run_tool(
         grep.run(input).await
     } else if name == "read" {
         read.run(input).await
-    } else if name == "apply_patch" {
-        if mode == AgentMode::Plan {
-            return ToolRunResult::err("apply_patch is unavailable in Plan mode", Vec::new());
-        }
-        apply_patch.run_with_read_paths(input).await
     } else if name == "edit_file" {
         if mode == AgentMode::Plan {
             return ToolRunResult::err("edit_file is unavailable in Plan mode", Vec::new());

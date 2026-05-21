@@ -371,17 +371,8 @@ function blocksFromHistory(history: ChatMessage[]): ChatBlock[] {
               continue;
             }
           }
-          const resultFileChanges = (
-            result?.meta as { file_changes?: FileChange[] } | null
-          )?.file_changes;
-          const previewFileChanges =
-            tc.name === "apply_patch"
-              ? fileChangesFromPatchInput(tc.input)
-              : undefined;
-          const fileChanges =
-            tc.name === "apply_patch"
-              ? patchFileChanges(resultFileChanges, previewFileChanges)
-              : resultFileChanges;
+          const fileChanges = (result?.meta as { file_changes?: FileChange[] } | null)
+            ?.file_changes;
           blocks.push({
             kind: "tool",
             id: tc.id,
@@ -580,337 +571,6 @@ function basename(path: string): string {
   return idx >= 0 ? path.slice(idx + 1) : path;
 }
 
-const PATCH_PREVIEW_LINE_LIMIT = 400;
-
-function fileChangesFromPatchInput(input: unknown): FileChange[] | undefined {
-  if (!input || typeof input !== "object") return undefined;
-  const patch = (input as Record<string, unknown>).patch;
-  if (typeof patch !== "string" || !patch.trim()) return undefined;
-  const changes = parsePatchPreview(patch);
-  return changes.length > 0 ? changes : undefined;
-}
-
-function fileChangesFromPatchJson(raw: string): FileChange[] | undefined {
-  const parsed = parsePrettyJson(raw);
-  const parsedChanges = fileChangesFromPatchInput(parsed);
-  if (parsedChanges) return parsedChanges;
-
-  const patch = partialJsonStringValue(raw, "patch");
-  if (!patch) return undefined;
-  const changes = parsePatchPreview(patch);
-  return changes.length > 0 ? changes : undefined;
-}
-
-function patchFileChanges(
-  resultChanges?: FileChange[],
-  previewChanges?: FileChange[],
-): FileChange[] | undefined {
-  if (hasVisibleFileChangeDetails(resultChanges)) return resultChanges;
-  if (hasVisibleFileChangeDetails(previewChanges)) return previewChanges;
-  return resultChanges ?? previewChanges;
-}
-
-function hasVisibleFileChangeDetails(changes?: FileChange[]): boolean {
-  return !!changes?.some((change) => {
-    if (change.binary) return true;
-    if ((change.addedLines ?? 0) > 0 || (change.removedLines ?? 0) > 0) {
-      return true;
-    }
-    return change.lines.some((line) => {
-      const kind = line.kind.toLowerCase();
-      return (
-        kind === "added" ||
-        kind === "insert" ||
-        kind === "removed" ||
-        kind === "delete" ||
-        kind === "deleted"
-      );
-    });
-  });
-}
-
-function partialJsonStringValue(raw: string, key: string): string | null {
-  const keyMatch = new RegExp(`"${key}"\\s*:\\s*"`).exec(raw);
-  if (!keyMatch) return null;
-  const start = keyMatch.index + keyMatch[0].length;
-  let escaped = "";
-  let escaping = false;
-  for (let i = start; i < raw.length; i++) {
-    const char = raw[i];
-    if (escaping) {
-      escaped += `\\${char}`;
-      escaping = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaping = true;
-      continue;
-    }
-    if (char === "\"") break;
-    escaped += char;
-  }
-  return unescapeJsonFragment(escaped);
-}
-
-function unescapeJsonFragment(value: string): string {
-  return value
-    .replace(/\\n/g, "\n")
-    .replace(/\\r/g, "\r")
-    .replace(/\\t/g, "\t")
-    .replace(/\\"/g, "\"")
-    .replace(/\\\\/g, "\\");
-}
-
-function parsePatchPreview(patch: string): FileChange[] {
-  if (patch.trimStart().startsWith("*** Begin Patch")) {
-    return parseCodexPatchPreview(patch);
-  }
-  return parseGitDiffPatchPreview(patch);
-}
-
-function parseCodexPatchPreview(patch: string): FileChange[] {
-  const changes: FileChange[] = [];
-  let currentIndex = -1;
-  let mode: "add" | "update" | null = null;
-  let inHunk = false;
-
-  const ensureCurrent = (path: string, kind: FileChange["kind"] = "modified") => {
-    const relativePath = normalizeDiffPath(path);
-    if (!relativePath || relativePath === "/dev/null") return undefined;
-    const existingIndex = changes.findIndex(
-      (change) => change.relativePath === relativePath,
-    );
-    if (existingIndex >= 0) {
-      currentIndex = existingIndex;
-      changes[existingIndex].kind = kind;
-      return changes[existingIndex];
-    }
-    const next: FileChange = {
-      relativePath,
-      kind,
-      summary: `Updated ${relativePath}`,
-      binary: false,
-      addedLines: 0,
-      removedLines: 0,
-      truncated: false,
-      lines: [],
-    };
-    changes.push(next);
-    currentIndex = changes.length - 1;
-    return next;
-  };
-
-  const currentChange = () =>
-    currentIndex >= 0 ? changes[currentIndex] : undefined;
-
-  const pushLine = (kind: "context" | "added" | "removed", text: string) => {
-    const current = currentChange();
-    if (!current) return;
-    if (kind === "added") current.addedLines = (current.addedLines ?? 0) + 1;
-    if (kind === "removed") current.removedLines = (current.removedLines ?? 0) + 1;
-    if (current.lines.length >= PATCH_PREVIEW_LINE_LIMIT) {
-      current.truncated = true;
-      return;
-    }
-    current.lines.push({ kind, text });
-  };
-
-  for (const rawLine of patch.split(/\n/)) {
-    const line = rawLine.replace(/\r$/, "");
-
-    const addHeader = /^\*\*\* Add File: (.+)$/.exec(line);
-    if (addHeader) {
-      ensureCurrent(addHeader[1], "added");
-      mode = "add";
-      inHunk = false;
-      continue;
-    }
-
-    const deleteHeader = /^\*\*\* Delete File: (.+)$/.exec(line);
-    if (deleteHeader) {
-      ensureCurrent(deleteHeader[1], "deleted");
-      mode = null;
-      inHunk = false;
-      continue;
-    }
-
-    const updateHeader = /^\*\*\* Update File: (.+)$/.exec(line);
-    if (updateHeader) {
-      ensureCurrent(updateHeader[1], "modified");
-      mode = "update";
-      inHunk = false;
-      continue;
-    }
-
-    const moveHeader = /^\*\*\* Move to: (.+)$/.exec(line);
-    if (moveHeader && currentChange()) {
-      currentChange()!.relativePath = normalizeDiffPath(moveHeader[1]);
-      continue;
-    }
-
-    if (line.startsWith("*** End Patch")) {
-      mode = null;
-      inHunk = false;
-      continue;
-    }
-
-    if (!currentChange()) continue;
-    if (mode === "add" && line.startsWith("+")) {
-      pushLine("added", line.slice(1));
-      continue;
-    }
-    if (mode === "update" && line.startsWith("@@")) {
-      inHunk = true;
-      pushLine("context", line);
-      continue;
-    }
-    if (mode !== "update" || !inHunk) continue;
-    if (line === "*** End of File") continue;
-    if (line.startsWith("+")) {
-      pushLine("added", line.slice(1));
-    } else if (line.startsWith("-")) {
-      pushLine("removed", line.slice(1));
-    } else if (line.startsWith(" ")) {
-      pushLine("context", line.slice(1));
-    }
-  }
-
-  return changes.map((change) => ({
-    ...change,
-    summary: fileChangeSummary(change.kind, change.relativePath),
-  }));
-}
-
-function parseGitDiffPatchPreview(patch: string): FileChange[] {
-  const changes: FileChange[] = [];
-  let currentIndex = -1;
-
-  const ensureCurrent = (path: string) => {
-    const relativePath = normalizeDiffPath(path);
-    if (!relativePath || relativePath === "/dev/null") return null;
-    const existingIndex = changes.findIndex(
-      (change) => change.relativePath === relativePath,
-    );
-    if (existingIndex >= 0) {
-      currentIndex = existingIndex;
-      return changes[existingIndex];
-    }
-    const next: FileChange = {
-      relativePath,
-      kind: "modified",
-      summary: `Updated ${relativePath}`,
-      binary: false,
-      addedLines: 0,
-      removedLines: 0,
-      truncated: false,
-      lines: [],
-    };
-    changes.push(next);
-    currentIndex = changes.length - 1;
-    return next;
-  };
-
-  const currentChange = () =>
-    currentIndex >= 0 ? changes[currentIndex] : undefined;
-
-  const setCurrentKind = (kind: FileChange["kind"]) => {
-    const change = currentChange();
-    if (change) change.kind = kind;
-  };
-
-  const markCurrentBinary = () => {
-    const change = currentChange();
-    if (change) change.binary = true;
-  };
-
-  const pushLine = (kind: "context" | "added" | "removed", text: string) => {
-    const current = currentChange();
-    if (!current) return;
-    if (kind === "added") current.addedLines = (current.addedLines ?? 0) + 1;
-    if (kind === "removed") current.removedLines = (current.removedLines ?? 0) + 1;
-    if (current.lines.length >= PATCH_PREVIEW_LINE_LIMIT) {
-      current.truncated = true;
-      return;
-    }
-    current.lines.push({ kind, text });
-  };
-
-  for (const rawLine of patch.split(/\n/)) {
-    const line = rawLine.replace(/\r$/, "");
-    const gitHeader = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
-    if (gitHeader) {
-      ensureCurrent(gitHeader[2]);
-      continue;
-    }
-
-    if (line.startsWith("new file mode")) {
-      setCurrentKind("added");
-      continue;
-    }
-    if (line.startsWith("deleted file mode")) {
-      setCurrentKind("deleted");
-      continue;
-    }
-    if (line.startsWith("Binary files ")) {
-      markCurrentBinary();
-      continue;
-    }
-
-    const oldPath = /^---\s+(.+)$/.exec(line);
-    if (oldPath) {
-      if (oldPath[1] === "/dev/null") {
-        setCurrentKind("added");
-      } else if (!currentChange()) {
-        ensureCurrent(oldPath[1]);
-      }
-      continue;
-    }
-
-    const newPath = /^\+\+\+\s+(.+)$/.exec(line);
-    if (newPath) {
-      if (newPath[1] === "/dev/null") {
-        setCurrentKind("deleted");
-      } else {
-        ensureCurrent(newPath[1]);
-      }
-      continue;
-    }
-
-    if (!currentChange()) continue;
-    if (line.startsWith("@@")) {
-      pushLine("context", line);
-    } else if (line.startsWith("+")) {
-      pushLine("added", line.slice(1));
-    } else if (line.startsWith("-")) {
-      pushLine("removed", line.slice(1));
-    } else if (line.startsWith(" ")) {
-      pushLine("context", line.slice(1));
-    }
-  }
-
-  return changes.map((change) => ({
-    ...change,
-    summary: fileChangeSummary(change.kind, change.relativePath),
-  }));
-}
-
-function normalizeDiffPath(path: string): string {
-  const trimmed = path.trim().replace(/^"|"$/g, "");
-  if (trimmed === "/dev/null") return trimmed;
-  return trimmed.replace(/^[ab]\//, "");
-}
-
-function fileChangeSummary(kind: FileChange["kind"], relativePath: string): string {
-  if (kind === "added") return `Added ${relativePath}`;
-  if (kind === "deleted") return `Deleted ${relativePath}`;
-  return `Updated ${relativePath}`;
-}
-
-function patchSummary(changes: FileChange[]): string {
-  if (changes.length === 1) return changes[0].summary;
-  return `${changes.length} files changed`;
-}
-
 function summaryFromInput(
   name: string,
   input: unknown,
@@ -935,10 +595,6 @@ function summaryFromInput(
   if (name === "read" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     if (typeof record.path === "string") return `Read ${record.path}`;
-  }
-  if (name === "apply_patch") {
-    const changes = fileChangesFromPatchInput(input);
-    return changes ? patchSummary(changes) : "Apply patch";
   }
   if (name === "edit_file") {
     return editFileSummary(input);
@@ -1139,7 +795,6 @@ function genericMcpLabel(value: string): string {
 function pendingSummary(name: string): string | undefined {
   if (name === "bash") return "Running command";
   if (name === "bash_input") return "Interacting with command";
-  if (name === "apply_patch") return "Preparing patch";
   if (name === "write_file") return "Preparing write";
   if (name === "clean_context") return "Cleaning context";
   if (name === "context_compaction") return "Compacting context";
@@ -1452,10 +1107,6 @@ export function applyEvent(
         if (block.kind === "tool" && block.id === event.id) {
           const input = parsePrettyJson(event.args_pretty);
           const silentBashPoll = silentBashPollInfo(block.name, input);
-          const fileChanges =
-            block.name === "apply_patch" && input
-              ? fileChangesFromPatchInput(input)
-              : undefined;
           return {
             ...block,
             hidden:
@@ -1467,7 +1118,6 @@ export function applyEvent(
             summary: event.summary,
             argsPretty: input ? prettyToolInput(block.name, input) : event.args_pretty,
             argsRaw: undefined,
-            fileChanges: fileChanges ?? block.fileChanges,
             subAgent: isSubAgentLikeTool(block.name)
               ? {
                   ...(block.subAgent ?? { id: block.id, name: "Sub-agent" }),
@@ -1489,10 +1139,6 @@ export function applyEvent(
           parsedInput && typeof parsedInput === "object"
             ? (parsedInput as Record<string, unknown>)
             : partialArgsFromToolJson(block.name, argsRaw);
-        const fileChanges =
-          block.name === "apply_patch"
-            ? fileChangesFromPatchJson(argsRaw)
-            : undefined;
         return {
           ...block,
           hidden:
@@ -1506,7 +1152,6 @@ export function applyEvent(
           summary: partialInput
             ? summaryFromInput(block.name, partialInput) ?? block.summary
             : block.summary,
-          fileChanges: fileChanges ?? block.fileChanges,
         };
       });
       return withStreamPhase(state, "tooling", { blocks: next });
@@ -1640,12 +1285,6 @@ export function applyEvent(
         if (block.kind === "tool" && block.id === event.id) {
           const images = Array.isArray(event.images) ? event.images : [];
           const hasFileChanges = event.file_changes.length > 0;
-          const finishedFileChanges =
-            block.name === "apply_patch"
-              ? patchFileChanges(event.file_changes, block.fileChanges)
-              : event.file_changes;
-          const patchWithoutChanges =
-            block.name === "apply_patch" && !event.is_error && !hasFileChanges;
           const bashStillRunning =
             block.name === "bash" &&
             !event.is_error &&
@@ -1660,9 +1299,7 @@ export function applyEvent(
               : bashStillRunning
                 ? ("running" as const)
                 : ("done" as const),
-            summary: patchWithoutChanges
-              ? "Patch applied: no file changes"
-              : block.summary,
+            summary: block.summary,
             output: event.output,
             isError: event.is_error,
             answered: questionAnswered,
@@ -1670,11 +1307,7 @@ export function applyEvent(
               block.name === "Question"
                 ? questionAnswerFromMeta(event.meta)
                 : block.answer,
-            fileChanges: hasFileChanges
-              ? finishedFileChanges
-              : patchWithoutChanges
-                ? undefined
-                : block.fileChanges,
+            fileChanges: hasFileChanges ? event.file_changes : block.fileChanges,
             images: images.length > 0 ? images : block.images,
             meta: event.meta ?? block.meta,
           };

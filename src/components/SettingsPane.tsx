@@ -4087,7 +4087,6 @@ const TOOL_LABEL: Record<string, string> = {
   bash: "Shell",
   bash_input: "Shell input",
   read: "Read",
-  apply_patch: "Patch",
   edit_file: "Edit file",
   write_file: "Write file",
   Glob: "Glob",
@@ -4110,7 +4109,6 @@ const TOOL_LABEL: Record<string, string> = {
 
 const TOOL_ICON: Record<string, string> = {
   read: "solar:document-text-linear",
-  apply_patch: "solar:pen-new-square-linear",
   edit_file: "solar:pen-2-linear",
   write_file: "solar:file-text-linear",
   WebSearch: "solar:magnifer-linear",

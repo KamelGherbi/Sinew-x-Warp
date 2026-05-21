@@ -6,7 +6,6 @@ pub mod glob;
 pub mod grep;
 pub mod image;
 pub mod mcp;
-pub mod patch;
 pub mod question;
 pub mod read;
 mod ripgrep;
@@ -33,7 +32,6 @@ pub use glob::GlobTool;
 pub use grep::GrepTool;
 pub use image::CreateImageTool;
 pub use mcp::{probe_mcp_servers, McpServerProbe, McpSettings, McpToolRegistry};
-pub use patch::ApplyPatchTool;
 pub use question::QuestionTool;
 pub use read::{ReadFingerprint, ReadTool};
 pub use skill::{
