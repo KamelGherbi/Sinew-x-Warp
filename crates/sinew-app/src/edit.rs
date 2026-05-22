@@ -167,12 +167,10 @@ impl EditFileTool {
                 &group.edits,
             )?;
             let updated_content = normalized_original.restore(&plan.updated_content);
-            summaries.push(format_file_summary(
-                &group.relative_path,
-                text_line_count(&normalized_original.content),
-                text_line_count(&plan.updated_content),
-                &plan.summaries,
-            ));
+            summaries.push(FileEditSummary {
+                relative_path: group.relative_path.clone(),
+                replacement_count: group.edits.len(),
+            });
             writes.push((
                 group.relative_path.clone(),
                 group.absolute_path.clone(),
@@ -192,18 +190,7 @@ impl EditFileTool {
             .map(|(_, absolute_path, _)| fingerprint_path(&self.workspace_root, absolute_path))
             .collect::<Result<Vec<_>>>()?;
 
-        let replacement_count = grouped
-            .values()
-            .map(|group| group.edits.len())
-            .sum::<usize>();
-        let content = format!(
-            "Edited {} file{} ({} replacement{}).\n\n{}",
-            summaries.len(),
-            if summaries.len() == 1 { "" } else { "s" },
-            replacement_count,
-            if replacement_count == 1 { "" } else { "s" },
-            summaries.join("\n")
-        );
+        let content = format_edit_output(&summaries);
 
         let meta = if updated_fingerprints.len() == 1 {
             json!({
@@ -354,9 +341,6 @@ struct PlannedReplacement {
     start: usize,
     old_len: usize,
     new_content: String,
-    line_number: usize,
-    old_line_count: usize,
-    new_line_count: usize,
 }
 
 impl PlannedReplacement {
@@ -368,15 +352,11 @@ impl PlannedReplacement {
 #[derive(Debug)]
 struct PlannedFileEdit {
     updated_content: String,
-    summaries: Vec<ReplacementSummary>,
 }
 
-#[derive(Debug)]
-struct ReplacementSummary {
-    edit_index: usize,
-    line_number: usize,
-    old_line_count: usize,
-    new_line_count: usize,
+struct FileEditSummary {
+    relative_path: String,
+    replacement_count: usize,
 }
 
 fn validate_edit_input(input: &EditFileInput) -> Result<()> {
@@ -457,9 +437,6 @@ fn plan_file_edits(
             start: matched.start,
             old_len: matched.len,
             new_content: new_content.clone(),
-            line_number: line_number_at(original, matched.start),
-            old_line_count: text_line_count(&old_content),
-            new_line_count: text_line_count(&new_content),
         });
     }
 
@@ -471,20 +448,7 @@ fn plan_file_edits(
         );
     }
 
-    let summaries = replacements
-        .iter()
-        .map(|replacement| ReplacementSummary {
-            edit_index: replacement.edit_index,
-            line_number: replacement.line_number,
-            old_line_count: replacement.old_line_count,
-            new_line_count: replacement.new_line_count,
-        })
-        .collect();
-
-    Ok(PlannedFileEdit {
-        updated_content,
-        summaries,
-    })
+    Ok(PlannedFileEdit { updated_content })
 }
 
 fn old_content_label(index: usize, multiple: bool) -> String {
@@ -640,27 +604,32 @@ fn apply_replacements(original: &str, replacements: &[PlannedReplacement]) -> St
     updated
 }
 
-fn format_file_summary(
-    relative_path: &str,
-    old_count: usize,
-    new_count: usize,
-    summaries: &[ReplacementSummary],
-) -> String {
-    let mut output = format!(
-        "{relative_path}: {old_count} -> {new_count} line{}",
-        if new_count == 1 { "" } else { "s" }
-    );
-    let mut summaries = summaries.iter().collect::<Vec<_>>();
-    summaries.sort_by_key(|summary| summary.edit_index);
+fn format_edit_output(summaries: &[FileEditSummary]) -> String {
+    if summaries.len() == 1 {
+        let summary = &summaries[0];
+        return format!(
+            "Edited {} ({} replacement{}).",
+            summary.relative_path,
+            summary.replacement_count,
+            if summary.replacement_count == 1 {
+                ""
+            } else {
+                "s"
+            }
+        );
+    }
+
+    let mut output = format!("Edited {} files:", summaries.len());
     for summary in summaries {
         output.push_str(&format!(
-            "\n  [{}] replaced {} line{} with {} line{} at line {}",
-            summary.edit_index + 1,
-            summary.old_line_count,
-            if summary.old_line_count == 1 { "" } else { "s" },
-            summary.new_line_count,
-            if summary.new_line_count == 1 { "" } else { "s" },
-            summary.line_number
+            "\n- {} ({} replacement{})",
+            summary.relative_path,
+            summary.replacement_count,
+            if summary.replacement_count == 1 {
+                ""
+            } else {
+                "s"
+            }
         ));
     }
     output
@@ -810,22 +779,6 @@ fn fuzzy_char(ch: char) -> char {
     }
 }
 
-fn text_line_count(text: &str) -> usize {
-    if text.is_empty() {
-        0
-    } else {
-        text.lines().count().max(1)
-    }
-}
-
-fn line_number_at(text: &str, byte_offset: usize) -> usize {
-    text[..byte_offset]
-        .bytes()
-        .filter(|byte| *byte == b'\n')
-        .count()
-        + 1
-}
-
 fn resolve_existing_workspace_file(root: &Path, raw: &str) -> Result<(String, PathBuf)> {
     let trimmed = raw.trim();
     let candidate = Path::new(trimmed);
@@ -908,11 +861,7 @@ mod tests {
             fs::read_to_string(root.join("app.rs")).unwrap(),
             "one\ndeux\ntrois\nfour\n"
         );
-        assert!(result.content.contains("Edited 1 file (1 replacement)."));
-        assert!(result.content.contains("app.rs: 4 -> 4 lines"));
-        assert!(result
-            .content
-            .contains("[1] replaced 2 lines with 2 lines at line 2"));
+        assert_eq!(result.content, "Edited app.rs (1 replacement).");
         assert_eq!(result.file_changes.len(), 1);
         fs::remove_dir_all(root).ok();
     }
@@ -977,7 +926,10 @@ mod tests {
             fs::read_to_string(root.join("src/b.rs")).unwrap(),
             "new();\n"
         );
-        assert!(result.content.contains("Edited 2 files (2 replacements)."));
+        assert_eq!(
+            result.content,
+            "Edited 2 files:\n- src/a.rs (1 replacement)\n- src/b.rs (1 replacement)"
+        );
         assert_eq!(result.file_changes.len(), 2);
         fs::remove_dir_all(root).ok();
     }

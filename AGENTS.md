@@ -246,6 +246,7 @@ Code map:
     │   ├── Splitter.tsx
     │   ├── TerminalPanel.tsx
     │   ├── UpdateBadge.tsx
+    │   ├── UpdaterLockScreen.tsx
     │   ├── Welcome.tsx
     │   ├── WindowControls.tsx
     │   ├── Workspace.tsx

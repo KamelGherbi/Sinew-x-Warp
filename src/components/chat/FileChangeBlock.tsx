@@ -19,14 +19,8 @@ function normalizeDiffLineKind(kind: string): RenderedDiffLineKind {
   return "context";
 }
 
-export function FileChangeBlock({
-  change,
-  streaming = false,
-}: {
-  change: FileChange;
-  streaming?: boolean;
-}) {
-  const [open, setOpen] = useState(streaming);
+export function FileChangeBlock({ change }: { change: FileChange }) {
+  const [open, setOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const name = basename(change.relativePath);
   const visibleLineKinds = change.lines.map((line) =>
@@ -56,11 +50,7 @@ export function FileChangeBlock({
     : null;
 
   useEffect(() => {
-    if (streaming) setOpen(true);
-  }, [streaming]);
-
-  useEffect(() => {
-    if (!open || firstChangedLineIndex < 0 || streaming) return undefined;
+    if (!open || firstChangedLineIndex < 0) return undefined;
     const body = bodyRef.current;
     if (!body) return undefined;
     const frame = window.requestAnimationFrame(() => {
@@ -73,18 +63,8 @@ export function FileChangeBlock({
     return () => window.cancelAnimationFrame(frame);
   }, [firstChangedLineIndex, open]);
 
-  useEffect(() => {
-    if (!streaming || !open) return undefined;
-    const body = bodyRef.current;
-    if (!body) return undefined;
-    const frame = window.requestAnimationFrame(() => {
-      body.scrollTop = body.scrollHeight;
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [change.lines.length, open, streaming]);
-
   return (
-    <div className="filechange" data-streaming={streaming ? "true" : "false"}>
+    <div className="filechange">
       <div className="filechange__head" onClick={() => setOpen((v) => !v)}>
         <span
           className="tab__icon"
@@ -109,7 +89,6 @@ export function FileChangeBlock({
             )}
           </span>
         )}
-        {streaming && <span className="filechange__badge">streaming</span>}
         {quietLabel && <span className="filechange__badge">{quietLabel}</span>}
         <span className="filechange__caret">
           <Icon

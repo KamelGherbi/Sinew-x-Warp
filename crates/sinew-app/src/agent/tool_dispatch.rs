@@ -51,6 +51,10 @@ pub(super) async fn run_tool(
     name: &str,
     input: Value,
 ) -> ToolRunResult {
+    let name = match name {
+        "TodoList" | "todo_list" => "ToDoList",
+        _ => name,
+    };
     if !tool_settings.is_enabled(name) {
         return ToolRunResult::err(format!("{name} is disabled in Settings"), Vec::new());
     }

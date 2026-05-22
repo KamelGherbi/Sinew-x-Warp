@@ -20,7 +20,6 @@ export type ToolCardProps = {
   isError?: boolean;
   cleaned?: boolean;
   fileChanges?: FileChange[];
-  liveFileChange?: FileChange;
   images?: ToolResultImage[];
   meta?: Record<string, unknown> | null;
   onOpenFile: (path: string) => void;
@@ -888,7 +887,6 @@ export function ToolCard({
   isError,
   cleaned,
   fileChanges,
-  liveFileChange,
   images,
   meta,
   onOpenFile,
@@ -1052,8 +1050,7 @@ export function ToolCard({
     );
   }
 
-  const renderedFileChanges = fileChanges ?? (liveFileChange ? [liveFileChange] : undefined);
-  const isLiveFileChange = !fileChanges && !!liveFileChange;
+  const renderedFileChanges = fileChanges;
 
   if (
     (isEditFile || isWriteFile) &&
@@ -1062,17 +1059,9 @@ export function ToolCard({
     renderedFileChanges.length > 0
   ) {
     return (
-      <div
-        className="tool-card__changes"
-        data-bare="true"
-        data-live={isLiveFileChange ? "true" : undefined}
-      >
+      <div className="tool-card__changes" data-bare="true">
         {renderedFileChanges.map((change, idx) => (
-          <FileChangeBlock
-            key={idx}
-            change={change}
-            streaming={isLiveFileChange}
-          />
+          <FileChangeBlock key={idx} change={change} />
         ))}
       </div>
     );
@@ -1101,7 +1090,9 @@ export function ToolCard({
       ? summary
       : name;
   const hasChanges = !!renderedFileChanges && renderedFileChanges.length > 0;
-  const canExpand = !(isContextCompaction && status === "running");
+  const canExpand =
+    !(isContextCompaction && status === "running") &&
+    !(isEditFile && status === "running");
   const showBody = canExpand && open && (!isTeamRunSpawn || !teamRunActive);
   const showTeamStop =
     isTeamRunSpawn &&
@@ -1288,11 +1279,7 @@ export function ToolCard({
           {hasChanges && (
             <div className="tool-card__changes">
               {renderedFileChanges!.map((change, idx) => (
-                <FileChangeBlock
-                  key={idx}
-                  change={change}
-                  streaming={isLiveFileChange}
-                />
+                <FileChangeBlock key={idx} change={change} />
               ))}
             </div>
           )}

@@ -492,6 +492,279 @@ textarea {
 }
 
 /* ------------------------------------------------------------------
+   Updater lock screen
+   ------------------------------------------------------------------
+   Boot-time blocking gate shown when an update is available. Mounted
+   by <App /> in place of Welcome/Workspace — no "Later", no "Skip".
+   Visually mirrors .welcome so the boot moment stays cohesive.
+   ------------------------------------------------------------------ */
+
+/* Black canvas shown for the brief moment between window paint and the
+   completion of the boot update check. Keeps the splash visually quiet
+   so we don't flash Welcome before the gate has had a chance to fire. */
+.app-boot {
+  height: 100%;
+  background: var(--bg-canvas);
+}
+
+.updater-lock {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background: var(--bg-0);
+  padding: 48px 32px;
+}
+
+/* Windows-only drag region — mirrors .welcome__titlebar so the user can
+   still move/minimize/close the window. We keep close available even on
+   the lock screen: the policy is "update or quit", not a trap. */
+.updater-lock__titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  background: transparent;
+  -webkit-app-region: drag;
+  user-select: none;
+  z-index: 50;
+}
+.updater-lock__titlebar button {
+  -webkit-app-region: no-drag;
+}
+
+.updater-lock__stage {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ---- header --------------------------------------------------- */
+.updater-lock__head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.updater-lock__mark-dot {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-2);
+  color: var(--text-1);
+}
+.updater-lock__mark-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 200ms ease;
+}
+.updater-lock__mark-inner--pulse {
+  animation: updaterMarkPulse 1.8s ease-in-out infinite;
+}
+.updater-lock__mark-inner--ok {
+  color: var(--ok);
+}
+.updater-lock__mark-inner--err {
+  color: var(--danger);
+}
+.updater-lock__mark-glyph rect {
+  fill: currentColor;
+}
+@keyframes updaterMarkPulse {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.06); }
+}
+
+.updater-lock__title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 32px;
+  letter-spacing: -1px;
+  line-height: 1.05;
+  margin: 0;
+  color: var(--text-0);
+}
+.updater-lock__sub {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--text-3);
+  letter-spacing: -0.005em;
+}
+
+/* ---- release notes (prompt phase only) ----------------------- */
+.updater-lock__notes {
+  padding: 12px 14px;
+  background: var(--bg-2);
+  border-radius: var(--r-card);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+  max-height: 200px;
+  overflow-y: auto;
+}
+.updater-lock__notes p {
+  margin: 0 0 6px;
+}
+.updater-lock__notes p:last-child {
+  margin-bottom: 0;
+}
+
+/* ---- progress card (downloading + installing) --------------- */
+.updater-lock__card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--bg-2);
+  border-radius: var(--r-card);
+}
+.updater-lock__card--error {
+  background: rgba(245, 115, 127, 0.08);
+}
+
+.updater-lock__bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-4);
+  overflow: hidden;
+  position: relative;
+}
+.updater-lock__bar-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+/* Reuse the indeterminate keyframes defined for the titlebar badge so we
+   don't ship two near-identical animations. */
+.updater-lock__bar--indeterminate .updater-lock__bar-fill {
+  width: 25%;
+  animation: updateBarIndeterminate 1.4s ease-in-out infinite;
+}
+.updater-lock__bar-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text-2);
+}
+.updater-lock__bar-bytes {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.updater-lock__error {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  color: var(--danger);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* ---- actions ------------------------------------------------- */
+.updater-lock__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Full-width primary CTA — same tactile vibe as .welcome__cta but a
+   touch more compact (this screen has less hierarchy to support). */
+.updater-lock__cta {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--bg-3);
+  border: none;
+  border-radius: var(--r-card);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text-0);
+  cursor: pointer;
+  transition: background 140ms ease, transform 90ms ease;
+}
+.updater-lock__cta:hover {
+  background: var(--bg-4);
+}
+.updater-lock__cta:active {
+  background: var(--bg-5);
+  transform: translateY(1px);
+}
+.updater-lock__cta-label {
+  letter-spacing: -0.01em;
+}
+.updater-lock__cta-chev {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  flex: 0 0 auto;
+  transition: color 140ms ease, transform 140ms ease;
+}
+.updater-lock__cta:hover .updater-lock__cta-chev {
+  color: var(--text-0);
+  transform: translateX(2px);
+}
+
+/* Error-mode secondary buttons (Retry / Quit Sinew). Mirrors the
+   popover button system to stay in family with the badge. */
+.updater-lock__btn {
+  height: 36px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--r-med);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.updater-lock__btn--ghost {
+  background: transparent;
+  color: var(--text-2);
+}
+.updater-lock__btn--ghost:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+.updater-lock__btn--primary {
+  background: var(--bg-4);
+  color: var(--text-0);
+}
+.updater-lock__btn--primary:hover {
+  background: var(--bg-5);
+}
+
+/* ------------------------------------------------------------------
    Main workspace
    ------------------------------------------------------------------ */
 
@@ -5779,13 +6052,6 @@ textarea {
   font-size: 10px;
   line-height: 1.35;
   white-space: nowrap;
-}
-.filechange[data-streaming="true"] .filechange__badge {
-  color: var(--diff-add-fg);
-  background: var(--diff-add-bg);
-}
-.filechange[data-streaming="true"] .filechange__body {
-  scroll-behavior: auto;
 }
 .filechange__path {
   color: var(--text-0);
