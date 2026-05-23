@@ -60,6 +60,7 @@ impl TeamTool {
                 agent_key(&agent.name)
             )),
             cache_stable_message_count: agent.history.len(),
+            service_tier: self.service_tier,
             auto_compact: true,
             mode: child_mode,
             stop_questions: false,

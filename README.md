@@ -277,17 +277,18 @@ Three counters in the header: **`matches`** (total matches), **`files`** (number
 
 ### `edit_file`
 
-Edits existing workspace text files with exact search/replace blocks. The agent sends top-level `edits` grouped by file:
+Edits existing workspace text files with exact search/replace blocks. The agent sends top-level `files` grouped by file:
 
 ```json
 {
-  "edits": [
+  "files": [
     {
       "path": "src/foo.ts",
       "edits": [
         {
           "oldContent": "const oldName = value;",
-          "newContent": "const newName = value;"
+          "newContent": "const newName = value;",
+          "replaceAll": false
         }
       ]
     }
@@ -295,7 +296,7 @@ Edits existing workspace text files with exact search/replace blocks. The agent 
 }
 ```
 
-`oldContent` must be non-empty and match exactly once in the file, including whitespace and newlines. If it appears multiple times, the agent adds surrounding context until it is unique. `newContent` may be empty to delete the matched block.
+`oldContent` must be non-empty. By default it must match exactly once in the file, including whitespace and newlines; if it appears multiple times, the agent adds surrounding context until it is unique. Set `replaceAll: true` on a replacement to replace every non-overlapping occurrence of `oldContent`. `newContent` may be empty to delete the matched block.
 
 The tool requires a successful prior `read` and refuses to write if the file changed since that read. Multiple replacements in the same file are matched against the original file content; overlapping replacements are rejected, so the agent must merge them into one edit or target disjoint regions.
 

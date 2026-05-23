@@ -6,6 +6,7 @@ Code map:
 ├── AGENTS.md
 ├── Cargo.lock
 ├── Cargo.toml
+├── editharness.md
 ├── FEATURES.md
 ├── index.html
 ├── LICENSE

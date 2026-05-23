@@ -15,6 +15,7 @@ pub(super) async fn send_message(
     let message_visibility = input
         .message_visibility
         .unwrap_or(MessageVisibilityInput::Normal);
+    let service_tier = input.service_tier.map(ServiceTier::from);
 
     let workspace_root =
         normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
@@ -155,6 +156,7 @@ pub(super) async fn send_message(
         model: conversation.model.clone(),
         cache_key: Some(conversation.id.clone()),
         cache_stable_message_count: turn_user_history_index,
+        service_tier,
         auto_compact: true,
         mode: policy.mode,
         stop_questions: policy.stop_questions,
@@ -196,6 +198,7 @@ pub(super) async fn send_message(
             tool_settings.clone(),
             skill_settings.clone(),
             state.max_tool_rounds,
+            service_tier,
             cancel.clone(),
         ))),
         teams: Some(Arc::new(TeamTool::new(
@@ -209,6 +212,7 @@ pub(super) async fn send_message(
             skill_settings,
             conversation.model.clone(),
             state.max_tool_rounds,
+            service_tier,
             state.team_runtime.clone(),
             cancel.clone(),
         ))),
@@ -452,6 +456,7 @@ pub(super) async fn compact_conversation(
 
     let selected_model =
         model_with_optional_selection(&conversation.model, input.model, input.thinking);
+    let service_tier = input.service_tier.map(ServiceTier::from);
     let compaction_instruction = input
         .instruction
         .as_deref()
@@ -535,6 +540,7 @@ pub(super) async fn compact_conversation(
         source_history.clone(),
         Some(conversation_id.clone()),
         source_history.len(),
+        service_tier,
         compaction_instruction,
         &mut cmd_rx,
         Some(summary_delta_tx),

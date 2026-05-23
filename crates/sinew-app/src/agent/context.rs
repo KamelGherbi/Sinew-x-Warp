@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use sinew_core::{ChatMessage, Provider};
+use sinew_core::{ChatMessage, Provider, ServiceTier};
 
 use crate::{
     BashTool, CreateImageTool, EditFileTool, GlobTool, GoalWorkflowState, GrepTool,
@@ -28,6 +28,7 @@ pub struct TurnContext {
     pub model: sinew_core::ModelRef,
     pub cache_key: Option<String>,
     pub cache_stable_message_count: usize,
+    pub service_tier: Option<ServiceTier>,
     pub auto_compact: bool,
     pub mode: AgentMode,
     pub stop_questions: bool,

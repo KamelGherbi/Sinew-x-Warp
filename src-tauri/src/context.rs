@@ -74,6 +74,7 @@ pub(super) async fn estimate_context(
         tool_settings.clone(),
         skill_settings,
         state.max_tool_rounds,
+        None,
         TurnCancel::empty(),
     )
     .descriptors();

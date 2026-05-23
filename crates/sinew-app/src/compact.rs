@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail, Result};
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 use sinew_core::{
-    AppError, ChatMessage, ModelRef, Part, Provider, ProviderRequest, Role, StreamEvent,
+    AppError, ChatMessage, ModelRef, Part, Provider, ProviderRequest, Role, ServiceTier, StreamEvent,
 };
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
@@ -41,6 +41,7 @@ pub async fn compact_conversation_history(
     history: Vec<ChatMessage>,
     cache_key: Option<String>,
     cache_stable_message_count: usize,
+    service_tier: Option<ServiceTier>,
     user_instruction: Option<String>,
     cmd_rx: &mut mpsc::UnboundedReceiver<EngineCommand>,
     summary_delta_tx: Option<mpsc::UnboundedSender<String>>,
@@ -59,6 +60,9 @@ pub async fn compact_conversation_history(
         .with_cache_stable_message_count(cache_stable_message_count);
     if let Some(cache_key) = cache_key {
         request = request.with_cache_key(cache_key);
+    }
+    if let Some(service_tier) = service_tier {
+        request = request.with_service_tier(service_tier);
     }
 
     let mut stream_attempt = 0usize;

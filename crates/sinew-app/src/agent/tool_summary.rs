@@ -396,10 +396,7 @@ pub(super) fn should_stream_tool_args(name: &str) -> bool {
 }
 
 fn edit_file_groups(input: &Value) -> Option<&Vec<Value>> {
-    input
-        .get("edits")
-        .and_then(Value::as_array)
-        .or_else(|| input.get("files").and_then(Value::as_array))
+    input.get("files").and_then(Value::as_array)
 }
 
 fn grep_path_scope(value: &Value) -> Option<String> {

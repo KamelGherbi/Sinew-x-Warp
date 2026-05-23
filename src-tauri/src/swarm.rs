@@ -333,6 +333,7 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
         model: conversation.model.clone(),
         cache_key: Some(conversation.id.clone()),
         cache_stable_message_count: turn_user_history_index,
+        service_tier: None,
         auto_compact: true,
         mode: AgentMode::Act,
         stop_questions: false,
@@ -374,6 +375,7 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
             tool_settings.clone(),
             skill_settings.clone(),
             state.max_tool_rounds,
+            None,
             cancel.clone(),
         ))),
         teams: Some(Arc::new(TeamTool::new(
@@ -387,6 +389,7 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
             skill_settings,
             conversation.model.clone(),
             state.max_tool_rounds,
+            None,
             state.team_runtime.clone(),
             cancel.clone(),
         ))),
@@ -663,6 +666,7 @@ pub(super) async fn stop_agent_swarm_command(
         skill_settings,
         conversation.model.clone(),
         state.max_tool_rounds,
+        None,
         state.team_runtime.clone(),
         TurnCancel::empty(),
     );

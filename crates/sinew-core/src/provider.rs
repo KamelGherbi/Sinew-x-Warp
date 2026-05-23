@@ -8,6 +8,12 @@ use crate::{
     tool::ToolDescriptor,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceTier {
+    Fast,
+    Flex,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProviderRequest {
     pub model: ModelRef,
@@ -19,6 +25,7 @@ pub struct ProviderRequest {
     pub temperature: Option<f32>,
     pub cache_key: Option<String>,
     pub cache_stable_message_count: Option<usize>,
+    pub service_tier: Option<ServiceTier>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -39,6 +46,7 @@ impl ProviderRequest {
             temperature: None,
             cache_key: None,
             cache_stable_message_count: None,
+            service_tier: None,
         }
     }
 
@@ -67,6 +75,11 @@ impl ProviderRequest {
 
     pub fn with_cache_stable_message_count(mut self, value: usize) -> Self {
         self.cache_stable_message_count = Some(value);
+        self
+    }
+
+    pub fn with_service_tier(mut self, value: ServiceTier) -> Self {
+        self.service_tier = Some(value);
         self
     }
 

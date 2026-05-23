@@ -20,25 +20,7 @@ use crate::{
 const MAX_EDIT_COUNT: usize = 128;
 const MAX_TOTAL_CONTENT_BYTES: usize = 2 * 1024 * 1024;
 
-const EDIT_FILE_DESCRIPTION: &str = r#"Edit existing workspace text files with exact search/replace blocks. This tool only edits files; it does not create, delete, rename, or move files.
-
-Input has:
-- edits: array of file edit groups. Each file group has:
-- path: relative to the workspace root, or an absolute path inside the workspace.
-- edits: one or more replacements to apply to that file.
-
-Each replacement has:
-- oldContent: exact text to replace. It must be non-empty and should match exactly once in the file, including whitespace and newlines. If exact matching fails, edit_file tries a conservative fuzzy fallback for line endings, trailing whitespace, smart quotes, unicode dashes, and special spaces.
-- newContent: replacement text. It may be empty to delete oldContent.
-
-Rules:
-- You must read a file successfully before editing it. edit_file refuses to write if the file changed since that read.
-- Prefer one edit_file call with multiple file groups and multiple replacements per file when changes are related.
-- Replacements in the same file are matched against the original file content; overlapping replacements are rejected. Merge overlapping changes into one replacement.
-- If oldContent appears multiple times, add surrounding context until it is unique.
-- UTF-8 BOM and original line endings are preserved. Matching normalizes line endings to LF.
-- For insertion, include the anchor text in both oldContent and newContent, adding the inserted text before or after it.
-"#;
+const EDIT_FILE_DESCRIPTION: &str = r#"Use this tool to edit files."#;
 
 #[derive(Debug, Clone)]
 pub struct EditFileTool {
@@ -66,16 +48,16 @@ impl EditFileTool {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "edits": {
+                    "files": {
                         "type": "array",
                         "minItems": 1,
-                        "description": "The file edit groups to apply in one operation.",
+                        "description": "The file edit groups to apply in one operation. ALWAYS consolidate edits to the same file under one entry. Do not create multiple entries sharing the same path.",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "path": {
                                     "type": "string",
-                                    "description": "File path to edit. Relative paths are resolved from the workspace root; absolute paths must be inside the workspace."
+                                    "description": "File path to edit. Relative paths and absolute are tolerated. Prefere relative."
                                 },
                                 "edits": {
                                     "type": "array",
@@ -87,11 +69,15 @@ impl EditFileTool {
                                         "properties": {
                                             "oldContent": {
                                                 "type": "string",
-                                                "description": "Exact text to replace. Must match exactly once, including all whitespace and newlines."
+                                                "description": "Exact text to replace. ALWAYS use the shortest old_content that is still unique in the file. Do not include surrounding context beyond what is strictly needed for an unambiguous match."
                                             },
                                             "newContent": {
                                                 "type": "string",
                                                 "description": "Replacement text. May be empty to delete oldContent."
+                                            },
+                                            "replaceAll": {
+                                                "type": "boolean",
+                                                "description": "When true, replace every non-overlapping occurrence of oldContent. Defaults to false, which requires oldContent to match exactly once."
                                             }
                                         },
                                         "required": ["oldContent", "newContent"],
@@ -104,7 +90,7 @@ impl EditFileTool {
                         }
                     }
                 },
-                "required": ["edits"],
+                "required": ["files"],
                 "additionalProperties": false
             }),
         }
@@ -131,7 +117,7 @@ impl EditFileTool {
         validate_edit_input(&parsed)?;
 
         let resolved = parsed
-            .edits
+            .files
             .into_iter()
             .enumerate()
             .map(|(index, file)| self.resolve_file_group(index, file))
@@ -169,7 +155,7 @@ impl EditFileTool {
             let updated_content = normalized_original.restore(&plan.updated_content);
             summaries.push(FileEditSummary {
                 relative_path: group.relative_path.clone(),
-                replacement_count: group.edits.len(),
+                replacement_count: plan.replacement_count,
             });
             writes.push((
                 group.relative_path.clone(),
@@ -234,8 +220,8 @@ impl EditFileTool {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EditFileInput {
-    #[serde(default, alias = "files")]
-    edits: Vec<FileEditInput>,
+    #[serde(default)]
+    files: Vec<FileEditInput>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -253,6 +239,8 @@ struct ReplacementInput {
     old_content: String,
     #[serde(alias = "newText")]
     new_content: String,
+    #[serde(default)]
+    replace_all: bool,
 }
 
 #[derive(Debug)]
@@ -352,6 +340,7 @@ impl PlannedReplacement {
 #[derive(Debug)]
 struct PlannedFileEdit {
     updated_content: String,
+    replacement_count: usize,
 }
 
 struct FileEditSummary {
@@ -361,18 +350,18 @@ struct FileEditSummary {
 
 fn validate_edit_input(input: &EditFileInput) -> Result<()> {
     let replacement_count = input
-        .edits
+        .files
         .iter()
         .map(|file| file.edits.len())
         .sum::<usize>();
-    if replacement_count == 0 || input.edits.iter().any(|file| file.edits.is_empty()) {
-        bail!("Edit tool input is invalid. edits must contain at least one replacement.");
+    if replacement_count == 0 || input.files.iter().any(|file| file.edits.is_empty()) {
+        bail!("Edit tool input is invalid. files must contain at least one file group, and each file group must contain at least one edit.");
     }
     if replacement_count > MAX_EDIT_COUNT {
         bail!("too many replacements in one call; maximum is {MAX_EDIT_COUNT}");
     }
     let total_content_bytes = input
-        .edits
+        .files
         .iter()
         .flat_map(|file| &file.edits)
         .map(|edit| edit.old_content.len() + edit.new_content.len())
@@ -423,8 +412,17 @@ fn plan_file_edits(
             );
         }
 
-        let matched =
-            find_unique_replacement_match(relative_path, original, &old_content, index, multiple)?;
+        let matched = if edit.replace_all {
+            find_all_replacement_matches(relative_path, original, &old_content, index, multiple)?
+        } else {
+            vec![find_unique_replacement_match(
+                relative_path,
+                original,
+                &old_content,
+                index,
+                multiple,
+            )?]
+        };
 
         if old_content == new_content {
             bail!(
@@ -432,15 +430,18 @@ fn plan_file_edits(
             );
         }
 
-        replacements.push(PlannedReplacement {
-            edit_index: index,
-            start: matched.start,
-            old_len: matched.len,
-            new_content: new_content.clone(),
-        });
+        for matched in matched {
+            replacements.push(PlannedReplacement {
+                edit_index: index,
+                start: matched.start,
+                old_len: matched.len,
+                new_content: new_content.clone(),
+            });
+        }
     }
 
     validate_no_overlaps(relative_path, &replacements)?;
+    let replacement_count = replacements.len();
     let updated_content = apply_replacements(original, &replacements);
     if updated_content == original {
         bail!(
@@ -448,7 +449,10 @@ fn plan_file_edits(
         );
     }
 
-    Ok(PlannedFileEdit { updated_content })
+    Ok(PlannedFileEdit {
+        updated_content,
+        replacement_count,
+    })
 }
 
 fn old_content_label(index: usize, multiple: bool) -> String {
@@ -512,6 +516,54 @@ fn find_unique_replacement_match(
     }
 }
 
+fn find_all_replacement_matches(
+    relative_path: &str,
+    original: &str,
+    old_content: &str,
+    edit_index: usize,
+    multiple: bool,
+) -> Result<Vec<ReplacementMatch>> {
+    let exact_occurrences = find_non_overlapping_occurrences(original, old_content);
+    if !exact_occurrences.is_empty() {
+        return Ok(exact_occurrences
+            .into_iter()
+            .map(|start| ReplacementMatch {
+                start,
+                len: old_content.len(),
+            })
+            .collect());
+    }
+
+    let fuzzy = fuzzy_normalize_with_map(original);
+    let fuzzy_old_content = normalize_for_fuzzy_match(old_content);
+    if fuzzy_old_content.is_empty() {
+        return not_found_error(relative_path, edit_index, multiple).map(|_| Vec::new());
+    }
+
+    let fuzzy_occurrences = find_non_overlapping_occurrences(&fuzzy.text, &fuzzy_old_content);
+    if fuzzy_occurrences.is_empty() {
+        return not_found_error(relative_path, edit_index, multiple).map(|_| Vec::new());
+    }
+
+    fuzzy_occurrences
+        .into_iter()
+        .map(|start| {
+            let end = start + fuzzy_old_content.len();
+            let (original_start, original_end) = fuzzy
+                .original_range_with_trimmed_suffix(start, end)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Could not find the exact text in {relative_path}. The old content must match exactly including all whitespace and newlines."
+                    )
+                })?;
+            Ok(ReplacementMatch {
+                start: original_start,
+                len: original_end - original_start,
+            })
+        })
+        .collect()
+}
+
 fn not_found_error(
     relative_path: &str,
     edit_index: usize,
@@ -554,6 +606,22 @@ fn find_occurrences(haystack: &str, needle: &str) -> Vec<usize> {
         let absolute_match = search_start + relative_match;
         occurrences.push(absolute_match);
         search_start = next_char_boundary(haystack, absolute_match);
+    }
+
+    occurrences
+}
+
+fn find_non_overlapping_occurrences(haystack: &str, needle: &str) -> Vec<usize> {
+    let mut occurrences = Vec::new();
+    let mut search_start = 0;
+
+    while search_start <= haystack.len() {
+        let Some(relative_match) = haystack[search_start..].find(needle) else {
+            break;
+        };
+        let absolute_match = search_start + relative_match;
+        occurrences.push(absolute_match);
+        search_start = absolute_match + needle.len();
     }
 
     occurrences
@@ -843,7 +911,7 @@ mod tests {
         let result = tool
             .edit(
                 json!({
-                    "edits": [{
+                    "files": [{
                         "path": "app.rs",
                         "edits": [{
                             "oldContent": "two\nthree",
@@ -876,7 +944,7 @@ mod tests {
 
         tool.edit(
             json!({
-                "edits": [{
+                "files": [{
                     "path": "app.rs",
                     "edits": [
                         {"oldContent": "b", "newContent": "B1\nB2"},
@@ -908,7 +976,7 @@ mod tests {
         let result = tool
             .edit(
                 json!({
-                    "edits": [
+                    "files": [
                         {"path": "src/a.rs", "edits": [{"oldContent": "fn old", "newContent": "fn new"}]},
                         {"path": "src/b.rs", "edits": [{"oldContent": "old();", "newContent": "new();"}]}
                     ]
@@ -941,13 +1009,13 @@ mod tests {
         let tool = EditFileTool::new(&root);
 
         let error = tool
-            .edit(json!({ "edits": [] }), &HashMap::new())
+            .edit(json!({ "files": [] }), &HashMap::new())
             .await
             .expect_err("empty edits should fail");
 
         assert_eq!(
             error.to_string(),
-            "Edit tool input is invalid. edits must contain at least one replacement."
+            "Edit tool input is invalid. files must contain at least one file group, and each file group must contain at least one edit."
         );
         fs::remove_dir_all(root).ok();
     }
@@ -961,7 +1029,7 @@ mod tests {
         let error = tool
             .edit(
                 json!({
-                    "edits": [{
+                    "files": [{
                         "path": "missing.rs",
                         "edits": [{"oldContent": "a", "newContent": "b"}]
                     }]
@@ -988,7 +1056,7 @@ mod tests {
         let error = tool
             .edit(
                 json!({
-                    "edits": [{
+                    "files": [{
                         "path": "app.rs",
                         "edits": [{"oldContent": "", "newContent": "b"}]
                     }]
@@ -1013,7 +1081,7 @@ mod tests {
         let error = tool
             .edit(
                 json!({
-                    "edits": [{
+                    "files": [{
                         "path": "app.rs",
                         "edits": [
                             {"oldContent": "a", "newContent": "A"},
@@ -1044,7 +1112,7 @@ mod tests {
         let error = tool
             .edit(
                 json!({
-                    "edits": [{
+                    "files": [{
                         "path": "app.rs",
                         "edits": [{"oldContent": "missing", "newContent": "b"}]
                     }]
@@ -1072,7 +1140,7 @@ mod tests {
         let error = tool
             .edit(
                 json!({
-                    "edits": [{
+                    "files": [{
                         "path": "app.rs",
                         "edits": [
                             {"oldContent": "a", "newContent": "A"},
@@ -1104,7 +1172,7 @@ mod tests {
         let error = tool
             .edit(
                 json!({
-                    "edits": [{
+                    "files": [{
                         "path": "app.rs",
                         "edits": [{"oldContent": "same", "newContent": "other"}]
                     }]
@@ -1132,7 +1200,7 @@ mod tests {
         let error = tool
             .edit(
                 json!({
-                    "edits": [{
+                    "files": [{
                         "path": "app.rs",
                         "edits": [
                             {"oldContent": "first", "newContent": "changed"},
@@ -1163,7 +1231,7 @@ mod tests {
         let error = tool
             .edit(
                 json!({
-                    "edits": [{
+                    "files": [{
                         "path": "app.rs",
                         "edits": [
                             {"oldContent": "b\nc", "newContent": "x"},
@@ -1198,7 +1266,7 @@ mod tests {
         let error = tool
             .edit(
                 json!({
-                    "edits": [{
+                    "files": [{
                         "path": "app.rs",
                         "edits": [{"oldContent": "a", "newContent": "a"}]
                     }]
@@ -1216,6 +1284,158 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replace_all_replaces_every_exact_occurrence() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        fs::write(root.join("app.rs"), "foo bar foo\nfoo\n").expect("write file");
+        let tool = EditFileTool::new(&root);
+        let fingerprints = fingerprints(&root, &["app.rs"]);
+
+        let result = tool
+            .edit(
+                json!({
+                    "files": [{
+                        "path": "app.rs",
+                        "edits": [{"oldContent": "foo", "newContent": "baz", "replaceAll": true}]
+                    }]
+                }),
+                &fingerprints,
+            )
+            .await
+            .expect("replaceAll edit should apply");
+
+        assert_eq!(
+            fs::read_to_string(root.join("app.rs")).unwrap(),
+            "baz bar baz\nbaz\n"
+        );
+        assert_eq!(result.content, "Edited app.rs (3 replacements).");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn replace_all_false_still_requires_unique_old_content() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        fs::write(root.join("app.rs"), "foo\nfoo\n").expect("write file");
+        let tool = EditFileTool::new(&root);
+        let fingerprints = fingerprints(&root, &["app.rs"]);
+
+        let error = tool
+            .edit(
+                json!({
+                    "files": [{
+                        "path": "app.rs",
+                        "edits": [{"oldContent": "foo", "newContent": "bar", "replaceAll": false}]
+                    }]
+                }),
+                &fingerprints,
+            )
+            .await
+            .expect_err("non replaceAll duplicate should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "Found 2 occurrences of the text in app.rs. The text must be unique. Please provide more context to make it unique."
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("app.rs")).unwrap(),
+            "foo\nfoo\n"
+        );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn replace_all_uses_non_overlapping_occurrences() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        fs::write(root.join("app.rs"), "aaaa\n").expect("write file");
+        let tool = EditFileTool::new(&root);
+        let fingerprints = fingerprints(&root, &["app.rs"]);
+
+        let result = tool
+            .edit(
+                json!({
+                    "files": [{
+                        "path": "app.rs",
+                        "edits": [{"oldContent": "aa", "newContent": "b", "replaceAll": true}]
+                    }]
+                }),
+                &fingerprints,
+            )
+            .await
+            .expect("replaceAll edit should apply");
+
+        assert_eq!(fs::read_to_string(root.join("app.rs")).unwrap(), "bb\n");
+        assert_eq!(result.content, "Edited app.rs (2 replacements).");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn replace_all_rejects_overlap_with_other_edits() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        fs::write(root.join("app.rs"), "foo\nfoo\n").expect("write file");
+        let tool = EditFileTool::new(&root);
+        let fingerprints = fingerprints(&root, &["app.rs"]);
+
+        let error = tool
+            .edit(
+                json!({
+                    "files": [{
+                        "path": "app.rs",
+                        "edits": [
+                            {"oldContent": "foo", "newContent": "bar", "replaceAll": true},
+                            {"oldContent": "foo\nfoo", "newContent": "baz"}
+                        ]
+                    }]
+                }),
+                &fingerprints,
+            )
+            .await
+            .expect_err("overlap should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "edits[0] and edits[1] overlap in app.rs. Merge them into one edit or target disjoint regions."
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("app.rs")).unwrap(),
+            "foo\nfoo\n"
+        );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn replace_all_supports_fuzzy_matches() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        fs::write(root.join("copy.txt"), "title: “Hello”   \ntitle: “Hello”\n")
+            .expect("write file");
+        let tool = EditFileTool::new(&root);
+        let fingerprints = fingerprints(&root, &["copy.txt"]);
+
+        let result = tool
+            .edit(
+                json!({
+                    "files": [{
+                        "path": "copy.txt",
+                        "edits": [{"oldContent": "title: \"Hello\"", "newContent": "title: hi", "replaceAll": true}]
+                    }]
+                }),
+                &fingerprints,
+            )
+            .await
+            .expect("fuzzy replaceAll edit should apply");
+
+        assert_eq!(
+            fs::read_to_string(root.join("copy.txt")).unwrap(),
+            "title: hi\ntitle: hi\n"
+        );
+        assert_eq!(result.content, "Edited copy.txt (2 replacements).");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
     async fn rejects_stale_read_fingerprint() {
         let root = unique_temp_dir();
         fs::create_dir_all(&root).expect("create temp workspace");
@@ -1227,7 +1447,7 @@ mod tests {
         let error = tool
             .edit(
                 json!({
-                    "edits": [{
+                    "files": [{
                         "path": "app.rs",
                         "edits": [{"oldContent": "b", "newContent": "B"}]
                     }]
@@ -1244,6 +1464,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn descriptor_uses_files_as_top_level_field() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        let tool = EditFileTool::new(&root);
+        let schema = tool.descriptor().input_schema;
+
+        assert!(schema["properties"].get("files").is_some());
+        assert!(schema["properties"].get("edits").is_none());
+        assert_eq!(schema["required"], json!(["files"]));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn rejects_legacy_top_level_edits_field() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        fs::write(root.join("app.rs"), "alpha\n").expect("write file");
+        let tool = EditFileTool::new(&root);
+        let fingerprints = fingerprints(&root, &["app.rs"]);
+
+        let error = tool
+            .edit(
+                json!({
+                    "edits": [{
+                        "path": "app.rs",
+                        "edits": [{"oldContent": "alpha", "newContent": "beta"}]
+                    }]
+                }),
+                &fingerprints,
+            )
+            .await
+            .expect_err("top-level edits should be rejected");
+
+        assert!(error.to_string().contains("unknown field `edits`"));
+        assert_eq!(fs::read_to_string(root.join("app.rs")).unwrap(), "alpha\n");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
     async fn accepts_old_text_new_text_aliases() {
         let root = unique_temp_dir();
         fs::create_dir_all(&root).expect("create temp workspace");
@@ -1253,7 +1512,7 @@ mod tests {
 
         tool.edit(
             json!({
-                "edits": [{
+                "files": [{
                     "path": "app.rs",
                     "edits": [{"oldText": "alpha", "newText": "beta"}]
                 }]
@@ -1277,7 +1536,7 @@ mod tests {
 
         tool.edit(
             json!({
-                "edits": [{
+                "files": [{
                     "path": "app.rs",
                     "edits": [{"oldContent": "two\nthree", "newContent": "deux\ntrois"}]
                 }]
@@ -1308,7 +1567,7 @@ mod tests {
 
         tool.edit(
             json!({
-                "edits": [{
+                "files": [{
                     "path": "copy.txt",
                     "edits": [{"oldContent": "title: \"Hello\"-world", "newContent": "title: \"Hello\" - world"}]
                 }]
@@ -1336,7 +1595,7 @@ mod tests {
         let error = tool
             .edit(
                 json!({
-                    "edits": [{
+                    "files": [{
                         "path": "copy.txt",
                         "edits": [{"oldContent": "title: \"Hello\"", "newContent": "title: hi"}]
                     }]

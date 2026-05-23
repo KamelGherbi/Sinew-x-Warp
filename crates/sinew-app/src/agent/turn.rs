@@ -46,6 +46,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
         model,
         cache_key,
         mut cache_stable_message_count,
+        service_tier,
         auto_compact,
         mode,
         mut stop_questions,
@@ -161,6 +162,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                 &model,
                 cache_key.as_ref(),
                 &mut cache_stable_message_count,
+                service_tier,
                 &mut history,
                 &mut current_turn_tool_result_ids,
                 &current_system_prompt,
@@ -196,6 +198,10 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
             .with_cache_stable_message_count(cache_stable_message_count);
         let request = match &cache_key {
             Some(cache_key) => request.with_cache_key(cache_key.clone()),
+            None => request,
+        };
+        let request = match service_tier {
+            Some(service_tier) => request.with_service_tier(service_tier),
             None => request,
         };
 
@@ -305,6 +311,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                             &model,
                             cache_key.as_ref(),
                             &mut cache_stable_message_count,
+                            service_tier,
                             &mut history,
                             &mut current_turn_tool_result_ids,
                             &current_system_prompt,
@@ -527,6 +534,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         &model,
                         cache_key.as_ref(),
                         &mut cache_stable_message_count,
+                        service_tier,
                         &mut history,
                         &mut current_turn_tool_result_ids,
                         &current_system_prompt,

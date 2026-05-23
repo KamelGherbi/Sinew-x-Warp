@@ -8,7 +8,7 @@ use std::{
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sinew_core::{ChatMessage, ModelRef, Part, Provider, Role, ToolDescriptor};
+use sinew_core::{ChatMessage, ModelRef, Part, Provider, Role, ServiceTier, ToolDescriptor};
 use tokio::sync::{mpsc, Notify, RwLock, Semaphore};
 use uuid::Uuid;
 

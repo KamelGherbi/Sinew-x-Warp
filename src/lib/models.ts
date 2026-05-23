@@ -17,6 +17,7 @@ export type ModelEntry = {
   label: string;
   thinking: readonly ThinkingLevel[];
   defaultThinking: ThinkingLevel;
+  supportsFast?: boolean;
 };
 
 export const PROVIDERS: {
@@ -96,6 +97,7 @@ export const MODELS: ModelEntry[] = [
     label: "GPT-5.5",
     thinking: ["off", "low", "medium", "high", "xhigh"],
     defaultThinking: "medium",
+    supportsFast: true,
   },
   {
     value: "openai:gpt-5.4",
@@ -103,6 +105,7 @@ export const MODELS: ModelEntry[] = [
     label: "GPT-5.4",
     thinking: ["off", "low", "medium", "high", "xhigh"],
     defaultThinking: "medium",
+    supportsFast: true,
   },
   {
     value: "openai:gpt-5.4-mini",
@@ -110,6 +113,7 @@ export const MODELS: ModelEntry[] = [
     label: "GPT-5.4 Mini",
     thinking: ["off", "low", "medium", "high", "xhigh"],
     defaultThinking: "medium",
+    supportsFast: true,
   },
   {
     value: "openai:gpt-5.3-codex",
@@ -117,6 +121,7 @@ export const MODELS: ModelEntry[] = [
     label: "GPT-5.3 Codex",
     thinking: ["off", "low", "medium", "high", "xhigh"],
     defaultThinking: "medium",
+    supportsFast: true,
   },
   {
     value: "openai:gpt-5.3-codex-spark",
@@ -124,6 +129,7 @@ export const MODELS: ModelEntry[] = [
     label: "GPT-5.3 Codex Spark",
     thinking: ["low", "medium", "high", "xhigh"],
     defaultThinking: "low",
+    supportsFast: true,
   },
   {
     value: "openai:gpt-5.2",
@@ -131,6 +137,7 @@ export const MODELS: ModelEntry[] = [
     label: "GPT-5.2",
     thinking: ["off", "low", "medium", "high", "xhigh"],
     defaultThinking: "medium",
+    supportsFast: true,
   },
   {
     value: "google:gemini-3.1-pro",

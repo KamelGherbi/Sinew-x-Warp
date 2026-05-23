@@ -8,6 +8,6 @@ pub mod tool;
 pub use error::{AppError, Result};
 pub use message::{ChatMessage, Part, Role, StopReason, ToolResultImage, Usage};
 pub use model::{Effort, EffortMode, ModelCapabilities, ModelRef};
-pub use provider::{Provider, ProviderRequest, TokenEstimate};
+pub use provider::{Provider, ProviderRequest, ServiceTier, TokenEstimate};
 pub use stream::{PartKind, ProviderStream, StreamEvent, ToolCallIntro};
 pub use tool::{ToolDescriptor, ToolResultPayload};

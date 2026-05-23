@@ -22,6 +22,8 @@ pub struct ResponsesRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub generate: Option<bool>,
 }
 

@@ -7528,6 +7528,21 @@ textarea {
 .composer__compact {
   margin-right: -2px;
 }
+.composer__fast-btn {
+  margin-left: -1px;
+  color: var(--text-3);
+}
+.composer__fast-btn[data-active="true"] {
+  background: rgba(244, 201, 93, 0.16);
+  color: #f4c95d;
+}
+.composer__fast-btn[data-active="true"]:hover:not(:disabled) {
+  background: rgba(244, 201, 93, 0.24);
+  color: #ffe29a;
+}
+.composer__fast-btn svg {
+  color: inherit;
+}
 
 /* Compaction takeover: when the user opens the compaction instruction,
    the entire toolbar swaps to a single-row pill that spans the full

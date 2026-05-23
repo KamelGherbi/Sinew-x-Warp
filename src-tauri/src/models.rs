@@ -278,6 +278,7 @@ pub(super) struct SendMessageInput {
     pub(super) model: Option<ModelInput>,
     pub(super) thinking: Option<ThinkingLevelInput>,
     pub(super) mode: Option<AgentModeInput>,
+    pub(super) service_tier: Option<ServiceTierInput>,
     pub(super) plan_control: Option<PlanControlInput>,
     pub(super) message_visibility: Option<MessageVisibilityInput>,
     pub(super) plan_implementation_options: Option<PlanImplementationOptionsInput>,
@@ -300,6 +301,7 @@ pub(super) struct CompactConversationInput {
     pub(super) conversation_id: String,
     pub(super) model: Option<ModelInput>,
     pub(super) thinking: Option<ThinkingLevelInput>,
+    pub(super) service_tier: Option<ServiceTierInput>,
     #[serde(default)]
     pub(super) instruction: Option<String>,
 }
@@ -566,6 +568,20 @@ impl From<AgentModeInput> for AgentMode {
             AgentModeInput::Act => AgentMode::Act,
             AgentModeInput::Plan => AgentMode::Plan,
             AgentModeInput::Goal => AgentMode::Goal,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum ServiceTierInput {
+    Fast,
+}
+
+impl From<ServiceTierInput> for ServiceTier {
+    fn from(value: ServiceTierInput) -> Self {
+        match value {
+            ServiceTierInput::Fast => ServiceTier::Fast,
         }
     }
 }

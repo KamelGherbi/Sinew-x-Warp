@@ -5,7 +5,7 @@ use futures::{stream, StreamExt};
 use serde_json::Value;
 use sinew_core::{
     AppError, ChatMessage, Effort, ModelCapabilities, ModelRef, Part, Provider, ProviderRequest,
-    ProviderStream, Result, Role, StreamEvent, TokenEstimate, ToolDescriptor,
+    ProviderStream, Result, Role, ServiceTier, StreamEvent, TokenEstimate, ToolDescriptor,
 };
 
 use crate::{auth::Credential, model_info, stream::EventParser, wire};
@@ -333,6 +333,7 @@ fn build_responses_request<'a>(
         temperature: request.temperature,
         store,
         stream,
+        service_tier: service_tier_param(request.service_tier),
         generate: None,
     })
 }
@@ -367,6 +368,14 @@ fn effort_to_reasoning(effort: Option<Effort>) -> Option<wire::ReasoningConfig> 
         },
         summary: "auto",
     })
+}
+
+fn service_tier_param(service_tier: Option<ServiceTier>) -> Option<&'static str> {
+    match service_tier {
+        Some(ServiceTier::Fast) => Some("priority"),
+        Some(ServiceTier::Flex) => Some("flex"),
+        None => None,
+    }
 }
 
 fn to_wire_tool(tool: &ToolDescriptor) -> wire::WireTool<'_> {
@@ -609,7 +618,9 @@ async fn read_http_error(response: reqwest::Response) -> AppError {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use sinew_core::{ChatMessage, ModelRef, Part, ProviderRequest, Role, ToolResultImage};
+    use sinew_core::{
+        ChatMessage, ModelRef, Part, ProviderRequest, Role, ServiceTier, ToolResultImage,
+    };
 
     use super::{build_responses_request, to_input_items};
 
@@ -677,5 +688,25 @@ mod tests {
         assert_eq!(value["stream"], true);
         assert_eq!(value["prompt_cache_key"], "conversation-1");
         assert_eq!(value["input"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn sse_request_body_maps_fast_service_tier_to_priority() {
+        let request = ProviderRequest::new(
+            ModelRef::new("openai", "gpt-5.5"),
+            vec![ChatMessage::user_text("hello")],
+        )
+        .with_service_tier(ServiceTier::Fast);
+        let body = build_responses_request(
+            &request,
+            &request.transcript,
+            false,
+            Some(false),
+            Some(true),
+        )
+        .expect("body should serialize");
+        let value = serde_json::to_value(&body).expect("body should be json");
+
+        assert_eq!(value["service_tier"], "priority");
     }
 }

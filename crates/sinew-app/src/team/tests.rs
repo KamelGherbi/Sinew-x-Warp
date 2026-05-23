@@ -811,6 +811,7 @@ fn test_team_tool() -> TeamTool {
         SkillSettings::default(),
         ModelRef::new("test", "model"),
         1,
+        None,
         Arc::new(RwLock::new(TeamRuntime::default())),
         TurnCancel::empty(),
     )

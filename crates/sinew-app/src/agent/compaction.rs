@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use sinew_core::{
-    AppError, ChatMessage, ModelRef, Part, Provider, ProviderRequest, ToolDescriptor,
+    AppError, ChatMessage, ModelRef, Part, Provider, ProviderRequest, ServiceTier, ToolDescriptor,
 };
 
 use crate::compact_conversation_history;
@@ -25,6 +25,7 @@ pub(super) async fn maybe_auto_compact_history(
     model: &ModelRef,
     cache_key: Option<&String>,
     cache_stable_message_count: &mut usize,
+    service_tier: Option<ServiceTier>,
     history: &mut Vec<ChatMessage>,
     current_turn_tool_result_ids: &mut BTreeSet<String>,
     system_prompt: &str,
@@ -54,6 +55,9 @@ pub(super) async fn maybe_auto_compact_history(
     if let Some(cache_key) = cache_key {
         request = request.with_cache_key(cache_key.clone());
     }
+    if let Some(service_tier) = service_tier {
+        request = request.with_service_tier(service_tier);
+    }
 
     let should_compact = match provider.estimate_tokens(request).await {
         Ok(estimate) => {
@@ -73,6 +77,7 @@ pub(super) async fn maybe_auto_compact_history(
         model,
         cache_key,
         cache_stable_message_count,
+        service_tier,
         history,
         current_turn_tool_result_ids,
         system_prompt,
@@ -90,6 +95,7 @@ pub(super) async fn run_auto_compaction(
     model: &ModelRef,
     cache_key: Option<&String>,
     cache_stable_message_count: &mut usize,
+    service_tier: Option<ServiceTier>,
     history: &mut Vec<ChatMessage>,
     current_turn_tool_result_ids: &mut BTreeSet<String>,
     system_prompt: &str,
@@ -145,6 +151,7 @@ pub(super) async fn run_auto_compaction(
         history.clone(),
         cache_key.cloned(),
         *cache_stable_message_count,
+        service_tier,
         None,
         cmd_rx,
         Some(summary_delta_tx),

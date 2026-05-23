@@ -12,6 +12,7 @@ impl TeamTool {
         skill_settings: SkillSettings,
         default_model: ModelRef,
         max_tool_rounds: usize,
+        service_tier: Option<ServiceTier>,
         runtime: Arc<RwLock<TeamRuntime>>,
         cancel: TurnCancel,
     ) -> Self {
@@ -26,6 +27,7 @@ impl TeamTool {
             skill_settings,
             default_model,
             max_tool_rounds,
+            service_tier,
             runtime,
             cancel,
             current_agent: None,

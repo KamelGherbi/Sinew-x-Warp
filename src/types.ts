@@ -140,6 +140,8 @@ export type ModelRef = {
 
 export type AgentMode = "act" | "plan" | "goal";
 
+export type ServiceTier = "fast";
+
 export type ModeModelSettings = Record<AgentMode, ModelRef>;
 
 export type SubAgentConfig = {
