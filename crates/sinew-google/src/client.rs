@@ -319,7 +319,7 @@ impl Provider for GoogleProvider {
         if model.provider != "google" {
             return None;
         }
-        model_info::capabilities(model)
+        Some(model_info::capabilities(model))
     }
 
     async fn estimate_tokens(&self, request: ProviderRequest) -> Result<TokenEstimate> {

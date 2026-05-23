@@ -490,6 +490,7 @@ export function TodoStrip({
   blocks,
   teamBlocks,
   queuedPrompts = [],
+  todoLive = false,
   showTeamTasks = true,
   teamAgentColors = {},
   teamMessageRecipient,
@@ -501,6 +502,7 @@ export function TodoStrip({
   blocks: ChatBlock[];
   teamBlocks?: ChatBlock[];
   queuedPrompts?: QueuedPromptStripItem[];
+  todoLive?: boolean;
   showTeamTasks?: boolean;
   teamAgentColors?: Record<string, string>;
   teamMessageRecipient?: string;
@@ -613,7 +615,10 @@ export function TodoStrip({
         : tasks.length;
   const visibleTaskEntries = tasks
     .map((task, index) => ({ task, index }))
-    .filter(({ task }) => open || task.status === "in_progress");
+    .filter(
+      ({ task }) =>
+        open || (task.status === "in_progress" && (active !== "todo" || todoLive)),
+    );
   const visibleMessages = open ? teamMessages : [];
   const visibleQueuedPrompts = open
     ? queuedPrompts
@@ -793,7 +798,10 @@ export function TodoStrip({
               data-panel={active}
               data-status={task.status}
             >
-              <TaskStatusMark status={task.status} />
+              <TaskStatusMark
+                status={task.status}
+                live={active !== "todo" || todoLive}
+              />
               <span className="todo-strip__text">
                 {task.text}
                 {active === "team" && (
@@ -989,13 +997,21 @@ function cssPx(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function TaskStatusMark({ status }: { status: TodoStatus | TeamTaskStatus }) {
+function TaskStatusMark({
+  status,
+  live,
+}: {
+  status: TodoStatus | TeamTaskStatus;
+  live: boolean;
+}) {
   return (
     <span className="todo-strip__mark">
       {status === "done" || status === "completed" ? (
         <Icon icon="solar:check-circle-linear" width={14} height={14} />
-      ) : status === "in_progress" ? (
+      ) : status === "in_progress" && live ? (
         <span className="todo-strip__loader" />
+      ) : status === "in_progress" ? (
+        <span className="todo-strip__square" />
       ) : status === "blocked" ? (
         <Icon icon="solar:danger-triangle-linear" width={14} height={14} />
       ) : (

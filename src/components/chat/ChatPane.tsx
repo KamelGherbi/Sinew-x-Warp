@@ -2914,6 +2914,7 @@ export function ChatPane({
         blocks={displayView.blocks}
         teamBlocks={teamTaskBlocks}
         queuedPrompts={viewingSubAgent ? [] : queuedPrompts}
+        todoLive={displayView.status === "streaming"}
         showTeamTasks={activeTeamNames.size > 0}
         teamAgentColors={teamAgentColors}
         teamMessageRecipient={viewingSubAgent ? activeSubAgent?.name : undefined}
