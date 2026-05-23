@@ -235,17 +235,6 @@ function planArtifactFromMeta(meta: unknown): PlanArtifact | null {
   };
 }
 
-// Answers submitted via the Questionnaire widget — the widget itself
-// already renders the "Question answered" confirmation, so we hide the
-// echoed user message from the chat view.
-function isQuestionnaireAnswerText(text: string): boolean {
-  return /^\s*Answer to "/.test(text);
-}
-
-function isQuestionnaireAnswer(part: Part): boolean {
-  return part.type === "text" && isQuestionnaireAnswerText(part.text);
-}
-
 function attachmentFromValue(value: unknown): UserAttachment | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
@@ -281,7 +270,6 @@ function blocksFromHistory(history: ChatMessage[]): ChatBlock[] {
   const blocks: ChatBlock[] = [];
   let counter = 0;
   const id = (tag: string) => `h-${tag}-${counter++}`;
-  const answeredQuestions = collectAnsweredQuestions(history);
   // map tool_call id -> tool_result (may come as a user-role follow-up)
   const toolResults = new Map<string, ToolResultPart>();
   for (const message of history) {
@@ -320,7 +308,6 @@ function blocksFromHistory(history: ChatMessage[]): ChatBlock[] {
           continue;
         }
         if (isHiddenUserText(part)) continue;
-        if (isQuestionnaireAnswer(part)) continue;
         const trimmed = part.text.trim();
         if (!trimmed) continue;
         blocks.push({
@@ -384,17 +371,8 @@ function blocksFromHistory(history: ChatMessage[]): ChatBlock[] {
               continue;
             }
           }
-          const resultFileChanges = (
-            result?.meta as { file_changes?: FileChange[] } | null
-          )?.file_changes;
-          const previewFileChanges =
-            tc.name === "apply_patch"
-              ? fileChangesFromPatchInput(tc.input)
-              : undefined;
-          const fileChanges =
-            tc.name === "apply_patch"
-              ? patchFileChanges(resultFileChanges, previewFileChanges)
-              : resultFileChanges;
+          const fileChanges = (result?.meta as { file_changes?: FileChange[] } | null)
+            ?.file_changes;
           blocks.push({
             kind: "tool",
             id: tc.id,
@@ -405,14 +383,8 @@ function blocksFromHistory(history: ChatMessage[]): ChatBlock[] {
             output: result?.content ?? "Tool call interrupted before a result was saved.",
             isError: result?.is_error ?? true,
             cleaned: isToolResultCleaned(result),
-            answered:
-              tc.name === "Question"
-                ? answeredQuestions.has(tc.id)
-                : undefined,
-            answer:
-              tc.name === "Question"
-                ? answeredQuestions.get(tc.id)
-                : undefined,
+            answered: tc.name === "Question" ? !!result && !result.is_error : undefined,
+            answer: tc.name === "Question" ? questionAnswerFromResult(result) : undefined,
             fileChanges,
             images: result?.images,
             meta: result?.meta,
@@ -432,6 +404,23 @@ function isToolResultCleaned(result?: ToolResultPart): boolean {
     typeof meta === "object" &&
     (meta as Record<string, unknown>).tool_result_cleaned === true
   );
+}
+
+function questionAnswerFromResult(result?: ToolResultPart): string | undefined {
+  return questionAnswerFromMeta(result?.meta);
+}
+
+function questionAnswerFromMeta(meta?: Record<string, unknown> | null): string | undefined {
+  const raw = meta?.question_answers;
+  if (!Array.isArray(raw)) return undefined;
+  return raw
+    .map((item) =>
+      Array.isArray(item)
+        ? item.map((value) => String(value).trim()).filter(Boolean).join(", ")
+        : "",
+    )
+    .filter(Boolean)
+    .join("\n");
 }
 
 type BashInputInfo = {
@@ -577,421 +566,9 @@ function subAgentFromToolResult(
   };
 }
 
-function collectAnsweredQuestions(history: ChatMessage[]): Map<string, string> {
-  const answered = new Map<string, string>();
-  const pendingGroups: string[][] = [];
-  let currentGroup: string[] = [];
-
-  const flushGroup = () => {
-    if (currentGroup.length === 0) return;
-    pendingGroups.push(currentGroup);
-    currentGroup = [];
-  };
-
-  const markLatestGroupAnswered = (answers: string[], rawAnswerText: string) => {
-    const group = currentGroup.length > 0 ? currentGroup : pendingGroups.pop();
-    if (!group) return;
-    if (group.length === 1) {
-      answered.set(group[0], rawAnswerText || answers.join("\n"));
-      currentGroup = [];
-      return;
-    }
-    for (let i = 0; i < group.length; i++) {
-      answered.set(group[i], answers[i] ?? "");
-    }
-    currentGroup = [];
-  };
-
-  for (const message of history) {
-    if (message.role === "assistant") {
-      for (const part of message.parts) {
-        if (part.type === "tool_call" && part.name === "Question") {
-          currentGroup.push(part.id);
-        } else if (isVisibleAssistantPart(part)) {
-          flushGroup();
-        }
-      }
-      continue;
-    }
-
-    let hasQuestionnaireAnswer = false;
-    let hasVisibleUserText = false;
-    const answers: string[] = [];
-    const answerTexts: string[] = [];
-    for (const part of message.parts) {
-      if (part.type !== "text") continue;
-      if (isHiddenUserText(part)) continue;
-      if (!part.text.trim()) continue;
-      if (isQuestionnaireAnswerText(part.text)) {
-        hasQuestionnaireAnswer = true;
-        answerTexts.push(part.text.trim());
-        answers.push(...parseQuestionnaireAnswers(part.text));
-      } else {
-        hasVisibleUserText = true;
-      }
-    }
-
-    if (hasQuestionnaireAnswer) markLatestGroupAnswered(answers, answerTexts.join("\n"));
-    if (hasVisibleUserText) flushGroup();
-  }
-
-  return answered;
-}
-
-function parseQuestionnaireAnswers(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .map((line) => {
-      const start = line.indexOf('Answer to "');
-      if (start < 0) return null;
-      const end = line.lastIndexOf('":');
-      if (end < start + 'Answer to "'.length) return null;
-      const answer = line.slice(end + 2).trim();
-      return answer.length > 0 ? answer : null;
-    })
-    .filter((answer): answer is string => answer !== null);
-}
-
-function isVisibleAssistantPart(part: Part): boolean {
-  if (part.type === "text") return part.text.trim().length > 0;
-  if (part.type === "thinking") return hasVisibleThinkingText(part.text);
-  return part.type === "tool_call" && part.name !== "Question";
-}
-
 function basename(path: string): string {
   const idx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return idx >= 0 ? path.slice(idx + 1) : path;
-}
-
-const PATCH_PREVIEW_LINE_LIMIT = 400;
-
-function fileChangesFromPatchInput(input: unknown): FileChange[] | undefined {
-  if (!input || typeof input !== "object") return undefined;
-  const patch = (input as Record<string, unknown>).patch;
-  if (typeof patch !== "string" || !patch.trim()) return undefined;
-  const changes = parsePatchPreview(patch);
-  return changes.length > 0 ? changes : undefined;
-}
-
-function fileChangesFromPatchJson(raw: string): FileChange[] | undefined {
-  const parsed = parsePrettyJson(raw);
-  const parsedChanges = fileChangesFromPatchInput(parsed);
-  if (parsedChanges) return parsedChanges;
-
-  const patch = partialJsonStringValue(raw, "patch");
-  if (!patch) return undefined;
-  const changes = parsePatchPreview(patch);
-  return changes.length > 0 ? changes : undefined;
-}
-
-function patchFileChanges(
-  resultChanges?: FileChange[],
-  previewChanges?: FileChange[],
-): FileChange[] | undefined {
-  if (hasVisibleFileChangeDetails(resultChanges)) return resultChanges;
-  if (hasVisibleFileChangeDetails(previewChanges)) return previewChanges;
-  return resultChanges ?? previewChanges;
-}
-
-function hasVisibleFileChangeDetails(changes?: FileChange[]): boolean {
-  return !!changes?.some((change) => {
-    if (change.binary) return true;
-    if ((change.addedLines ?? 0) > 0 || (change.removedLines ?? 0) > 0) {
-      return true;
-    }
-    return change.lines.some((line) => {
-      const kind = line.kind.toLowerCase();
-      return (
-        kind === "added" ||
-        kind === "insert" ||
-        kind === "removed" ||
-        kind === "delete" ||
-        kind === "deleted"
-      );
-    });
-  });
-}
-
-function partialJsonStringValue(raw: string, key: string): string | null {
-  const keyMatch = new RegExp(`"${key}"\\s*:\\s*"`).exec(raw);
-  if (!keyMatch) return null;
-  const start = keyMatch.index + keyMatch[0].length;
-  let escaped = "";
-  let escaping = false;
-  for (let i = start; i < raw.length; i++) {
-    const char = raw[i];
-    if (escaping) {
-      escaped += `\\${char}`;
-      escaping = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaping = true;
-      continue;
-    }
-    if (char === "\"") break;
-    escaped += char;
-  }
-  return unescapeJsonFragment(escaped);
-}
-
-function unescapeJsonFragment(value: string): string {
-  return value
-    .replace(/\\n/g, "\n")
-    .replace(/\\r/g, "\r")
-    .replace(/\\t/g, "\t")
-    .replace(/\\"/g, "\"")
-    .replace(/\\\\/g, "\\");
-}
-
-function parsePatchPreview(patch: string): FileChange[] {
-  if (patch.trimStart().startsWith("*** Begin Patch")) {
-    return parseCodexPatchPreview(patch);
-  }
-  return parseGitDiffPatchPreview(patch);
-}
-
-function parseCodexPatchPreview(patch: string): FileChange[] {
-  const changes: FileChange[] = [];
-  let currentIndex = -1;
-  let mode: "add" | "update" | null = null;
-  let inHunk = false;
-
-  const ensureCurrent = (path: string, kind: FileChange["kind"] = "modified") => {
-    const relativePath = normalizeDiffPath(path);
-    if (!relativePath || relativePath === "/dev/null") return undefined;
-    const existingIndex = changes.findIndex(
-      (change) => change.relativePath === relativePath,
-    );
-    if (existingIndex >= 0) {
-      currentIndex = existingIndex;
-      changes[existingIndex].kind = kind;
-      return changes[existingIndex];
-    }
-    const next: FileChange = {
-      relativePath,
-      kind,
-      summary: `Updated ${relativePath}`,
-      binary: false,
-      addedLines: 0,
-      removedLines: 0,
-      truncated: false,
-      lines: [],
-    };
-    changes.push(next);
-    currentIndex = changes.length - 1;
-    return next;
-  };
-
-  const currentChange = () =>
-    currentIndex >= 0 ? changes[currentIndex] : undefined;
-
-  const pushLine = (kind: "context" | "added" | "removed", text: string) => {
-    const current = currentChange();
-    if (!current) return;
-    if (kind === "added") current.addedLines = (current.addedLines ?? 0) + 1;
-    if (kind === "removed") current.removedLines = (current.removedLines ?? 0) + 1;
-    if (current.lines.length >= PATCH_PREVIEW_LINE_LIMIT) {
-      current.truncated = true;
-      return;
-    }
-    current.lines.push({ kind, text });
-  };
-
-  for (const rawLine of patch.split(/\n/)) {
-    const line = rawLine.replace(/\r$/, "");
-
-    const addHeader = /^\*\*\* Add File: (.+)$/.exec(line);
-    if (addHeader) {
-      ensureCurrent(addHeader[1], "added");
-      mode = "add";
-      inHunk = false;
-      continue;
-    }
-
-    const deleteHeader = /^\*\*\* Delete File: (.+)$/.exec(line);
-    if (deleteHeader) {
-      ensureCurrent(deleteHeader[1], "deleted");
-      mode = null;
-      inHunk = false;
-      continue;
-    }
-
-    const updateHeader = /^\*\*\* Update File: (.+)$/.exec(line);
-    if (updateHeader) {
-      ensureCurrent(updateHeader[1], "modified");
-      mode = "update";
-      inHunk = false;
-      continue;
-    }
-
-    const moveHeader = /^\*\*\* Move to: (.+)$/.exec(line);
-    if (moveHeader && currentChange()) {
-      currentChange()!.relativePath = normalizeDiffPath(moveHeader[1]);
-      continue;
-    }
-
-    if (line.startsWith("*** End Patch")) {
-      mode = null;
-      inHunk = false;
-      continue;
-    }
-
-    if (!currentChange()) continue;
-    if (mode === "add" && line.startsWith("+")) {
-      pushLine("added", line.slice(1));
-      continue;
-    }
-    if (mode === "update" && line.startsWith("@@")) {
-      inHunk = true;
-      pushLine("context", line);
-      continue;
-    }
-    if (mode !== "update" || !inHunk) continue;
-    if (line === "*** End of File") continue;
-    if (line.startsWith("+")) {
-      pushLine("added", line.slice(1));
-    } else if (line.startsWith("-")) {
-      pushLine("removed", line.slice(1));
-    } else if (line.startsWith(" ")) {
-      pushLine("context", line.slice(1));
-    }
-  }
-
-  return changes.map((change) => ({
-    ...change,
-    summary: fileChangeSummary(change.kind, change.relativePath),
-  }));
-}
-
-function parseGitDiffPatchPreview(patch: string): FileChange[] {
-  const changes: FileChange[] = [];
-  let currentIndex = -1;
-
-  const ensureCurrent = (path: string) => {
-    const relativePath = normalizeDiffPath(path);
-    if (!relativePath || relativePath === "/dev/null") return null;
-    const existingIndex = changes.findIndex(
-      (change) => change.relativePath === relativePath,
-    );
-    if (existingIndex >= 0) {
-      currentIndex = existingIndex;
-      return changes[existingIndex];
-    }
-    const next: FileChange = {
-      relativePath,
-      kind: "modified",
-      summary: `Updated ${relativePath}`,
-      binary: false,
-      addedLines: 0,
-      removedLines: 0,
-      truncated: false,
-      lines: [],
-    };
-    changes.push(next);
-    currentIndex = changes.length - 1;
-    return next;
-  };
-
-  const currentChange = () =>
-    currentIndex >= 0 ? changes[currentIndex] : undefined;
-
-  const setCurrentKind = (kind: FileChange["kind"]) => {
-    const change = currentChange();
-    if (change) change.kind = kind;
-  };
-
-  const markCurrentBinary = () => {
-    const change = currentChange();
-    if (change) change.binary = true;
-  };
-
-  const pushLine = (kind: "context" | "added" | "removed", text: string) => {
-    const current = currentChange();
-    if (!current) return;
-    if (kind === "added") current.addedLines = (current.addedLines ?? 0) + 1;
-    if (kind === "removed") current.removedLines = (current.removedLines ?? 0) + 1;
-    if (current.lines.length >= PATCH_PREVIEW_LINE_LIMIT) {
-      current.truncated = true;
-      return;
-    }
-    current.lines.push({ kind, text });
-  };
-
-  for (const rawLine of patch.split(/\n/)) {
-    const line = rawLine.replace(/\r$/, "");
-    const gitHeader = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
-    if (gitHeader) {
-      ensureCurrent(gitHeader[2]);
-      continue;
-    }
-
-    if (line.startsWith("new file mode")) {
-      setCurrentKind("added");
-      continue;
-    }
-    if (line.startsWith("deleted file mode")) {
-      setCurrentKind("deleted");
-      continue;
-    }
-    if (line.startsWith("Binary files ")) {
-      markCurrentBinary();
-      continue;
-    }
-
-    const oldPath = /^---\s+(.+)$/.exec(line);
-    if (oldPath) {
-      if (oldPath[1] === "/dev/null") {
-        setCurrentKind("added");
-      } else if (!currentChange()) {
-        ensureCurrent(oldPath[1]);
-      }
-      continue;
-    }
-
-    const newPath = /^\+\+\+\s+(.+)$/.exec(line);
-    if (newPath) {
-      if (newPath[1] === "/dev/null") {
-        setCurrentKind("deleted");
-      } else {
-        ensureCurrent(newPath[1]);
-      }
-      continue;
-    }
-
-    if (!currentChange()) continue;
-    if (line.startsWith("@@")) {
-      pushLine("context", line);
-    } else if (line.startsWith("+")) {
-      pushLine("added", line.slice(1));
-    } else if (line.startsWith("-")) {
-      pushLine("removed", line.slice(1));
-    } else if (line.startsWith(" ")) {
-      pushLine("context", line.slice(1));
-    }
-  }
-
-  return changes.map((change) => ({
-    ...change,
-    summary: fileChangeSummary(change.kind, change.relativePath),
-  }));
-}
-
-function normalizeDiffPath(path: string): string {
-  const trimmed = path.trim().replace(/^"|"$/g, "");
-  if (trimmed === "/dev/null") return trimmed;
-  return trimmed.replace(/^[ab]\//, "");
-}
-
-function fileChangeSummary(kind: FileChange["kind"], relativePath: string): string {
-  if (kind === "added") return `Added ${relativePath}`;
-  if (kind === "deleted") return `Deleted ${relativePath}`;
-  return `Updated ${relativePath}`;
-}
-
-function patchSummary(changes: FileChange[]): string {
-  if (changes.length === 1) return changes[0].summary;
-  return `${changes.length} files changed`;
 }
 
 function summaryFromInput(
@@ -1019,9 +596,15 @@ function summaryFromInput(
     const record = input as Record<string, unknown>;
     if (typeof record.path === "string") return `Read ${record.path}`;
   }
-  if (name === "apply_patch") {
-    const changes = fileChangesFromPatchInput(input);
-    return changes ? patchSummary(changes) : "Apply patch";
+  if (name === "edit_file") {
+    return editFileSummary(input);
+  }
+  if (name === "write_file" && input && typeof input === "object") {
+    const record = input as Record<string, unknown>;
+    if (typeof record.path === "string" && record.path.trim()) {
+      return `Write ${record.path.trim()}`;
+    }
+    return "Write file";
   }
   if (name === "clean_context") {
     return "Clean context";
@@ -1212,7 +795,7 @@ function genericMcpLabel(value: string): string {
 function pendingSummary(name: string): string | undefined {
   if (name === "bash") return "Running command";
   if (name === "bash_input") return "Interacting with command";
-  if (name === "apply_patch") return "Preparing patch";
+  if (name === "write_file") return "Preparing write";
   if (name === "clean_context") return "Cleaning context";
   if (name === "context_compaction") return "Compacting context";
   if (name === "update_goal") return "Finishing goal";
@@ -1306,23 +889,171 @@ function cleanContextIdsFromArgs(argsPretty?: string): Set<string> {
   return new Set(values.filter((value): value is string => typeof value === "string"));
 }
 
-function readPathFromPartialJson(input: string): string | null {
-  const match = input.match(/"path"\s*:\s*"((?:\\.|[^"\\])*)/);
-  if (!match) return null;
-  try {
-    return JSON.parse(`"${match[1]}"`) as string;
-  } catch {
-    return match[1].replace(/\\"/g, '"');
+function readJsonStringToken(
+  input: string,
+  start: number,
+): { value: string; end: number; complete: boolean } | null {
+  if (input[start] !== '"') return null;
+  let value = "";
+  for (let index = start + 1; index < input.length; index += 1) {
+    const char = input[index];
+    if (char === '"') {
+      return { value, end: index + 1, complete: true };
+    }
+    if (char !== "\\") {
+      value += char;
+      continue;
+    }
+
+    index += 1;
+    if (index >= input.length) {
+      return { value, end: input.length, complete: false };
+    }
+    const escaped = input[index];
+    switch (escaped) {
+      case '"':
+      case "\\":
+      case "/":
+        value += escaped;
+        break;
+      case "b":
+        value += "\b";
+        break;
+      case "f":
+        value += "\f";
+        break;
+      case "n":
+        value += "\n";
+        break;
+      case "r":
+        value += "\r";
+        break;
+      case "t":
+        value += "\t";
+        break;
+      case "u": {
+        const hex = input.slice(index + 1, index + 5);
+        if (hex.length < 4 || !/^[0-9a-fA-F]{4}$/.test(hex)) {
+          return { value, end: input.length, complete: false };
+        }
+        value += String.fromCharCode(Number.parseInt(hex, 16));
+        index += 4;
+        break;
+      }
+      default:
+        value += escaped;
+        break;
+    }
   }
+  return { value, end: input.length, complete: false };
+}
+
+function skipJsonWhitespace(input: string, index: number): number {
+  while (index < input.length && /\s/.test(input[index])) index += 1;
+  return index;
+}
+
+function jsonStringProperty(
+  input: string,
+  property: string,
+): { value: string; complete: boolean } | null {
+  for (let index = 0; index < input.length; index += 1) {
+    if (input[index] !== '"') continue;
+    const key = readJsonStringToken(input, index);
+    if (!key) continue;
+    if (!key.complete) return null;
+    index = key.end;
+    let valueStart = skipJsonWhitespace(input, index);
+    if (input[valueStart] !== ":") continue;
+    valueStart = skipJsonWhitespace(input, valueStart + 1);
+    if (key.value !== property) continue;
+    const value = readJsonStringToken(input, valueStart);
+    return value ? { value: value.value, complete: value.complete } : null;
+  }
+  return null;
+}
+
+function readPathFromPartialJson(input: string): string | null {
+  const path = jsonStringProperty(input, "path")?.value?.trim();
+  return path || null;
+}
+
+function partialWriteFileArgs(input: string): Record<string, unknown> | null {
+  const path = jsonStringProperty(input, "path");
+  const content = jsonStringProperty(input, "content");
+  if (!path && !content) return null;
+  const output: Record<string, unknown> = {};
+  if (path) output.path = path.value;
+  if (content) output.content = content.value;
+  return Object.keys(output).length > 0 ? output : null;
 }
 
 function partialArgsFromToolJson(
   name: string,
   input: string,
 ): Record<string, unknown> | null {
-  if (name !== "read") return null;
-  const path = readPathFromPartialJson(input);
-  return path ? { path } : null;
+  if (name === "read") {
+    const path = readPathFromPartialJson(input);
+    return path ? { path } : null;
+  }
+  if (name === "edit_file") {
+    return partialEditFileArgs(input);
+  }
+  if (name === "write_file") {
+    return partialWriteFileArgs(input);
+  }
+  return null;
+}
+
+function editFileGroups(input: Record<string, unknown>): unknown[] | null {
+  const edits = input.edits;
+  if (Array.isArray(edits)) return edits;
+  const files = input.files;
+  return Array.isArray(files) ? files : null;
+}
+
+function replacementCount(groups: unknown[]): number {
+  return groups.reduce<number>((total, group) => {
+    if (!group || typeof group !== "object") return total;
+    const edits = (group as Record<string, unknown>).edits;
+    return total + (Array.isArray(edits) ? edits.length : 0);
+  }, 0);
+}
+
+function editFileSummary(input: unknown): string {
+  if (!input || typeof input !== "object") return "Edit file";
+  const groups = editFileGroups(input as Record<string, unknown>);
+  if (!groups || groups.length === 0) return "Edit file";
+  const replacements = replacementCount(groups);
+  if (groups.length === 1) {
+    const first = groups[0];
+    if (first && typeof first === "object") {
+      const path = (first as Record<string, unknown>).path;
+      if (typeof path === "string" && path.trim()) {
+        return replacements > 1
+          ? `Edit ${path.trim()} · ${replacements} replacements`
+          : `Edit ${path.trim()}`;
+      }
+    }
+    return replacements > 1 ? `Edit file · ${replacements} replacements` : "Edit file";
+  }
+  return replacements > 0
+    ? `Edit files · ${groups.length} files · ${replacements} replacements`
+    : `Edit files · ${groups.length} files`;
+}
+
+function partialEditFileArgs(input: string): Record<string, unknown> | null {
+  const paths = [...input.matchAll(/"path"\s*:\s*"((?:\\.|[^"\\])*)/g)]
+    .map((match) => {
+      try {
+        return JSON.parse(`"${match[1]}"`) as string;
+      } catch {
+        return match[1].replace(/\\"/g, '"');
+      }
+    })
+    .filter((path) => path.trim());
+  if (paths.length === 0) return null;
+  return { edits: paths.map((path) => ({ path })) };
 }
 
 // -----------------------------------------------------------------
@@ -1451,6 +1182,7 @@ export function applyEvent(
         status: "running",
         hidden: event.name === "bash_input" ? true : undefined,
         summary: pendingSummary(event.name),
+        answered: event.name === "Question" ? false : undefined,
         subAgent: isSubAgentLikeTool(event.name)
           ? { id: event.id, name: event.name === "Agent" ? "Agent" : "Sub-agent" }
           : undefined,
@@ -1485,10 +1217,6 @@ export function applyEvent(
         if (block.kind === "tool" && block.id === event.id) {
           const input = parsePrettyJson(event.args_pretty);
           const silentBashPoll = silentBashPollInfo(block.name, input);
-          const fileChanges =
-            block.name === "apply_patch" && input
-              ? fileChangesFromPatchInput(input)
-              : undefined;
           return {
             ...block,
             hidden:
@@ -1500,7 +1228,6 @@ export function applyEvent(
             summary: event.summary,
             argsPretty: input ? prettyToolInput(block.name, input) : event.args_pretty,
             argsRaw: undefined,
-            fileChanges: fileChanges ?? block.fileChanges,
             subAgent: isSubAgentLikeTool(block.name)
               ? {
                   ...(block.subAgent ?? { id: block.id, name: "Sub-agent" }),
@@ -1522,10 +1249,6 @@ export function applyEvent(
           parsedInput && typeof parsedInput === "object"
             ? (parsedInput as Record<string, unknown>)
             : partialArgsFromToolJson(block.name, argsRaw);
-        const fileChanges =
-          block.name === "apply_patch"
-            ? fileChangesFromPatchJson(argsRaw)
-            : undefined;
         return {
           ...block,
           hidden:
@@ -1539,7 +1262,6 @@ export function applyEvent(
           summary: partialInput
             ? summaryFromInput(block.name, partialInput) ?? block.summary
             : block.summary,
-          fileChanges: fileChanges ?? block.fileChanges,
         };
       });
       return withStreamPhase(state, "tooling", { blocks: next });
@@ -1673,16 +1395,12 @@ export function applyEvent(
         if (block.kind === "tool" && block.id === event.id) {
           const images = Array.isArray(event.images) ? event.images : [];
           const hasFileChanges = event.file_changes.length > 0;
-          const finishedFileChanges =
-            block.name === "apply_patch"
-              ? patchFileChanges(event.file_changes, block.fileChanges)
-              : event.file_changes;
-          const patchWithoutChanges =
-            block.name === "apply_patch" && !event.is_error && !hasFileChanges;
           const bashStillRunning =
             block.name === "bash" &&
             !event.is_error &&
             bashSessionIdFromOutput(event.output) !== null;
+          const questionAnswered =
+            block.name === "Question" ? !event.is_error : block.answered;
           return {
             ...block,
             hidden: false,
@@ -1691,16 +1409,15 @@ export function applyEvent(
               : bashStillRunning
                 ? ("running" as const)
                 : ("done" as const),
-            summary: patchWithoutChanges
-              ? "Patch applied: no file changes"
-              : block.summary,
+            summary: block.summary,
             output: event.output,
             isError: event.is_error,
-            fileChanges: hasFileChanges
-              ? finishedFileChanges
-              : patchWithoutChanges
-                ? undefined
-                : block.fileChanges,
+            answered: questionAnswered,
+            answer:
+              block.name === "Question"
+                ? questionAnswerFromMeta(event.meta)
+                : block.answer,
+            fileChanges: hasFileChanges ? event.file_changes : block.fileChanges,
             images: images.length > 0 ? images : block.images,
             meta: event.meta ?? block.meta,
           };

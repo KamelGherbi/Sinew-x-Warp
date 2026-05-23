@@ -71,8 +71,12 @@ impl TeamTool {
             glob: Arc::new(GlobTool::new(self.workspace_root.clone())),
             grep: Arc::new(GrepTool::new(self.workspace_root.clone())),
             read: Arc::new(ReadTool::new(self.workspace_root.clone())),
-            apply_patch: Arc::new(
-                ApplyPatchTool::new(self.workspace_root.clone())
+            edit_file: Arc::new(
+                EditFileTool::new(self.workspace_root.clone())
+                    .with_workspace_write_lock(workspace_write_lock.clone()),
+            ),
+            write_file: Arc::new(
+                WriteFileTool::new(self.workspace_root.clone())
                     .with_workspace_write_lock(workspace_write_lock.clone()),
             ),
             create_image: Arc::new(

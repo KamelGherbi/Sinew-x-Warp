@@ -35,15 +35,16 @@ use sinew_anthropic::{
 };
 use sinew_app::{
     checkpoint_from_snapshots, clean_context_descriptor, compact_conversation_history,
-    copy_workspace_entries, create_workspace_directory, create_workspace_file,
-    delete_workspace_entry, import_workspace_paths, list_installed_skills, list_workspace_entries,
+    copy_workspace_entries, create_installed_skill, create_workspace_directory,
+    create_workspace_file, delete_workspace_entry, import_workspace_paths, list_installed_skills,
+    list_workspace_entries,
     list_workspace_files, normalize_workspace_root, probe_mcp_servers, read_external_file,
     read_workspace_file, rename_workspace_entry, resolve_terminal_path, restore_turn_checkpoints,
     restore_workspace_deleted_entries, run_turn, search_workspace_files, shell_system_prompt,
     snapshot_workspace_for_checkpoint, subagent_system_prompt,
     system_prompt_for_mode_with_plan_prompt, system_prompt_with_todo, todo_list_from_history,
     tool_settings_view, trash_workspace_entry, write_workspace_file, AgentEvent, AgentMode,
-    AppStore, ApplyPatchTool, BashTool, ConversationEvent, ConversationSummary, CreateImageTool,
+    AppStore, BashTool, ConversationEvent, ConversationSummary, CreateImageTool, EditFileTool,
     GlobTool, GoalWorkflowState, GrepTool, ImportedEntry, InstalledSkill, McpSettings,
     McpToolRegistry, ModeModelSettings, OpenRouterModelRecord, PlanArtifactState,
     PlanWorkflowState, QuestionTool, ReadTool, SavedConversation, SessionSummary, SkillSettings,
@@ -51,6 +52,7 @@ use sinew_app::{
     TerminalPathResolution, ToDoListTool, TodoListState, ToolSettings, ToolSettingsView,
     TurnCancel, TurnContext, WebFetchTool, WebSearchTool, WorkspaceBootstrap,
     WorkspaceCopyOperation, WorkspaceDeletedEntry, WorkspaceFileChangeEvent, WorkspaceSearchResult,
+    WriteFileTool,
 };
 use sinew_core::{
     ChatMessage, Effort, ModelCapabilities, ModelRef, Part, Provider, ProviderRequest, Role,
@@ -58,10 +60,12 @@ use sinew_core::{
 };
 use sinew_google::{
     delete_default_auth as delete_default_google_auth,
-    exchange_oauth_code as exchange_google_oauth_code, generate_state as generate_google_state,
+    exchange_oauth_code as exchange_google_oauth_code, generate_pkce as generate_google_pkce,
+    generate_state as generate_google_state,
     load_default_auth_status as load_default_google_auth_status,
-    oauth_authorize_url as google_oauth_authorize_url, GoogleAuthStatus, GoogleProvider,
-    MODEL_ID as GOOGLE_MODEL_ID,
+    oauth_authorize_url as google_oauth_authorize_url,
+    purge_legacy_oauth_if_needed as purge_legacy_google_oauth, GoogleAuthStatus, GoogleProvider,
+    PkceCodes as GooglePkceCodes, MODEL_ID as GOOGLE_MODEL_ID,
 };
 use sinew_kimi::{
     delete_default_auth as delete_default_kimi_auth, generate_state as generate_kimi_state,
@@ -199,6 +203,18 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             let _ = app;
 
+            // One-shot purge of legacy Google OAuth tokens so users coming from
+            // pre-0.1.14 builds reconnect against the fixed Antigravity flow.
+            match purge_legacy_google_oauth() {
+                Ok(true) => {
+                    tracing::info!("purged legacy Google OAuth state (forced re-login)");
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, "google auth migration check failed");
+                }
+            }
+
             #[cfg(target_os = "macos")]
             {
                 install_macos_dock_menu(app.handle());
@@ -263,6 +279,8 @@ pub fn run() {
             workspace::resolve_terminal_path_command,
             workspace::read_external_file_command,
             workspace::delete_skill_command,
+            workspace::create_skill_command,
+            workspace::update_skill_content_command,
             workspace::open_external_url_command,
             workspace::open_path_with_default_app_command,
             workspace::copy_file_to_path_command,
@@ -312,6 +330,8 @@ pub fn run() {
             conversations::list_installed_skills_command,
             conversations::save_skill_settings,
             turns::send_message,
+            turns::answer_question,
+            turns::reject_question,
             turns::compact_conversation,
             turns::list_active_turns,
             turns::replay_active_turn_events,

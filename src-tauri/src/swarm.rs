@@ -344,7 +344,8 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
         glob: Arc::new(GlobTool::new(workspace_root.clone())),
         grep: Arc::new(GrepTool::new(workspace_root.clone())),
         read: Arc::new(ReadTool::new(workspace_root.clone())),
-        apply_patch: Arc::new(ApplyPatchTool::new(workspace_root.clone())),
+        edit_file: Arc::new(EditFileTool::new(workspace_root.clone())),
+        write_file: Arc::new(WriteFileTool::new(workspace_root.clone())),
         create_image: Arc::new(CreateImageTool::with_settings(
             workspace_root.clone(),
             tool_settings.image_provider,
@@ -475,26 +476,43 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
                                 }
                             };
                             if saved_ok {
-                                let after_turn_snapshot = snapshot_workspace_for_checkpoint(
-                                    &workspace_root_for_checkpoint,
-                                );
-                                let checkpoint = checkpoint_from_snapshots(
-                                    &before_turn_snapshot_for_checkpoint,
-                                    &after_turn_snapshot,
-                                );
-                                if let Err(err) = store.save_turn_checkpoint(
-                                    &conversation_id_for_events,
-                                    turn_user_history_index,
-                                    &checkpoint,
-                                ) {
-                                    let _ = emit_agent_event(
-                                        &app,
-                                        &workspace_id,
-                                        &conversation_id_for_events,
-                                        &AgentEvent::Error {
-                                            message: format!("checkpoint save failed: {err}"),
-                                        },
+                                if output.compacted {
+                                    if let Err(err) = store
+                                        .delete_turn_checkpoints_from(&conversation_id_for_events, 0)
+                                    {
+                                        let _ = emit_agent_event(
+                                            &app,
+                                            &workspace_id,
+                                            &conversation_id_for_events,
+                                            &AgentEvent::Error {
+                                                message: format!(
+                                                    "checkpoint cleanup failed: {err}"
+                                                ),
+                                            },
+                                        );
+                                    }
+                                } else {
+                                    let after_turn_snapshot = snapshot_workspace_for_checkpoint(
+                                        &workspace_root_for_checkpoint,
                                     );
+                                    let checkpoint = checkpoint_from_snapshots(
+                                        &before_turn_snapshot_for_checkpoint,
+                                        &after_turn_snapshot,
+                                    );
+                                    if let Err(err) = store.save_turn_checkpoint(
+                                        &conversation_id_for_events,
+                                        turn_user_history_index,
+                                        &checkpoint,
+                                    ) {
+                                        let _ = emit_agent_event(
+                                            &app,
+                                            &workspace_id,
+                                            &conversation_id_for_events,
+                                            &AgentEvent::Error {
+                                                message: format!("checkpoint save failed: {err}"),
+                                            },
+                                        );
+                                    }
                                 }
                             }
                             let _ = emit_agent_event(

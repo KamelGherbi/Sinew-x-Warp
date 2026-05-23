@@ -24,6 +24,7 @@ import type {
   OpenRouterProviderStatus,
   PlanControl,
   PlanImplementationOptions,
+  QuestionAnswer,
   SavedConversation,
   SkillSettings,
   SessionSummary,
@@ -152,6 +153,18 @@ export const api = {
     return invoke<void>("delete_skill_command", {
       input: { workspacePath, path },
     });
+  },
+  createSkill(workspacePath: string) {
+    return invoke<{ name: string; skills: InstalledSkill[] }>(
+      "create_skill_command",
+      { input: { workspacePath } },
+    );
+  },
+  updateSkillContent(workspacePath: string, path: string, content: string) {
+    return invoke<{ name: string; skills: InstalledSkill[] }>(
+      "update_skill_content_command",
+      { input: { workspacePath, path, content } },
+    );
   },
   openExternalUrl(url: string) {
     return invoke<void>("open_external_url_command", {
@@ -476,6 +489,32 @@ export const api = {
   cancelTurn(workspacePath: string, conversationId: string) {
     return invoke<boolean>("cancel_turn", {
       input: { workspacePath, conversationId },
+    });
+  },
+  answerQuestion(
+    workspacePath: string,
+    conversationId: string,
+    toolCallId: string,
+    answers: QuestionAnswer[],
+    stopQuestions = false,
+  ) {
+    return invoke<boolean>("answer_question", {
+      input: {
+        workspacePath,
+        conversationId,
+        toolCallId,
+        answers,
+        stopQuestions,
+      },
+    });
+  },
+  rejectQuestion(
+    workspacePath: string,
+    conversationId: string,
+    toolCallId: string,
+  ) {
+    return invoke<boolean>("reject_question", {
+      input: { workspacePath, conversationId, toolCallId },
     });
   },
   stopAgentSwarm(

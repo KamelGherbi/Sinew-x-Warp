@@ -1,9 +1,12 @@
-use std::{collections::BTreeSet, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 
 use futures_util::StreamExt;
+use rand::Rng;
 use serde_json::{json, Map, Value};
-use tokio::sync::mpsc;
-use tokio::time::sleep;
+use tokio::{sync::mpsc, task::JoinHandle, time::sleep};
 use uuid::Uuid;
 
 use sinew_core::{
@@ -24,16 +27,16 @@ use super::{
     history::{
         append_interrupted_tool_results, history_with_current_tool_result_ids,
         normalize_tool_call_inputs, repair_missing_tool_results, strip_all_visible_tool_result_ids,
-        successful_read_paths,
+        successful_read_fingerprints,
     },
     mode::{run_update_goal, system_prompt_for_turn, update_goal_descriptor},
     tool_dispatch::{run_tool, should_wait_for_cooperative_cancel},
     tool_summary::{display_mcp_server_name, pretty_json, should_stream_tool_args, summarize_tool},
 };
 
-use crate::{system_prompt_with_todo, ToolRunResult};
+use crate::{system_prompt_with_todo, ReadFingerprint, ToolRunResult};
 
-const SAFE_STREAM_MAX_RETRIES: usize = 2;
+const SAFE_STREAM_MAX_RETRIES: usize = 5;
 const RATE_LIMIT_RETRY_DELAYS_MS: &[u64] = &[2_000, 5_000, 15_000, 30_000, 60_000];
 const TRANSIENT_PROVIDER_RETRY_DELAYS_MS: &[u64] = &[2_000, 5_000, 15_000];
 
@@ -45,7 +48,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
         mut cache_stable_message_count,
         auto_compact,
         mode,
-        stop_questions,
+        mut stop_questions,
         system_prompt,
         mut history,
         mut todo_list,
@@ -54,7 +57,8 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
         glob,
         grep,
         read,
-        apply_patch,
+        edit_file,
+        write_file,
         create_image,
         todo_list_tool,
         question,
@@ -68,7 +72,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
         event_scope,
         max_tool_rounds,
         event_tx,
-        cancel: _cancel,
+        cancel,
         mut cmd_rx,
     } = ctx;
 
@@ -79,10 +83,12 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
     mcp.refresh_catalog(&history).await;
 
     let mut cancelled = false;
+    let mut compacted = false;
     let mut loops = 0usize;
     let mut auto_compaction_attempts = 0usize;
     let mut current_turn_tool_result_ids = BTreeSet::new();
-    let mut read_paths = successful_read_paths(&history, &read);
+    let mut eager_tool_results = BTreeMap::<String, JoinHandle<ToolRunResult>>::new();
+    let mut read_fingerprints = successful_read_fingerprints(&history, &read);
     todo_list.normalize();
 
     'conversation: loop {
@@ -118,7 +124,8 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
             tool_descriptors.push(descriptor);
         }
         if mode != AgentMode::Plan {
-            tool_descriptors.insert(4, apply_patch.descriptor());
+            tool_descriptors.insert(4, edit_file.descriptor());
+            tool_descriptors.insert(5, write_file.descriptor());
             tool_descriptors.push(create_image.descriptor());
         }
         if mode == AgentMode::Goal {
@@ -165,7 +172,10 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
             )
             .await
             {
-                Ok(true) => continue,
+                Ok(true) => {
+                    compacted = true;
+                    continue;
+                }
                 Ok(false) => {}
                 Err(err) => {
                     send_event(
@@ -273,14 +283,14 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         _ => {}
                     }
 
-                    if should_retry_before_content(&err, stream_retry_attempts) {
+                    if should_retry_stream(&err, stream_retry_attempts) {
                         stream_retry_attempts += 1;
                         tracing::warn!(
                             provider = provider.name(),
                             attempt = stream_retry_attempts,
                             max_attempts = SAFE_STREAM_MAX_RETRIES,
                             error = %err,
-                            "retrying provider stream setup before content"
+                            "retrying provider stream setup"
                         );
                         tokio::time::sleep(stream_retry_delay(stream_retry_attempts)).await;
                         continue 'stream_attempt;
@@ -305,7 +315,10 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         )
                         .await
                         {
-                            Ok(()) => continue 'conversation,
+                            Ok(()) => {
+                                compacted = true;
+                                continue 'conversation;
+                            }
                             Err(compaction_err) => {
                                 send_event(
                                     &event_tx,
@@ -336,6 +349,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
             let mut response_usage = None;
             let mut stream_error = None;
             let mut saw_message_stop = false;
+            let mut finalized_tool_calls = 0usize;
 
             loop {
                 tokio::select! {
@@ -427,10 +441,26 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                                             message_builder.insert_meta_field(index, "mcp", json!(label));
                                         }
                                         send_event(&event_tx, event_scope.as_ref(), AgentEvent::ToolReady {
-                                            id,
+                                            id: id.clone(),
                                             summary,
                                             args_pretty: pretty_json(&args),
                                         });
+                                        if should_run_eager_write_file(&name, mode, &tool_settings)
+                                            && finalized_tool_calls == 0
+                                            && loops < max_tool_rounds
+                                            && eager_tool_results.is_empty()
+                                        {
+                                            let eager_write_file = write_file.clone();
+                                            let read_fingerprints = read_fingerprints.clone();
+                                            let input = args.clone();
+                                            eager_tool_results.insert(
+                                                id,
+                                                tokio::spawn(async move {
+                                                    eager_write_file.run(input, &read_fingerprints).await
+                                                }),
+                                            );
+                                        }
+                                        finalized_tool_calls += 1;
                                     }
                                     None => {}
                                 }
@@ -464,17 +494,24 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
             }
 
             if let Some(err) = stream_error {
-                if message_builder.is_empty()
-                    && response_usage.is_none()
-                    && should_retry_before_content(&err, stream_retry_attempts)
-                {
+                if !eager_tool_results.is_empty() {
+                    tracing::warn!(
+                        provider = provider.name(),
+                        error = %err,
+                        "stream ended after eager tool execution; continuing with completed tool call"
+                    );
+                    stop_reason = StopReason::ToolUse;
+                    break 'stream_attempt (message_builder, stop_reason, response_usage);
+                }
+
+                if should_retry_stream(&err, stream_retry_attempts) {
                     stream_retry_attempts += 1;
                     tracing::warn!(
                         provider = provider.name(),
                         attempt = stream_retry_attempts,
                         max_attempts = SAFE_STREAM_MAX_RETRIES,
                         error = %err,
-                        "retrying provider stream before content"
+                        "retrying provider stream"
                     );
                     tokio::time::sleep(stream_retry_delay(stream_retry_attempts)).await;
                     continue 'stream_attempt;
@@ -500,7 +537,10 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                     )
                     .await
                     {
-                        Ok(()) => continue 'conversation,
+                        Ok(()) => {
+                            compacted = true;
+                            continue 'conversation;
+                        }
                         Err(compaction_err) => {
                             send_event(
                                 &event_tx,
@@ -531,11 +571,14 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
 
         let mut assistant = message_builder.finish();
         if cancelled {
-            retain_cancelled_visible_parts(&mut assistant);
-            if !assistant.parts.is_empty() {
-                history.push(assistant);
+            if eager_tool_results.is_empty() {
+                retain_cancelled_visible_parts(&mut assistant);
+                if !assistant.parts.is_empty() {
+                    history.push(assistant);
+                }
+                break 'conversation;
             }
-            break 'conversation;
+            retain_cancelled_eager_parts(&mut assistant, &eager_tool_results);
         }
         if mode == AgentMode::Plan && !stop_questions && question_enabled {
             if !assistant_has_question_tool(&assistant)
@@ -554,11 +597,15 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
             history.push(assistant.clone());
         }
 
+        if !matches!(stop_reason, StopReason::ToolUse) && !eager_tool_results.is_empty() {
+            stop_reason = StopReason::ToolUse;
+        }
         if !matches!(stop_reason, StopReason::ToolUse) {
             break;
         }
 
         if loops >= max_tool_rounds {
+            abort_eager_tool_results(&mut eager_tool_results);
             send_event(
                 &event_tx,
                 event_scope.as_ref(),
@@ -580,6 +627,13 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                     run_clean_context(&mut history, input.clone(), &current_turn_tool_result_ids)
                 } else if name == "update_goal" {
                     run_update_goal(&mut goal_workflow, input.clone())
+                } else if let Some(handle) = eager_tool_results.remove(id) {
+                    match handle.await {
+                        Ok(result) => result,
+                        Err(err) => {
+                            ToolRunResult::err(format!("write_file task failed: {err}"), Vec::new())
+                        }
+                    }
                 } else if should_wait_for_cooperative_cancel(
                     name,
                     subagents.as_ref(),
@@ -590,7 +644,8 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         &glob,
                         &grep,
                         &read,
-                        &apply_patch,
+                        &edit_file,
+                        &write_file,
                         &create_image,
                         todo_list_tool.as_deref(),
                         question.as_deref(),
@@ -601,10 +656,11 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         subagents.as_deref(),
                         teams.as_deref(),
                         &tool_settings,
-                        &read_paths,
+                        &read_fingerprints,
                         &mut todo_list,
                         mode,
                         &event_tx,
+                        &cancel,
                         id,
                         name,
                         input.clone(),
@@ -612,6 +668,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                     .await;
                     if matches!(cmd_rx.try_recv(), Ok(EngineCommand::Cancel)) {
                         cancelled = true;
+                        abort_eager_tool_results(&mut eager_tool_results);
                     }
                     result
                 } else {
@@ -620,6 +677,7 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         command = cmd_rx.recv() => {
                             if matches!(command, Some(EngineCommand::Cancel)) {
                                 cancelled = true;
+                                abort_eager_tool_results(&mut eager_tool_results);
                                 ToolRunResult::err("tool call interrupted by user", Vec::new())
                             } else {
                                 continue;
@@ -630,7 +688,8 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                             &glob,
                             &grep,
                             &read,
-                            &apply_patch,
+                            &edit_file,
+                            &write_file,
                             &create_image,
                             todo_list_tool.as_deref(),
                             question.as_deref(),
@@ -641,22 +700,21 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                             subagents.as_deref(),
                             teams.as_deref(),
                             &tool_settings,
-                            &read_paths,
+                            &read_fingerprints,
                             &mut todo_list,
                             mode,
                             &event_tx,
+                            &cancel,
                             id,
                             name,
                             input.clone(),
                         ) => result,
                     }
                 };
-                if name == "read" && !result.is_error {
-                    if let Some(path) = input.get("path").and_then(|value| value.as_str()) {
-                        if let Ok(normalized) = read.normalize_path(path) {
-                            read_paths.insert(normalized);
-                        }
-                    }
+                if (name == "read" || name == "edit_file" || name == "write_file")
+                    && !result.is_error
+                {
+                    update_read_fingerprint_cache(&mut read_fingerprints, result.meta.as_ref());
                 }
                 let result_images = result.images.clone();
                 let result_content = result.content.clone();
@@ -677,6 +735,12 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                         meta.insert(key, value);
                     }
                 }
+                let stop_after_question = name == "Question"
+                    && meta
+                        .get("question_stop_requested")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    && mode == AgentMode::Plan;
                 let result_meta = (!meta.is_empty()).then_some(Value::Object(meta));
                 send_event(
                     &event_tx,
@@ -714,10 +778,14 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                 if cancelled {
                     break;
                 }
+                if stop_after_question {
+                    break;
+                }
             }
         }
 
         if cancelled {
+            abort_eager_tool_results(&mut eager_tool_results);
             append_interrupted_tool_results(&assistant, &mut tool_results);
         }
 
@@ -725,6 +793,13 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
             break;
         }
 
+        let stop_after_question_result = tool_results.iter().any(|part| {
+            matches!(part, Part::ToolResult { meta: Some(Value::Object(meta)), .. }
+                if meta
+                    .get("question_stop_requested")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false))
+        }) && mode == AgentMode::Plan;
         history.push(ChatMessage {
             role: Role::User,
             parts: tool_results,
@@ -732,8 +807,16 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
         if cancelled {
             break 'conversation;
         }
-        if mode == AgentMode::Plan && !stop_questions && assistant_has_question_tool(&assistant) {
-            break;
+        if stop_after_question_result {
+            stop_questions = true;
+            history.push(ChatMessage {
+                role: Role::User,
+                parts: vec![Part::Text {
+                    text: "\n\n<plan_mode_control action=\"stop_questions\">\nThe user clicked Send and stop questions. Do not ask more questions in this turn. Produce the complete Markdown plan now and do not implement it.\n</plan_mode_control>".to_string(),
+                    meta: Some(json!({ "plan_control": "stop_questions" })),
+                }],
+            });
+            continue 'conversation;
         }
     }
 
@@ -747,7 +830,19 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
         todo_list,
         goal_workflow,
         interrupted: cancelled,
+        compacted,
     }
+}
+
+pub(super) fn retain_cancelled_eager_parts(
+    message: &mut ChatMessage,
+    eager_tool_results: &BTreeMap<String, JoinHandle<ToolRunResult>>,
+) {
+    message.parts.retain(|part| match part {
+        Part::Text { text, .. } | Part::Thinking { text, .. } => !text.is_empty(),
+        Part::ToolCall { id, .. } => eager_tool_results.contains_key(id),
+        _ => false,
+    });
 }
 
 pub(super) fn retain_cancelled_visible_parts(message: &mut ChatMessage) {
@@ -765,20 +860,60 @@ pub(crate) fn rate_limit_retry_attempts_count() -> usize {
     RATE_LIMIT_RETRY_DELAYS_MS.len()
 }
 
-fn should_retry_before_content(err: &AppError, attempts: usize) -> bool {
+fn should_run_eager_write_file(
+    name: &str,
+    mode: AgentMode,
+    tool_settings: &crate::ToolSettings,
+) -> bool {
+    name == "write_file" && mode != AgentMode::Plan && tool_settings.is_enabled(name)
+}
+
+fn abort_eager_tool_results(handles: &mut BTreeMap<String, JoinHandle<ToolRunResult>>) {
+    for (_, handle) in std::mem::take(handles) {
+        handle.abort();
+    }
+}
+
+fn update_read_fingerprint_cache(
+    cache: &mut std::collections::HashMap<String, ReadFingerprint>,
+    meta: Option<&serde_json::Value>,
+) {
+    let Some(meta) = meta else {
+        return;
+    };
+    if let Some(fingerprint) = meta
+        .get("read_fingerprint")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<ReadFingerprint>(value).ok())
+    {
+        cache.insert(fingerprint.relative_path.clone(), fingerprint);
+    }
+    if let Some(values) = meta.get("read_fingerprints").and_then(Value::as_array) {
+        for fingerprint in values
+            .iter()
+            .filter_map(|value| serde_json::from_value::<ReadFingerprint>(value.clone()).ok())
+        {
+            cache.insert(fingerprint.relative_path.clone(), fingerprint);
+        }
+    }
+}
+
+fn should_retry_stream(err: &AppError, attempts: usize) -> bool {
     attempts < SAFE_STREAM_MAX_RETRIES
         && matches!(
             err,
-            AppError::Network(_) | AppError::Stream(_) | AppError::Decode(_)
+            AppError::Network(_)
+                | AppError::Stream(_)
+                | AppError::Decode(_)
+                | AppError::RetryableStream { .. }
         )
 }
 
 fn stream_retry_delay(attempt: usize) -> Duration {
-    Duration::from_millis(match attempt {
-        0 | 1 => 750,
-        2 => 1_500,
-        _ => 3_000,
-    })
+    let exponent = attempt.saturating_sub(1).min(8) as u32;
+    let base_ms = 200u64.saturating_mul(2u64.saturating_pow(exponent));
+    let jitter = rand::rng().random_range(0.9..1.1);
+    Duration::from_millis((base_ms as f64 * jitter) as u64)
 }
 
 fn is_transient_provider_error(message: &str) -> bool {

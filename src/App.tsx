@@ -2,12 +2,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Welcome } from "./components/Welcome";
 import { Workspace } from "./components/Workspace";
+import { UpdaterLockScreen } from "./components/UpdaterLockScreen";
 import { loadLastWorkspace, recordRecent, deriveName } from "./lib/recents";
 import { api } from "./lib/ipc";
 import { workspaceSessionKey } from "./lib/sessions";
-import type { ConversationSummary, WorkspaceBootstrap, WorkspaceSession } from "./types";
+import type {
+  ConversationSummary,
+  UpdateInfo,
+  WorkspaceBootstrap,
+  WorkspaceSession,
+} from "./types";
 
 type AppState =
+  | { kind: "boot" }
+  | { kind: "update_required"; info: UpdateInfo }
   | { kind: "welcome" }
   | {
       kind: "workspace";
@@ -18,8 +26,13 @@ type AppState =
 const startsEmpty =
   new URLSearchParams(window.location.search).get("newWindow") === "1";
 
+/// Maximum time we wait on the boot updater check before falling through to
+/// the normal flow. Keeps the app responsive on flaky networks — if the
+/// update endpoint is unreachable we don't trap the user on a black canvas.
+const BOOT_CHECK_TIMEOUT_MS = 4000;
+
 export default function App() {
-  const [state, setState] = useState<AppState>({ kind: "welcome" });
+  const [state, setState] = useState<AppState>({ kind: "boot" });
   const [bootError, setBootError] = useState<string | null>(null);
   const stateRef = useRef(state);
 
@@ -53,15 +66,51 @@ export default function App() {
     }
   }, [openWorkspace]);
 
-  // Try to auto-open last workspace on boot. Silent fallback to the
-  // welcome screen if the folder no longer exists or fails to open.
+  // Boot sequence, in order:
+  //   1. Updater gate — race the check against a short timeout. If an
+  //      update is available we render <UpdaterLockScreen /> and stop;
+  //      the user can only install or quit (no "Later", no "Skip").
+  //   2. Auto-open last workspace (existing behaviour) when no update is
+  //      pending. Silent fallback to Welcome on any failure.
+  // The whole thing runs once at mount; the in-session <UpdateBadge />
+  // still handles mid-session checks via its own 30 min interval.
   useEffect(() => {
-    if (startsEmpty) return;
-    const last = loadLastWorkspace();
-    if (!last) return;
+    let cancelled = false;
+
     (async () => {
+      // 1. Updater gate.
+      try {
+        const info = await Promise.race<UpdateInfo | null>([
+          api.checkForUpdate(),
+          new Promise<null>((resolve) =>
+            window.setTimeout(() => resolve(null), BOOT_CHECK_TIMEOUT_MS),
+          ),
+        ]);
+        if (cancelled) return;
+        if (info && info.available && info.version) {
+          setState({ kind: "update_required", info });
+          return;
+        }
+      } catch {
+        // Silent: a failed check (offline, server down, manifest 5xx)
+        // shouldn't prevent the app from booting. The mid-session badge
+        // will retry later, and the next launch will re-gate cleanly.
+      }
+
+      // 2. Auto-open last workspace, falling back to Welcome.
+      if (cancelled) return;
+      if (startsEmpty) {
+        setState({ kind: "welcome" });
+        return;
+      }
+      const last = loadLastWorkspace();
+      if (!last) {
+        setState({ kind: "welcome" });
+        return;
+      }
       try {
         const bootstrap = await api.openWorkspace(last);
+        if (cancelled) return;
         recordRecent(bootstrap.workspace.path, bootstrap.workspace.name);
         setState({
           kind: "workspace",
@@ -69,10 +118,13 @@ export default function App() {
           activeSessionKey: sessionKeyFromBootstrap(bootstrap),
         });
       } catch {
-        // leave on welcome; user can pick again
+        if (!cancelled) setState({ kind: "welcome" });
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const backToWelcome = useCallback(() => {
@@ -281,6 +333,17 @@ export default function App() {
       };
     });
   }, []);
+
+  if (state.kind === "boot") {
+    // Minimal splash while the updater check resolves. Pure canvas — the
+    // real updater UI (or Welcome) takes over within a few hundred ms on
+    // a healthy network, ~4s worst case before the timeout fires.
+    return <div className="app-boot" aria-hidden="true" />;
+  }
+
+  if (state.kind === "update_required") {
+    return <UpdaterLockScreen info={state.info} />;
+  }
 
   if (state.kind === "welcome") {
     return (

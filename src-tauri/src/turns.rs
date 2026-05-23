@@ -33,13 +33,12 @@ pub(super) async fn send_message(
         .ok_or_else(|| "conversation not found".to_string())?;
 
     if let Some(index) = input.rewrite_from_history_index {
-        if index > conversation.history.len() {
+        if index >= conversation.history.len() {
             return Err("rewrite index out of bounds".into());
         }
-        if let Some(message) = conversation.history.get(index) {
-            if !matches!(message.role, Role::User) {
-                return Err("rewrite index must point to a user message".into());
-            }
+        let message = &conversation.history[index];
+        if !is_rewritable_user_message(message) {
+            return Err("rewrite index must point to a rewritable user message".into());
         }
         if input.revert_workspace_changes {
             restore_workspace_for_rewrite(
@@ -50,6 +49,11 @@ pub(super) async fn send_message(
                 index,
             )
             .map_err(error_to_string)?;
+        } else {
+            state
+                .store
+                .delete_turn_checkpoints_from(&input.conversation_id, index)
+                .map_err(error_to_string)?;
         }
         conversation.history.truncate(index);
         conversation.todo_list = todo_list_from_history(&conversation.history);
@@ -157,7 +161,8 @@ pub(super) async fn send_message(
         glob: Arc::new(GlobTool::new(workspace_root.clone())),
         grep: Arc::new(GrepTool::new(workspace_root.clone())),
         read: Arc::new(ReadTool::new(workspace_root.clone())),
-        apply_patch: Arc::new(ApplyPatchTool::new(workspace_root.clone())),
+        edit_file: Arc::new(EditFileTool::new(workspace_root.clone())),
+        write_file: Arc::new(WriteFileTool::new(workspace_root.clone())),
         create_image: Arc::new(CreateImageTool::with_settings(
             workspace_root.clone(),
             tool_settings.image_provider,
@@ -264,12 +269,17 @@ pub(super) async fn send_message(
                             if output.interrupted {
                                 goal_workflow = pause_goal_workflow(goal_workflow);
                             }
-                            if plan_requested {
+                            let question_stop_requested = latest_question_stop_requested(
+                                &history,
+                                turn_user_history_index,
+                            );
+                            if plan_requested || question_stop_requested {
                                 match attach_latest_plan_artifact(
                                     &workspace_root_for_output,
                                     &conversation_id,
                                     &mut history,
                                     turn_user_history_index,
+                                    !question_stop_requested,
                                 ) {
                                     Ok(Some(artifact)) => {
                                         emit_workspace_file_change(
@@ -279,7 +289,11 @@ pub(super) async fn send_message(
                                         );
                                         plan_workflow = PlanWorkflowState::PlanReady { artifact };
                                     }
-                                    Ok(None) => {}
+                                    Ok(None) => {
+                                        if question_stop_requested {
+                                            plan_workflow = PlanWorkflowState::PlanningQuestions;
+                                        }
+                                    }
                                     Err(err) => {
                                         let _ = emit_agent_event(
                                             &app,
@@ -319,25 +333,43 @@ pub(super) async fn send_message(
                                 }
                             };
                             if saved_ok {
-                                let after_turn_snapshot =
-                                    snapshot_workspace_for_checkpoint(&workspace_root_for_output);
-                                let checkpoint = checkpoint_from_snapshots(
-                                    &before_turn_snapshot_for_checkpoint,
-                                    &after_turn_snapshot,
-                                );
-                                if let Err(err) = store.save_turn_checkpoint(
-                                    &conversation_id,
-                                    turn_user_history_index,
-                                    &checkpoint,
-                                ) {
-                                    let _ = emit_agent_event(
-                                        &app,
-                                        &workspace_id,
-                                        &conversation_id,
-                                        &AgentEvent::Error {
-                                            message: format!("checkpoint save failed: {err}"),
-                                        },
+                                if output.compacted {
+                                    if let Err(err) =
+                                        store.delete_turn_checkpoints_from(&conversation_id, 0)
+                                    {
+                                        let _ = emit_agent_event(
+                                            &app,
+                                            &workspace_id,
+                                            &conversation_id,
+                                            &AgentEvent::Error {
+                                                message: format!(
+                                                    "checkpoint cleanup failed: {err}"
+                                                ),
+                                            },
+                                        );
+                                    }
+                                } else {
+                                    let after_turn_snapshot = snapshot_workspace_for_checkpoint(
+                                        &workspace_root_for_output,
                                     );
+                                    let checkpoint = checkpoint_from_snapshots(
+                                        &before_turn_snapshot_for_checkpoint,
+                                        &after_turn_snapshot,
+                                    );
+                                    if let Err(err) = store.save_turn_checkpoint(
+                                        &conversation_id,
+                                        turn_user_history_index,
+                                        &checkpoint,
+                                    ) {
+                                        let _ = emit_agent_event(
+                                            &app,
+                                            &workspace_id,
+                                            &conversation_id,
+                                            &AgentEvent::Error {
+                                                message: format!("checkpoint save failed: {err}"),
+                                            },
+                                        );
+                                    }
                                 }
                             }
                             let _ = emit_agent_event(
@@ -517,28 +549,57 @@ pub(super) async fn compact_conversation(
             conversation.todo_list = todo_list_from_history(&conversation.history);
             match state.store.save_conversation(&conversation) {
                 Ok(()) => {
-                    let label = match retained {
-                        0 => "No raw user messages retained".to_string(),
-                        1 => "Retained 1 recent user message".to_string(),
-                        count => format!("Retained {count} recent user messages"),
-                    };
-                    let _ = emit_agent_event(
-                        &app,
-                        &workspace_id,
-                        &conversation_id,
-                        &AgentEvent::ToolFinished {
-                            id: compaction_id.clone(),
-                            output: label,
-                            is_error: false,
-                            file_changes: Vec::new(),
-                            images: Vec::new(),
-                            meta: Some(json!({
-                                "retainedUserMessages": retained,
-                                "compactionSummary": summary,
-                            })),
-                        },
-                    );
-                    Ok(())
+                    if let Err(err) = state
+                        .store
+                        .delete_turn_checkpoints_from(&conversation_id, 0)
+                    {
+                        let message = format!("checkpoint cleanup failed: {err}");
+                        let _ = emit_agent_event(
+                            &app,
+                            &workspace_id,
+                            &conversation_id,
+                            &AgentEvent::ToolFinished {
+                                id: compaction_id.clone(),
+                                output: message.clone(),
+                                is_error: true,
+                                file_changes: Vec::new(),
+                                images: Vec::new(),
+                                meta: None,
+                            },
+                        );
+                        let _ = emit_agent_event(
+                            &app,
+                            &workspace_id,
+                            &conversation_id,
+                            &AgentEvent::Error {
+                                message: message.clone(),
+                            },
+                        );
+                        Err(message)
+                    } else {
+                        let label = match retained {
+                            0 => "No raw user messages retained".to_string(),
+                            1 => "Retained 1 recent user message".to_string(),
+                            count => format!("Retained {count} recent user messages"),
+                        };
+                        let _ = emit_agent_event(
+                            &app,
+                            &workspace_id,
+                            &conversation_id,
+                            &AgentEvent::ToolFinished {
+                                id: compaction_id.clone(),
+                                output: label,
+                                is_error: false,
+                                file_changes: Vec::new(),
+                                images: Vec::new(),
+                                meta: Some(json!({
+                                    "retainedUserMessages": retained,
+                                    "compactionSummary": summary,
+                                })),
+                            },
+                        );
+                        Ok(())
+                    }
                 }
                 Err(err) => {
                     let message = format!("save failed: {err}");
@@ -627,6 +688,46 @@ pub(super) async fn cancel_turn(
         Some(sender) => sender.cancel_all(),
         None => false,
     })
+}
+
+#[tauri::command]
+pub(super) async fn answer_question(
+    state: State<'_, DesktopState>,
+    input: AnswerQuestionInput,
+) -> std::result::Result<bool, String> {
+    let _workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let sender = state
+        .active_turns
+        .lock()
+        .await
+        .get(&input.conversation_id)
+        .cloned();
+
+    Ok(sender
+        .map(|sender| {
+            sender.answer_question(&input.tool_call_id, input.answers, input.stop_questions)
+        })
+        .unwrap_or(false))
+}
+
+#[tauri::command]
+pub(super) async fn reject_question(
+    state: State<'_, DesktopState>,
+    input: RejectQuestionInput,
+) -> std::result::Result<bool, String> {
+    let _workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let sender = state
+        .active_turns
+        .lock()
+        .await
+        .get(&input.conversation_id)
+        .cloned();
+
+    Ok(sender
+        .map(|sender| sender.reject_question(&input.tool_call_id))
+        .unwrap_or(false))
 }
 
 #[tauri::command]
@@ -912,6 +1013,32 @@ pub(super) fn build_user_message(
     }
 }
 
+pub(super) fn is_rewritable_user_message(message: &ChatMessage) -> bool {
+    message.role == Role::User
+        && message.parts.iter().any(|part| match part {
+            Part::Text { text, meta } => {
+                !text.trim().is_empty() && !is_hidden_rewrite_text(meta.as_ref())
+            }
+            _ => false,
+        })
+}
+
+fn is_hidden_rewrite_text(meta: Option<&Value>) -> bool {
+    let Some(Value::Object(meta)) = meta else {
+        return false;
+    };
+    meta.get("attachment_context").and_then(Value::as_bool) == Some(true)
+        || meta.get("system_reminder").and_then(Value::as_bool) == Some(true)
+        || meta.get("ui_only").and_then(Value::as_bool) == Some(true)
+        || meta
+            .get("compaction_retained_user")
+            .and_then(Value::as_bool)
+            == Some(true)
+        || meta.get("compaction_summary").and_then(Value::as_bool) == Some(true)
+        || meta.get("compaction_marker").and_then(Value::as_bool) == Some(true)
+        || meta.get("plan_control").and_then(Value::as_str).is_some()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PlanReference {
     pub(super) path: String,
@@ -1072,8 +1199,9 @@ pub(super) fn attach_latest_plan_artifact(
     conversation_id: &str,
     history: &mut [ChatMessage],
     turn_user_history_index: usize,
+    skip_if_question_tool: bool,
 ) -> Result<Option<PlanArtifactState>> {
-    if turn_has_question_tool(history, turn_user_history_index) {
+    if skip_if_question_tool && turn_has_question_tool(history, turn_user_history_index) {
         return Ok(None);
     }
 
@@ -1137,6 +1265,25 @@ pub(super) fn turn_has_question_tool(
                 part,
                 Part::ToolCall { name, .. } if name == "Question"
             )
+        })
+}
+
+pub(super) fn latest_question_stop_requested(
+    history: &[ChatMessage],
+    turn_user_history_index: usize,
+) -> bool {
+    history
+        .iter()
+        .skip(turn_user_history_index.saturating_add(1))
+        .flat_map(|message| &message.parts)
+        .filter_map(|part| match part {
+            Part::ToolResult { meta, .. } => meta.as_ref(),
+            _ => None,
+        })
+        .any(|meta| {
+            meta.get("question_stop_requested")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
         })
 }
 
@@ -1301,7 +1448,8 @@ pub(super) fn tool_descriptors_for_workspace(
         tools.push(descriptor);
     }
     if mode != AgentMode::Plan {
-        tools.insert(4, ApplyPatchTool::new(workspace_root).descriptor());
+        tools.insert(4, EditFileTool::new(workspace_root).descriptor());
+        tools.insert(5, WriteFileTool::new(workspace_root).descriptor());
         tools.push(CreateImageTool::new(workspace_root).descriptor());
     }
     tools

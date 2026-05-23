@@ -1021,7 +1021,8 @@ export function ToolCard({
   const isBash = name === "bash" || name === "bash_input";
   const isGlob = name === "Glob";
   const isGrep = name === "Grep";
-  const isPatch = name === "apply_patch";
+  const isEditFile = name === "edit_file";
+  const isWriteFile = name === "write_file";
   const isCleanContext = name === "clean_context";
   const isContextCompaction = name === "context_compaction";
   const isGoalUpdate = name === "update_goal";
@@ -1096,10 +1097,17 @@ export function ToolCard({
     );
   }
 
-  if (isPatch && !isError && fileChanges && fileChanges.length > 0) {
+  const renderedFileChanges = fileChanges;
+
+  if (
+    (isEditFile || isWriteFile) &&
+    !isError &&
+    renderedFileChanges &&
+    renderedFileChanges.length > 0
+  ) {
     return (
       <div className="tool-card__changes" data-bare="true">
-        {fileChanges.map((change, idx) => (
+        {renderedFileChanges.map((change, idx) => (
           <FileChangeBlock key={idx} change={change} />
         ))}
       </div>
@@ -1128,8 +1136,10 @@ export function ToolCard({
     : summary && summary.trim().length > 0
       ? summary
       : name;
-  const hasChanges = !!fileChanges && fileChanges.length > 0;
-  const canExpand = !(isContextCompaction && status === "running");
+  const hasChanges = !!renderedFileChanges && renderedFileChanges.length > 0;
+  const canExpand =
+    !(isContextCompaction && status === "running") &&
+    !(isEditFile && status === "running");
   const showBody = canExpand && open && (!isTeamRunSpawn || !teamRunActive);
   const showTeamStop =
     isTeamRunSpawn &&
@@ -1202,7 +1212,7 @@ export function ToolCard({
               <TerminalGlyph />
             ) : isGlob || isGrep ? (
               <AsteriskGlyph />
-            ) : isPatch ? (
+            ) : isEditFile || isWriteFile ? (
               <Icon icon="solar:pen-new-square-linear" width={12} height={12} />
             ) : isWebSearch ? (
               <Icon icon="solar:magnifer-linear" width={12} height={12} />
@@ -1315,7 +1325,7 @@ export function ToolCard({
           )}
           {hasChanges && (
             <div className="tool-card__changes">
-              {fileChanges!.map((change, idx) => (
+              {renderedFileChanges!.map((change, idx) => (
                 <FileChangeBlock key={idx} change={change} />
               ))}
             </div>

@@ -338,24 +338,42 @@ fn chunk_error_message(chunk: &ChatChunk) -> Option<String> {
 
 fn reasoning_delta(delta: &wire::ChatDelta) -> Option<String> {
     let mut text = String::new();
-    if let Some(value) = delta.reasoning.as_deref().filter(|value| !value.is_empty()) {
-        text.push_str(value);
+    // OpenRouter normalise les modèles raisonneurs et renvoie souvent
+    // `reasoning`, `reasoning_content` ET `reasoning_details` simultanément
+    // avec exactement le MÊME contenu, par rétrocompatibilité. Concaténer
+    // ces sources duplique chaque token (cf. docs OpenRouter « Reasoning
+    // Tokens » et ai-sdk-provider/reasoning-details-duplicate-tracker).
+    //
+    // On choisit donc une seule source par priorité :
+    //   1. `reasoning_details` (canonique, structuré)
+    //   2. `reasoning_content` (alias récent)
+    //   3. `reasoning`         (champ historique)
+    if !delta.reasoning_details.is_empty() {
+        for detail in &delta.reasoning_details {
+            if let Some(value) = detail.get("text").and_then(Value::as_str) {
+                text.push_str(value);
+            } else if let Some(value) = detail.get("summary").and_then(Value::as_str) {
+                text.push_str(value);
+            }
+        }
+        if !text.is_empty() {
+            return Some(text);
+        }
+        // `reasoning_details` présent mais sans `text`/`summary` exploitable
+        // (par ex. blob `encrypted_content` seul). On retombe alors sur
+        // les champs textuels classiques.
     }
     if let Some(value) = delta
         .reasoning_content
         .as_deref()
         .filter(|value| !value.is_empty())
     {
-        text.push_str(value);
+        return Some(value.to_string());
     }
-    for detail in &delta.reasoning_details {
-        if let Some(value) = detail.get("text").and_then(Value::as_str) {
-            text.push_str(value);
-        } else if let Some(value) = detail.get("summary").and_then(Value::as_str) {
-            text.push_str(value);
-        }
+    if let Some(value) = delta.reasoning.as_deref().filter(|value| !value.is_empty()) {
+        return Some(value.to_string());
     }
-    (!text.is_empty()).then_some(text)
+    None
 }
 
 fn usage_from_body(body: wire::UsageBody) -> Usage {
@@ -408,5 +426,73 @@ fn map_stop_reason(raw: &str, saw_tool_call: bool) -> StopReason {
         "error" => StopReason::Other,
         _ if saw_tool_call => StopReason::ToolUse,
         _ => StopReason::Other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::ChatDelta;
+    use serde_json::json;
+
+    #[test]
+    fn reasoning_delta_does_not_duplicate_when_provider_sends_all_fields() {
+        // Regression: certains modèles OpenRouter renvoient le même delta
+        // de raisonnement dans `reasoning`, `reasoning_content` ET
+        // `reasoning_details[].text`. Avant le fix, chaque token sortait
+        // trois fois (cf. bug observé "The The user user wants wants…").
+        let delta = ChatDelta {
+            reasoning: Some("The user wants".into()),
+            reasoning_content: Some("The user wants".into()),
+            reasoning_details: vec![json!({
+                "type": "reasoning.text",
+                "text": "The user wants",
+            })],
+            ..Default::default()
+        };
+        assert_eq!(reasoning_delta(&delta).as_deref(), Some("The user wants"));
+    }
+
+    #[test]
+    fn reasoning_delta_falls_back_when_details_have_no_text() {
+        // `reasoning_details` ne contient qu'un blob chiffré sans `text`
+        // ni `summary` : on doit récupérer le contenu via `reasoning`.
+        let delta = ChatDelta {
+            reasoning: Some("hello".into()),
+            reasoning_details: vec![json!({
+                "type": "reasoning.encrypted",
+                "data": "…",
+            })],
+            ..Default::default()
+        };
+        assert_eq!(reasoning_delta(&delta).as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn reasoning_delta_concatenates_multiple_detail_entries() {
+        // Plusieurs entrées dans `reasoning_details` sur un même chunk
+        // (cas légitime de fragmentation provider) doivent être recollées.
+        let delta = ChatDelta {
+            reasoning_details: vec![
+                json!({ "type": "reasoning.text", "text": "foo" }),
+                json!({ "type": "reasoning.text", "text": "bar" }),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(reasoning_delta(&delta).as_deref(), Some("foobar"));
+    }
+
+    #[test]
+    fn reasoning_delta_uses_reasoning_content_when_only_alias_present() {
+        let delta = ChatDelta {
+            reasoning_content: Some("alias only".into()),
+            ..Default::default()
+        };
+        assert_eq!(reasoning_delta(&delta).as_deref(), Some("alias only"));
+    }
+
+    #[test]
+    fn reasoning_delta_none_when_no_reasoning_fields() {
+        assert_eq!(reasoning_delta(&ChatDelta::default()), None);
     }
 }

@@ -1,11 +1,11 @@
 pub mod agent;
 pub mod bash;
 pub mod compact;
+pub mod edit;
 pub mod glob;
 pub mod grep;
 pub mod image;
 pub mod mcp;
-pub mod patch;
 pub mod question;
 pub mod read;
 mod ripgrep;
@@ -18,23 +18,25 @@ pub mod todo;
 pub mod tool_run;
 pub mod web;
 pub mod workspace;
+pub mod write;
 
 pub use agent::{
     clean_context_descriptor, run_turn, system_prompt_for_mode,
     system_prompt_for_mode_with_plan_prompt, AgentEvent, AgentEventScope, AgentMode,
-    ConversationEvent, EngineCommand, TurnCancel, TurnContext,
+    ConversationEvent, EngineCommand, QuestionReply, TurnCancel, TurnContext,
 };
 pub use bash::{active_shell_display_name, shell_system_prompt, BashTool};
 pub use compact::{compact_conversation_history, CompactConversationOutput};
+pub use edit::EditFileTool;
 pub use glob::GlobTool;
 pub use grep::GrepTool;
 pub use image::CreateImageTool;
 pub use mcp::{probe_mcp_servers, McpServerProbe, McpSettings, McpToolRegistry};
-pub use patch::ApplyPatchTool;
 pub use question::QuestionTool;
-pub use read::ReadTool;
+pub use read::{ReadFingerprint, ReadTool};
 pub use skill::{
-    list_installed_skills, InstalledSkill, SkillConfig, SkillSettings, SkillSource, SkillTool,
+    create_installed_skill, list_installed_skills, InstalledSkill, SkillConfig, SkillSettings,
+    SkillSource, SkillTool,
 };
 pub use store::{
     tool_settings_view, AppStore, ConversationSummary, GoalWorkflowState, ModeModelSettings,
@@ -65,3 +67,4 @@ pub use workspace::{
     WorkspaceEntryKind, WorkspaceFileChangeEvent, WorkspaceInfo, WorkspaceSearchFile,
     WorkspaceSearchMatch, WorkspaceSearchResult,
 };
+pub use write::WriteFileTool;

@@ -58,6 +58,7 @@ import type {
   PlanControl,
   PlanImplementationOptions,
   PlanWorkflowState,
+  QuestionAnswer,
   StreamTokenUsage,
   ThinkingLevel,
   WorkspaceEntry,
@@ -1707,10 +1708,13 @@ export function ChatPane({
   ]);
 
   const handleQuestionAnswer = useCallback(
-    async (answer: string, options?: { stopQuestions?: boolean }) => {
+    async (
+      toolCallId: string,
+      answers: QuestionAnswer[],
+      options?: { stopQuestions?: boolean },
+    ) => {
       if (!modelEntry) return;
-      const value = answer.trim();
-      if (!value || view.status === "streaming") return;
+      if (answers.length === 0) return;
       const placeholderId = options?.stopQuestions
         ? `plan-writing-${Date.now()}`
         : null;
@@ -1741,15 +1745,16 @@ export function ChatPane({
       });
       setSendTick((t) => t + 1);
       try {
-        await onSend(
-          value,
-          [],
-          modelRefFromId(model),
-          thinking,
-          effectiveMode,
-          undefined,
-          options?.stopQuestions ? "stopQuestions" : undefined,
+        const answered = await api.answerQuestion(
+          workspacePath,
+          conversationId,
+          toolCallId,
+          answers,
+          options?.stopQuestions === true,
         );
+        if (!answered) {
+          throw new Error("question is no longer waiting for an answer");
+        }
       } catch (err) {
         if (placeholderId) {
           planWritingRef.current = null;
@@ -1772,7 +1777,7 @@ export function ChatPane({
         }));
       }
     },
-    [conversationId, onSend, model, modelEntry, thinking, effectiveMode, view.status],
+    [conversationId, modelEntry, workspacePath],
   );
 
   const persistModeSelection = useCallback(
@@ -2862,7 +2867,7 @@ export function ChatPane({
                   }
                   onOpenFile={onOpenFile}
                   onAnswerQuestion={viewingSubAgent ? () => {} : handleQuestionAnswer}
-                  answerQuestionDisabled={viewingSubAgent || view.status === "streaming"}
+                  answerQuestionDisabled={viewingSubAgent}
                   allowStopQuestions={!viewingSubAgent && effectiveMode === "plan"}
                   onPlanKeepUpdating={viewingSubAgent ? () => {} : handlePlanKeepUpdating}
                   onPlanImplement={viewingSubAgent ? () => {} : handlePlanImplement}
@@ -3730,6 +3735,12 @@ function shouldShowPlanningNextMove(view: ChatViewState): boolean {
   return (
     view.status === "streaming" &&
     view.streamPhase === "waiting" &&
+    !view.blocks.some(
+      (block) =>
+        block.kind === "tool" &&
+        block.name === "Question" &&
+        block.status === "running",
+    ) &&
     !view.blocks.some((block) => block.kind === "plan-writing")
   );
 }
@@ -5307,7 +5318,7 @@ function renderItemsFromBlocks(blocks: ChatBlock[]): RenderItem[] {
     if (
       block.kind === "tool" &&
       block.name === "Question" &&
-      block.status === "done"
+      (block.status === "running" || block.status === "done")
     ) {
       return [{
         kind: "questionnaire",
@@ -5366,7 +5377,8 @@ function ChatBlocks({
   rewriteHistoryIndex: number | null;
   onOpenFile: (path: string) => void;
   onAnswerQuestion: (
-    answer: string,
+    toolCallId: string,
+    answers: QuestionAnswer[],
     options?: { stopQuestions?: boolean },
   ) => void | Promise<void>;
   answerQuestionDisabled: boolean;

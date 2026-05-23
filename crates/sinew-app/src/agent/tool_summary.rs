@@ -74,8 +74,45 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
             .unwrap_or("workspace");
         return format!("Glob {pattern} in {scope}");
     }
-    if name == "apply_patch" {
-        return "Apply patch".to_string();
+    if name == "edit_file" {
+        if let Some(groups) = edit_file_groups(input) {
+            let file_count = groups.len();
+            let replacement_count = groups
+                .iter()
+                .map(|group| {
+                    group
+                        .get("edits")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or_default()
+                })
+                .sum::<usize>();
+            if file_count == 1 {
+                if let Some(path) = groups[0].get("path").and_then(Value::as_str) {
+                    if replacement_count > 1 {
+                        return format!("Edit {path} · {replacement_count} replacements");
+                    }
+                    return format!("Edit {path}");
+                }
+                return if replacement_count > 1 {
+                    format!("Edit file · {replacement_count} replacements")
+                } else {
+                    "Edit file".to_string()
+                };
+            }
+            return if replacement_count > 0 {
+                format!("Edit files · {file_count} files · {replacement_count} replacements")
+            } else {
+                format!("Edit files · {file_count} files")
+            };
+        }
+        return "Edit file".to_string();
+    }
+    if name == "write_file" {
+        if let Some(path) = input.get("path").and_then(Value::as_str) {
+            return format!("Write {path}");
+        }
+        return "Write file".to_string();
     }
     if name == "clean_context" {
         let count = input
@@ -355,7 +392,14 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
 }
 
 pub(super) fn should_stream_tool_args(name: &str) -> bool {
-    matches!(name, "apply_patch" | "read")
+    matches!(name, "edit_file" | "write_file" | "read")
+}
+
+fn edit_file_groups(input: &Value) -> Option<&Vec<Value>> {
+    input
+        .get("edits")
+        .and_then(Value::as_array)
+        .or_else(|| input.get("files").and_then(Value::as_array))
 }
 
 fn grep_path_scope(value: &Value) -> Option<String> {

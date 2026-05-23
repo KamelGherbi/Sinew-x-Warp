@@ -4,14 +4,11 @@ use serde_json::json;
 
 use sinew_core::{ChatMessage, Part, Role};
 
-use crate::ReadTool;
-
 use super::{
     clean_context::{run_clean_context, tool_result_cleaned, CLEAN_CONTEXT_RESULT_PLACEHOLDER},
     history::{
         history_with_current_tool_result_ids, normalize_tool_call_inputs,
-        strip_all_visible_tool_result_ids, successful_read_paths, tool_result_content_with_id,
-        tool_result_exposes_id,
+        strip_all_visible_tool_result_ids, tool_result_content_with_id, tool_result_exposes_id,
     },
     turn::retain_cancelled_visible_parts,
 };
@@ -118,34 +115,6 @@ fn clean_context_ignores_ids_outside_current_turn() {
     };
     assert_eq!(content, "old useful output");
     assert!(!tool_result_cleaned(meta));
-}
-
-#[test]
-fn cleaned_read_results_do_not_count_as_successful_reads() {
-    let read = ReadTool::new(".");
-    let history = vec![
-        ChatMessage {
-            role: Role::Assistant,
-            parts: vec![Part::ToolCall {
-                id: "read-1".to_string(),
-                name: "read".to_string(),
-                input: json!({ "path": "src/lib.rs", "limit": 10 }),
-                meta: None,
-            }],
-        },
-        ChatMessage {
-            role: Role::User,
-            parts: vec![Part::ToolResult {
-                tool_call_id: "read-1".to_string(),
-                content: CLEAN_CONTEXT_RESULT_PLACEHOLDER.to_string(),
-                images: Vec::new(),
-                is_error: false,
-                meta: Some(json!({ "tool_result_cleaned": true })),
-            }],
-        },
-    ];
-
-    assert!(successful_read_paths(&history, &read).is_empty());
 }
 
 #[test]

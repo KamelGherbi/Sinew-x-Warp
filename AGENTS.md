@@ -6,11 +6,13 @@ Code map:
 ├── AGENTS.md
 ├── Cargo.lock
 ├── Cargo.toml
+├── FEATURES.md
 ├── index.html
 ├── LICENSE
 ├── package-lock.json
 ├── package.json
 ├── README.md
+├── test.md
 ├── scripts
 │   └── prepare-sidecars.mjs
 ├── tsconfig.json
@@ -56,12 +58,12 @@ Code map:
 │   │       │   └── turn.rs
 │   │       ├── bash.rs
 │   │       ├── compact.rs
+│   │       ├── edit.rs
 │   │       ├── glob.rs
 │   │       ├── grep.rs
 │   │       ├── image.rs
 │   │       ├── lib.rs
 │   │       ├── mcp.rs
-│   │       ├── patch.rs
 │   │       ├── question.rs
 │   │       ├── read.rs
 │   │       ├── skill.rs
@@ -85,6 +87,7 @@ Code map:
 │   │       ├── todo.rs
 │   │       ├── tool_run.rs
 │   │       ├── web.rs
+│   │       ├── write.rs
 │   │       └── workspace.rs
 │   ├── sinew-core
 │   │   ├── Cargo.toml
@@ -245,6 +248,7 @@ Code map:
     │   ├── Splitter.tsx
     │   ├── TerminalPanel.tsx
     │   ├── UpdateBadge.tsx
+    │   ├── UpdaterLockScreen.tsx
     │   ├── Welcome.tsx
     │   ├── WindowControls.tsx
     │   ├── Workspace.tsx

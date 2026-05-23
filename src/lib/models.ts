@@ -53,6 +53,7 @@ export const PROVIDERS: {
 
 export const THINKING_LEVELS: { value: ThinkingLevel; label: string }[] = [
   { value: "off", label: "Off" },
+  { value: "minimal", label: "Minimal" },
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
@@ -132,11 +133,25 @@ export const MODELS: ModelEntry[] = [
     defaultThinking: "medium",
   },
   {
-    value: "google:gemini-3.1-pro-preview",
+    value: "google:gemini-3.1-pro",
     provider: "google",
     label: "Gemini 3.1 Pro",
     thinking: ["low", "medium", "high"],
-    defaultThinking: "medium",
+    defaultThinking: "high",
+  },
+  {
+    value: "google:gemini-3-flash",
+    provider: "google",
+    label: "Gemini 3 Flash",
+    thinking: ["minimal", "low", "medium", "high"],
+    defaultThinking: "high",
+  },
+  {
+    value: "google:gemini-3.5-flash",
+    provider: "google",
+    label: "Gemini 3.5 Flash",
+    thinking: ["minimal", "low", "medium", "high"],
+    defaultThinking: "high",
   },
   {
     value: "kimi:kimi-for-coding",
@@ -191,7 +206,9 @@ function openRouterModelEntries(
 }
 
 export function modelIdFromRef(model: ModelRef | null | undefined): ModelId {
-  if (model?.provider && model.name) return modelId(model.provider, model.name);
+  if (model?.provider && model.name) {
+    return modelId(model.provider, normalizedModelName(model.provider, model.name));
+  }
   return MODELS[0].value;
 }
 
@@ -207,14 +224,18 @@ export function thinkingFromRef(
   model: ModelRef | null | undefined,
 ): ThinkingLevel {
   if (model?.provider === "google") {
-    if (
-      model.effort === "low" ||
-      model.effort === "medium" ||
-      model.effort === "high"
-    ) {
+    if (model.name.endsWith("-low")) return "low";
+    if (model.name.endsWith("-medium")) return "medium";
+    if (model.name.endsWith("-high")) return "high";
+    if (model.effort === "low" || model.effort === "medium" || model.effort === "high") {
       return model.effort;
     }
-    return "medium";
+    if (model.effort === "none") {
+      // Pro variants don't support `minimal`; clamp to low so we never send
+      // an invalid thinking level for those models.
+      return model.name.includes("-pro") ? "low" : "minimal";
+    }
+    return "high";
   }
   if (model?.provider === "kimi") {
     if (model.effort === "none") return "off";
@@ -256,6 +277,18 @@ export function modelRefWithThinking(
   model: ModelRef,
   thinking: ThinkingLevel,
 ): ModelRef {
+  if (model.provider === "google") {
+    const name = normalizedGoogleModelName(model.name);
+    if (thinking === "off") return { ...model, name, effort: "low" };
+    if (thinking === "minimal") {
+      // Pro variants reject `minimal` server-side; clamp to low.
+      return name.includes("-pro")
+        ? { ...model, name, effort: "low" }
+        : { ...model, name, effort: "none" };
+    }
+    if (thinking === "xhigh" || thinking === "max") return { ...model, name, effort: "high" };
+    return { ...model, name, effort: thinking };
+  }
   if (
     model.provider === "openai" &&
     model.name === "gpt-5.3-codex-spark" &&
@@ -268,6 +301,9 @@ export function modelRefWithThinking(
   if (model.provider === "openrouter" && (thinking === "xhigh" || thinking === "max")) {
     return { ...model, effort: "high" };
   }
+  // `minimal` is Gemini-only on the backend. The Google branch above already
+  // handled it; for any other provider that ever surfaces it, clamp to low.
+  if (thinking === "minimal") return { ...model, effort: "low" };
   return { ...model, effort: thinking };
 }
 
@@ -282,6 +318,27 @@ export function selectionFromRef(
 
 function modelId(provider: string, name: string): ModelId {
   return `${provider}:${name}`;
+}
+
+function normalizedModelName(provider: string, name: string): string {
+  if (provider === "google") return normalizedGoogleModelName(name);
+  return name;
+}
+
+function normalizedGoogleModelName(name: string): string {
+  if (name === "gemini-3.1-pro-preview") return "gemini-3.1-pro";
+  if (name === "gemini-3-flash-preview") return "gemini-3-flash";
+  if (name === "gemini-3.1-pro-low" || name === "gemini-3.1-pro-high") {
+    return "gemini-3.1-pro";
+  }
+  if (
+    name === "gemini-3.5-flash-low" ||
+    name === "gemini-3.5-flash-medium" ||
+    name === "gemini-3.5-flash-high"
+  ) {
+    return "gemini-3.5-flash";
+  }
+  return name;
 }
 
 export function selectionsFromSettings(

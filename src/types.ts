@@ -75,6 +75,8 @@ export type Part =
   | ToolCallPart
   | ToolResultPart;
 
+export type QuestionAnswer = string[];
+
 export type ChatMessage = {
   role: Role;
   parts: Part[];
@@ -586,7 +588,14 @@ export type ClipboardImageAttachment = {
   name: string;
 };
 
-export type ThinkingLevel = "off" | "low" | "medium" | "high" | "max" | "xhigh";
+export type ThinkingLevel =
+  | "off"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "max"
+  | "xhigh";
 
 export type TerminalCommandResult = {
   content: string;

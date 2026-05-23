@@ -8,6 +8,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use directories::ProjectDirs;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 
 use sinew_core::{AppError, Result};
@@ -15,11 +16,22 @@ use sinew_core::{AppError, Result};
 const GOOGLE_OAUTH_AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_USER_INFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
+// Antigravity OAuth client (replaces the Gemini Code Assist defaults).
+// Source: https://github.com/NoeFabris/opencode-antigravity-auth
 const GOOGLE_CLIENT_ID: &str =
-    "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
-const GOOGLE_CLIENT_SECRET: &str = "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";
-const GOOGLE_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
+    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+const GOOGLE_CLIENT_SECRET: &str = "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";
+const GOOGLE_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs";
 const REFRESH_SKEW_MS: i64 = 60_000;
+
+// Bump this number whenever we need to force a one-shot OAuth reset for
+// existing installations (e.g. when the schema of the auth file or the
+// upstream expectations change in a breaking way). The current value reflects
+// the migration that fixes the Antigravity platform/project flow shipped in
+// v0.1.14: legacy tokens were valid but the cached project/tier metadata was
+// wrong, so we wipe the file and ask users to reconnect once.
+const CURRENT_AUTH_MIGRATION: u32 = 1;
+const AUTH_MIGRATION_FILE: &str = "google-auth-migrations.json";
 
 #[derive(Clone)]
 pub enum Credential {
@@ -65,6 +77,26 @@ pub struct GoogleUserData {
     pub user_tier: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_tier_name: Option<String>,
+}
+
+impl GoogleUserData {
+    pub fn antigravity_default() -> Self {
+        Self {
+            project_id: "default".into(),
+            user_tier: Some("free-tier".into()),
+            user_tier_name: None,
+        }
+    }
+
+    pub fn is_stale_antigravity_default(&self) -> bool {
+        self.project_id == "default" && self.user_tier.as_deref() == Some("free-tier")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PkceCodes {
+    pub code_verifier: String,
+    pub code_challenge: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -322,7 +354,9 @@ pub fn load_default_user_data() -> Result<Option<GoogleUserData>> {
     if payload.provider != "google" || payload.auth_mode != "oauth" {
         return Ok(None);
     }
-    Ok(payload.user)
+    Ok(payload
+        .user
+        .filter(|user| !user.is_stale_antigravity_default()))
 }
 
 pub fn save_default_user_data(user: &GoogleUserData) -> Result<()> {
@@ -349,19 +383,86 @@ pub fn delete_default_auth() -> Result<()> {
     }
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthMigrations {
+    #[serde(default)]
+    applied: u32,
+}
+
+fn default_migration_path() -> Result<PathBuf> {
+    let dirs = ProjectDirs::from("dev", "hyrak", "sinew")
+        .ok_or_else(|| AppError::Auth("unable to resolve local data directory".into()))?;
+    Ok(dirs.data_local_dir().join(AUTH_MIGRATION_FILE))
+}
+
+fn read_applied_migration(path: &Path) -> u32 {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice::<AuthMigrations>(&bytes)
+            .map(|m| m.applied)
+            .unwrap_or(0),
+        Err(_) => 0,
+    }
+}
+
+fn write_applied_migration(path: &Path, applied: u32) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| {
+            AppError::Auth(format!("unable to create auth migrations directory: {err}"))
+        })?;
+    }
+    let payload = AuthMigrations { applied };
+    let bytes = serde_json::to_vec_pretty(&payload).map_err(|err| {
+        AppError::Decode(format!("unable to serialize auth migrations file: {err}"))
+    })?;
+    std::fs::write(path, bytes)
+        .map_err(|err| AppError::Auth(format!("unable to write auth migrations file: {err}")))
+}
+
+/// One-shot purge of legacy Google OAuth state.
+///
+/// Returns `Ok(true)` when the migration ran and the legacy auth file was
+/// (potentially) removed, `Ok(false)` when the migration was already applied
+/// for this install.
+pub fn purge_legacy_oauth_if_needed() -> Result<bool> {
+    let migration_path = default_migration_path()?;
+    let applied = read_applied_migration(&migration_path);
+    if applied >= CURRENT_AUTH_MIGRATION {
+        return Ok(false);
+    }
+    // Best-effort wipe of the legacy auth file. If it does not exist, that's
+    // fine; the goal is purely to make sure no stale project/tier metadata is
+    // reused after the v0.1.14 fixes.
+    delete_default_auth()?;
+    write_applied_migration(&migration_path, CURRENT_AUTH_MIGRATION)?;
+    Ok(true)
+}
+
 pub fn generate_state() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-pub fn oauth_authorize_url(redirect_uri: &str, state: &str) -> String {
+pub fn generate_pkce() -> PkceCodes {
+    let code_verifier = generate_state();
+    let digest = Sha256::digest(code_verifier.as_bytes());
+    let code_challenge = URL_SAFE_NO_PAD.encode(digest);
+    PkceCodes {
+        code_verifier,
+        code_challenge,
+    }
+}
+
+pub fn oauth_authorize_url(redirect_uri: &str, pkce: &PkceCodes, state: &str) -> String {
     let mut serializer = url::form_urlencoded::Serializer::new(String::new());
     serializer
         .append_pair("response_type", "code")
         .append_pair("client_id", GOOGLE_CLIENT_ID)
         .append_pair("redirect_uri", redirect_uri)
         .append_pair("scope", GOOGLE_OAUTH_SCOPE)
+        .append_pair("code_challenge", &pkce.code_challenge)
+        .append_pair("code_challenge_method", "S256")
         .append_pair("access_type", "offline")
         .append_pair("prompt", "consent")
         .append_pair("state", state);
@@ -372,6 +473,7 @@ pub async fn exchange_oauth_code(
     http: &reqwest::Client,
     code: &str,
     redirect_uri: &str,
+    pkce: &PkceCodes,
 ) -> Result<GoogleAuthStatus> {
     let response = http
         .post(GOOGLE_OAUTH_TOKEN_URL)
@@ -383,6 +485,7 @@ pub async fn exchange_oauth_code(
             ("redirect_uri", redirect_uri),
             ("client_id", GOOGLE_CLIENT_ID),
             ("client_secret", GOOGLE_CLIENT_SECRET),
+            ("code_verifier", &pkce.code_verifier),
         ])
         .send()
         .await

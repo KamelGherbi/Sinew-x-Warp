@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use sinew_core::{ChatMessage, Part, Role};
 
-use crate::ReadTool;
+use crate::{ReadFingerprint, ReadTool};
 
 use super::clean_context::tool_result_cleaned;
 
@@ -211,9 +211,12 @@ pub(super) fn tool_result_exposes_id(content: &str) -> bool {
     content.starts_with("tool_call_id:")
 }
 
-pub(super) fn successful_read_paths(history: &[ChatMessage], read: &ReadTool) -> BTreeSet<String> {
+pub(super) fn successful_read_fingerprints(
+    history: &[ChatMessage],
+    read: &ReadTool,
+) -> HashMap<String, ReadFingerprint> {
     let mut pending_reads = HashMap::new();
-    let mut successful = BTreeSet::new();
+    let mut successful = HashMap::new();
 
     for message in history {
         match message.role {
@@ -225,14 +228,15 @@ pub(super) fn successful_read_paths(history: &[ChatMessage], read: &ReadTool) ->
                     else {
                         continue;
                     };
-                    if name != "read" {
-                        continue;
-                    }
-                    let Some(path) = input.get("path").and_then(|value| value.as_str()) else {
-                        continue;
-                    };
-                    if let Ok(normalized) = read.normalize_path(path) {
-                        pending_reads.insert(id.clone(), normalized);
+                    if name == "read" {
+                        let Some(path) = input.get("path").and_then(|value| value.as_str()) else {
+                            continue;
+                        };
+                        if let Ok(normalized) = read.normalize_path(path) {
+                            pending_reads.insert(id.clone(), Some(normalized));
+                        }
+                    } else if name == "edit_file" || name == "write_file" {
+                        pending_reads.insert(id.clone(), None);
                     }
                 }
             }
@@ -247,12 +251,22 @@ pub(super) fn successful_read_paths(history: &[ChatMessage], read: &ReadTool) ->
                     else {
                         continue;
                     };
+                    let Some(pending_path) = pending_reads.remove(tool_call_id) else {
+                        continue;
+                    };
                     if *is_error || tool_result_cleaned(meta) {
-                        pending_reads.remove(tool_call_id);
                         continue;
                     }
-                    if let Some(path) = pending_reads.remove(tool_call_id) {
-                        successful.insert(path);
+                    let Some(meta) = meta else {
+                        continue;
+                    };
+                    if let Some(fingerprint) = read_fingerprint_from_meta(meta) {
+                        let path =
+                            pending_path.unwrap_or_else(|| fingerprint.relative_path.clone());
+                        successful.insert(path, fingerprint);
+                    }
+                    for fingerprint in read_fingerprints_from_meta(meta) {
+                        successful.insert(fingerprint.relative_path.clone(), fingerprint);
                     }
                 }
             }
@@ -260,4 +274,22 @@ pub(super) fn successful_read_paths(history: &[ChatMessage], read: &ReadTool) ->
     }
 
     successful
+}
+
+fn read_fingerprint_from_meta(meta: &Value) -> Option<ReadFingerprint> {
+    meta.get("read_fingerprint")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+}
+
+fn read_fingerprints_from_meta(meta: &Value) -> Vec<ReadFingerprint> {
+    meta.get("read_fingerprints")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| serde_json::from_value(value.clone()).ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }

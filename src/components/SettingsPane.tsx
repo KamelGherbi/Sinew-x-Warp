@@ -907,6 +907,68 @@ export function SettingsPane({ workspacePath }: Props) {
     [skills, skillsDirty, workspacePath],
   );
 
+  const createSkill = useCallback(async () => {
+    setSkillsSaving(true);
+    setSkillsError(null);
+    setSkillsStatus(null);
+    try {
+      const { name, skills: refreshed } = await api.createSkill(workspacePath);
+      setSkills(refreshed);
+      setSavedSkillsJson(skillsFingerprint(refreshed));
+      setSelectedSkillName(name);
+      setSkillFilter("");
+      setSkillsStatus("Created");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setSkillsError(message);
+      setSkillsStatus(message);
+    } finally {
+      setSkillsSaving(false);
+    }
+  }, [workspacePath]);
+
+  const saveSkillContent = useCallback(
+    async (skill: InstalledSkill, content: string) => {
+      setSkillsSaving(true);
+      setSkillsError(null);
+      setSkillsStatus(null);
+      try {
+        const { name, skills: refreshed } = await api.updateSkillContent(
+          workspacePath,
+          skill.absolutePath,
+          content,
+        );
+        const enabledByPath = new Map(
+          (skills ?? []).map((item) => [item.absolutePath, item.enabled]),
+        );
+        const merged = refreshed.map((item) => {
+          const enabled = enabledByPath.get(item.absolutePath);
+          return enabled === undefined ? item : { ...item, enabled };
+        });
+        const saved = await api.saveSkillSettings(
+          workspacePath,
+          settingsFromSkills(merged),
+        );
+        setSkills(saved);
+        setSavedSkillsJson(skillsFingerprint(saved));
+        setSelectedSkillName(
+          name || saved.find((item) => item.absolutePath === skill.absolutePath)?.name || skill.name,
+        );
+        setSkillFilter("");
+        setSkillsStatus("Saved");
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setSkillsError(message);
+        setSkillsStatus(message);
+        return false;
+      } finally {
+        setSkillsSaving(false);
+      }
+    },
+    [skills, workspacePath],
+  );
+
   const selectedSubAgent =
     subAgentSettings.agents.find((agent) => agent.id === selectedSubAgentId) ??
     null;
@@ -968,49 +1030,7 @@ export function SettingsPane({ workspacePath }: Props) {
   }, []);
 
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
-    monaco.editor.defineTheme("sinew-cool", {
-      base: "vs-dark",
-      inherit: true,
-      rules: [
-        { token: "comment", foreground: "52555c" },
-        { token: "keyword", foreground: "c4b5fd" },
-        { token: "string", foreground: "86efac" },
-        { token: "number", foreground: "f5a683" },
-        { token: "type", foreground: "e8bb6a" },
-        { token: "function", foreground: "9fc2ff" },
-        { token: "variable", foreground: "e8e9ec" },
-        { token: "constant", foreground: "f5a683" },
-        { token: "regexp", foreground: "86efac" },
-        { token: "tag", foreground: "f5a1ab" },
-        { token: "attribute.name", foreground: "c4b5fd" },
-      ],
-      colors: {
-        "editor.background": "#08090b",
-        "editor.foreground": "#e8e9ec",
-        "editor.lineHighlightBackground": "#0f1013",
-        "editorLineNumber.foreground": "#3a3d44",
-        "editorLineNumber.activeForeground": "#9aa0a8",
-        "editorCursor.foreground": "#3b82f6",
-        "editor.selectionBackground": "#1e2b4a",
-        "editor.inactiveSelectionBackground": "#141518",
-        "editorIndentGuide.background1": "#141518",
-        "editorIndentGuide.activeBackground1": "#23252b",
-        "editorGutter.background": "#08090b",
-        "editorWidget.background": "#0f1013",
-        "editorWidget.border": "#23252b",
-        "editorHoverWidget.background": "#0f1013",
-        "editorHoverWidget.border": "#23252b",
-        "editorSuggestWidget.background": "#0f1013",
-        "editorSuggestWidget.border": "#23252b",
-        "editorSuggestWidget.selectedBackground": "#1e2b4a",
-        "editorBracketMatch.background": "#1e2b4a",
-        "editorBracketMatch.border": "#3b82f6",
-        "scrollbarSlider.background": "#23252bcc",
-        "scrollbarSlider.hoverBackground": "#2b2e35cc",
-        "scrollbarSlider.activeBackground": "#3a3d44cc",
-      },
-    });
-    monaco.editor.setTheme("sinew-cool");
+    defineSinewCoolTheme(monaco);
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       void saveAndDetectRef.current();
     });
@@ -1231,9 +1251,11 @@ export function SettingsPane({ workspacePath }: Props) {
             onSelectSkill={(name) => setSelectedSkillName(name)}
             onRefresh={() => void loadSkills()}
             onSave={() => void saveSkills()}
+            onCreate={() => void createSkill()}
             onToggleSkill={toggleSkillEnabled}
             onRevealSkill={(skill) => void revealSkill(skill)}
             onDeleteSkill={(skill) => void deleteSkill(skill)}
+            onSaveSkillContent={saveSkillContent}
           />
         ) : (
           <SubAgentsSection
@@ -2856,7 +2878,11 @@ function SubAgentsSection({
           {status && (
             <span
               className="settings-pane__status"
-              data-tone={status === "Saved" ? "ok" : "error"}
+              data-tone={
+                status === "Saved" || status === "Created" || status === "Deleted"
+                  ? "ok"
+                  : "error"
+              }
             >
               {status}
             </span>
@@ -3197,9 +3223,11 @@ type SkillsSectionProps = {
   onSelectSkill: (name: string) => void;
   onRefresh: () => void;
   onSave: () => void;
+  onCreate: () => void;
   onToggleSkill: (name: string) => void;
   onRevealSkill: (skill: InstalledSkill) => void;
   onDeleteSkill: (skill: InstalledSkill) => void;
+  onSaveSkillContent: (skill: InstalledSkill, content: string) => Promise<boolean>;
 };
 
 function SkillsSection({
@@ -3217,9 +3245,11 @@ function SkillsSection({
   onSelectSkill,
   onRefresh,
   onSave,
+  onCreate,
   onToggleSkill,
   onRevealSkill,
   onDeleteSkill,
+  onSaveSkillContent,
 }: SkillsSectionProps) {
   const total = allSkills?.length ?? 0;
   const visible = skills.length;
@@ -3242,11 +3272,24 @@ function SkillsSection({
           {status && (
             <span
               className="settings-pane__status"
-              data-tone={status === "Saved" ? "ok" : "error"}
+              data-tone={
+                status === "Saved" || status === "Created" || status === "Deleted"
+                  ? "ok"
+                  : "error"
+              }
             >
               {status}
             </span>
           )}
+          <button
+            type="button"
+            className="settings-pane__btn"
+            onClick={onCreate}
+            disabled={loading || saving || deleting}
+          >
+            <Icon icon="solar:add-circle-linear" width={13} height={13} />
+            <span>Add</span>
+          </button>
           <button
             type="button"
             className="settings-pane__btn"
@@ -3370,9 +3413,11 @@ function SkillsSection({
           {selectedSkill ? (
             <SkillPreview
               skill={selectedSkill}
+              saving={saving}
               deleting={deleting}
               onReveal={() => onRevealSkill(selectedSkill)}
               onDelete={() => onDeleteSkill(selectedSkill)}
+              onSaveContent={(content) => onSaveSkillContent(selectedSkill, content)}
             />
           ) : (
             <div className="settings-pane__empty settings-pane__empty--main">
@@ -3390,17 +3435,32 @@ function SkillsSection({
 
 function SkillPreview({
   skill,
+  saving,
   deleting,
   onReveal,
   onDelete,
+  onSaveContent,
 }: {
   skill: InstalledSkill;
+  saving: boolean;
   deleting: boolean;
   onReveal: () => void;
   onDelete: () => void;
+  onSaveContent: (content: string) => Promise<boolean>;
 }) {
   const body = stripFrontmatter(skill.content);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState(skill.name);
+  const [draftDescription, setDraftDescription] = useState(skill.description ?? "");
+  const [draftBody, setDraftBody] = useState(body);
+  const nameValid = draftName.trim().length > 0;
+
+  const resetDraft = useCallback(() => {
+    setDraftName(skill.name);
+    setDraftDescription(skill.description ?? "");
+    setDraftBody(stripFrontmatter(skill.content));
+  }, [skill.content, skill.description, skill.name]);
 
   useEffect(() => {
     if (!confirmDelete) return;
@@ -3410,14 +3470,36 @@ function SkillPreview({
 
   useEffect(() => {
     setConfirmDelete(false);
-  }, [skill.absolutePath]);
+    setEditing(false);
+    resetDraft();
+  }, [resetDraft, skill.absolutePath]);
+
+  const saveDraft = useCallback(async () => {
+    if (!nameValid || saving || deleting) return;
+    const ok = await onSaveContent(
+      buildSkillContent(draftName, draftDescription, draftBody),
+    );
+    if (ok) setEditing(false);
+  }, [deleting, draftBody, draftDescription, draftName, nameValid, onSaveContent, saving]);
 
   return (
     <article className="settings-pane__skill-doc">
       <header className="settings-pane__skill-doc-head">
         <div className="settings-pane__skill-doc-top">
           <div className="settings-pane__skill-doc-title">
-            <h2>{skill.name}</h2>
+            {editing ? (
+              <input
+                className="settings-pane__skill-doc-title-input"
+                value={draftName}
+                onChange={(event) => setDraftName(event.target.value)}
+                placeholder="skill-name"
+                aria-invalid={!nameValid}
+                spellCheck={false}
+                autoFocus
+              />
+            ) : (
+              <h2>{skill.name}</h2>
+            )}
             <span
               className="settings-pane__skill-source"
               data-source={skill.source}
@@ -3426,66 +3508,162 @@ function SkillPreview({
             </span>
           </div>
           <div className="settings-pane__skill-doc-actions">
-            <button
-              type="button"
-              className="settings-pane__skill-doc-action"
-              onClick={onReveal}
-              disabled={deleting}
-              title="Reveal in Finder"
-              aria-label={`Reveal ${skill.name} in Finder`}
-            >
-              <Icon icon="solar:folder-open-linear" width={13} height={13} />
-              <span>Reveal in Finder</span>
-            </button>
-            <button
-              type="button"
-              className="settings-pane__skill-doc-action"
-              data-danger="true"
-              data-confirm={confirmDelete ? "true" : "false"}
-              disabled={deleting || skill.source === "builtin"}
-              title={
-                skill.source === "builtin"
-                  ? "Built-in skills can be disabled but not deleted"
-                  : confirmDelete
-                    ? "Click again to confirm"
-                    : "Delete skill"
-              }
-              aria-label={confirmDelete ? "Confirm skill delete" : `Delete ${skill.name}`}
-              onClick={() => {
-                if (confirmDelete) {
-                  onDelete();
-                } else {
-                  setConfirmDelete(true);
-                }
-              }}
-            >
-              <Icon
-                icon={
-                  deleting
-                    ? "solar:refresh-linear"
-                    : "solar:trash-bin-trash-linear"
-                }
-                width={13}
-                height={13}
-              />
-              <span>
-                {deleting
-                  ? "Deleting..."
-                  : confirmDelete
-                    ? "Confirm delete"
-                    : "Delete"}
-              </span>
-            </button>
+            {editing ? (
+              <>
+                <button
+                  type="button"
+                  className="settings-pane__skill-doc-action"
+                  onClick={() => {
+                    resetDraft();
+                    setEditing(false);
+                  }}
+                  disabled={saving || deleting}
+                >
+                  <Icon icon="solar:close-circle-linear" width={13} height={13} />
+                  <span>Cancel</span>
+                </button>
+                <button
+                  type="button"
+                  className="settings-pane__skill-doc-action"
+                  data-primary="true"
+                  onClick={() => void saveDraft()}
+                  disabled={saving || deleting || !nameValid}
+                >
+                  <Icon
+                    icon={saving ? "solar:refresh-linear" : "solar:diskette-linear"}
+                    width={13}
+                    height={13}
+                  />
+                  <span>{saving ? "Saving…" : "Save"}</span>
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="settings-pane__skill-doc-action"
+                onClick={() => setEditing(true)}
+                disabled={saving || deleting}
+                title="Edit skill content"
+              >
+                <Icon icon="solar:code-square-linear" width={13} height={13} />
+                <span>Raw</span>
+              </button>
+            )}
+            {!editing && (
+              <>
+                <button
+                  type="button"
+                  className="settings-pane__skill-doc-action"
+                  onClick={onReveal}
+                  disabled={saving || deleting}
+                  title="Reveal in Finder"
+                  aria-label={`Reveal ${skill.name} in Finder`}
+                >
+                  <Icon icon="solar:folder-open-linear" width={13} height={13} />
+                  <span>Reveal in Finder</span>
+                </button>
+                <button
+                  type="button"
+                  className="settings-pane__skill-doc-action"
+                  data-danger="true"
+                  data-confirm={confirmDelete ? "true" : "false"}
+                  disabled={saving || deleting || skill.source === "builtin"}
+                  title={
+                    skill.source === "builtin"
+                      ? "Built-in skills can be disabled but not deleted"
+                      : confirmDelete
+                        ? "Click again to confirm"
+                        : "Delete skill"
+                  }
+                  aria-label={confirmDelete ? "Confirm skill delete" : `Delete ${skill.name}`}
+                  onClick={() => {
+                    if (confirmDelete) {
+                      onDelete();
+                    } else {
+                      setConfirmDelete(true);
+                    }
+                  }}
+                >
+                  <Icon
+                    icon={
+                      deleting
+                        ? "solar:refresh-linear"
+                        : "solar:trash-bin-trash-linear"
+                    }
+                    width={13}
+                    height={13}
+                  />
+                  <span>
+                    {deleting
+                      ? "Deleting..."
+                      : confirmDelete
+                        ? "Confirm delete"
+                        : "Delete"}
+                  </span>
+                </button>
+              </>
+            )}
           </div>
         </div>
         <code className="settings-pane__skill-path">{skill.absolutePath}</code>
-        {skill.description && (
-          <p className="settings-pane__skill-doc-desc">{skill.description}</p>
+        {editing ? (
+          <input
+            className="settings-pane__skill-doc-desc-input"
+            value={draftDescription}
+            onChange={(event) => setDraftDescription(event.target.value)}
+            placeholder="When should the agent reach for this skill?"
+            spellCheck={false}
+          />
+        ) : (
+          skill.description && (
+            <p className="settings-pane__skill-doc-desc">{skill.description}</p>
+          )
         )}
       </header>
-      <div className="settings-pane__skill-doc-body">
-        <Markdown text={body || "_(empty SKILL.md)_"} onOpenFile={noop} />
-      </div>
+      {editing ? (
+        <div className="settings-pane__skill-doc-editor">
+          {!nameValid && (
+            <div className="settings-pane__editor-error">
+              <Icon icon="solar:danger-triangle-linear" width={13} height={13} />
+              <span>Name is required.</span>
+            </div>
+          )}
+          <div className="settings-pane__skill-doc-editor-host">
+            <Editor
+              value={draftBody}
+              language="markdown"
+              theme="sinew-cool"
+              onChange={(value) => setDraftBody(value ?? "")}
+              onMount={(_editor, monaco) => defineSinewCoolTheme(monaco)}
+              options={{
+                fontFamily:
+                  '"Geist Mono", ui-monospace, "SF Mono", Menlo, monospace',
+                fontSize: 12,
+                lineHeight: 18,
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                smoothScrolling: true,
+                renderLineHighlight: "line",
+                padding: { top: 12, bottom: 12 },
+                tabSize: 2,
+                wordWrap: "on",
+                automaticLayout: true,
+                lineNumbers: "on",
+                lineNumbersMinChars: 3,
+                folding: true,
+                scrollbar: {
+                  verticalScrollbarSize: 9,
+                  horizontalScrollbarSize: 9,
+                },
+              }}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="settings-pane__skill-doc-body">
+          <Markdown text={body || "_(empty SKILL.md)_"} onOpenFile={noop} />
+        </div>
+      )}
     </article>
   );
 }
@@ -3561,6 +3739,70 @@ function stripFrontmatter(content: string): string {
   const end = content.indexOf("\n---", 3);
   if (end === -1) return content.trim();
   return content.slice(end + 4).trim();
+}
+
+type MonacoNs = Parameters<OnMount>[1];
+
+function defineSinewCoolTheme(monaco: MonacoNs): void {
+  monaco.editor.defineTheme("sinew-cool", {
+    base: "vs-dark",
+    inherit: true,
+    rules: [
+      { token: "comment", foreground: "52555c" },
+      { token: "keyword", foreground: "c4b5fd" },
+      { token: "string", foreground: "86efac" },
+      { token: "number", foreground: "f5a683" },
+      { token: "type", foreground: "e8bb6a" },
+      { token: "function", foreground: "9fc2ff" },
+      { token: "variable", foreground: "e8e9ec" },
+      { token: "constant", foreground: "f5a683" },
+      { token: "regexp", foreground: "86efac" },
+      { token: "tag", foreground: "f5a1ab" },
+      { token: "attribute.name", foreground: "c4b5fd" },
+    ],
+    colors: {
+      "editor.background": "#0b0b0d",
+      "editor.foreground": "#e8e9ec",
+      "editor.lineHighlightBackground": "#0f1013",
+      "editorLineNumber.foreground": "#3a3d44",
+      "editorLineNumber.activeForeground": "#9aa0a8",
+      "editorCursor.foreground": "#3b82f6",
+      "editor.selectionBackground": "#1e2b4a",
+      "editor.inactiveSelectionBackground": "#141518",
+      "editorIndentGuide.background1": "#141518",
+      "editorIndentGuide.activeBackground1": "#23252b",
+      "editorGutter.background": "#0b0b0d",
+      "editorWidget.background": "#0f1013",
+      "editorWidget.border": "#23252b",
+      "editorHoverWidget.background": "#0f1013",
+      "editorHoverWidget.border": "#23252b",
+      "editorSuggestWidget.background": "#0f1013",
+      "editorSuggestWidget.border": "#23252b",
+      "editorSuggestWidget.selectedBackground": "#1e2b4a",
+      "editorBracketMatch.background": "#1e2b4a",
+      "editorBracketMatch.border": "#3b82f6",
+      "scrollbarSlider.background": "#23252bcc",
+      "scrollbarSlider.hoverBackground": "#2b2e35cc",
+      "scrollbarSlider.activeBackground": "#3a3d44cc",
+    },
+  });
+  monaco.editor.setTheme("sinew-cool");
+}
+
+function buildSkillContent(name: string, description: string, body: string): string {
+  const normalizedBody = body.replace(/\r\n/g, "\n").trimEnd();
+  return [
+    "---",
+    `name: ${cleanFrontmatterValue(name)}`,
+    `description: ${cleanFrontmatterValue(description)}`,
+    "---",
+    "",
+    normalizedBody,
+  ].join("\n");
+}
+
+function cleanFrontmatterValue(value: string): string {
+  return value.replace(/\r?\n/g, " ").trim();
 }
 
 function createSubAgent(
@@ -4064,7 +4306,8 @@ const TOOL_LABEL: Record<string, string> = {
   bash: "Shell",
   bash_input: "Shell input",
   read: "Read",
-  apply_patch: "Patch",
+  edit_file: "Edit file",
+  write_file: "Write file",
   Glob: "Glob",
   Grep: "Grep",
   WebSearch: "Web search",
@@ -4085,7 +4328,8 @@ const TOOL_LABEL: Record<string, string> = {
 
 const TOOL_ICON: Record<string, string> = {
   read: "solar:document-text-linear",
-  apply_patch: "solar:pen-new-square-linear",
+  edit_file: "solar:pen-2-linear",
+  write_file: "solar:file-text-linear",
   WebSearch: "solar:magnifer-linear",
   WebFetch: "solar:link-round-linear",
   CreateImage: "solar:gallery-wide-linear",

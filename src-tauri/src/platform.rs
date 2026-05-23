@@ -260,6 +260,36 @@ pub(super) fn delete_installed_skill(workspace_root: &Path, skill_md: &Path) -> 
     Ok(folder)
 }
 
+pub(super) fn write_installed_skill(
+    workspace_root: &Path,
+    skill_md: &Path,
+    content: &str,
+) -> Result<PathBuf> {
+    let skill_md = fs::canonicalize(skill_md).context("skill file does not exist")?;
+    if skill_md.file_name().and_then(|name| name.to_str()) != Some("SKILL.md") {
+        anyhow::bail!("can only edit a SKILL.md file");
+    }
+
+    let folder = skill_md
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("skill has no parent folder"))?
+        .to_path_buf();
+    let allowed_roots = skill_roots(workspace_root)
+        .into_iter()
+        .filter_map(|root| fs::canonicalize(root).ok())
+        .collect::<Vec<_>>();
+    let allowed = allowed_roots
+        .iter()
+        .any(|root| folder.parent() == Some(root.as_path()));
+    if !allowed {
+        anyhow::bail!("skill is outside the configured skill folders");
+    }
+
+    fs::write(&skill_md, content)
+        .with_context(|| format!("unable to write {}", skill_md.display()))?;
+    Ok(skill_md)
+}
+
 pub(super) fn skill_roots(workspace_root: &Path) -> Vec<PathBuf> {
     let mut roots = vec![
         workspace_root.join(".agents/skills"),
