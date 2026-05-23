@@ -72,6 +72,14 @@ type Props = {
     workspacePath: string,
     conversationId: string,
   ) => void | Promise<void>;
+  onArchiveConversationSession?: (
+    workspacePath: string,
+    conversationId: string,
+  ) => void | Promise<void>;
+  onRestoreConversationSession?: (
+    workspacePath: string,
+    conversationId: string,
+  ) => void | Promise<void>;
   onCloseProjectSession?: (workspacePath: string) => void;
   onWorkspaceConversationsReplace?: (
     workspacePath: string,
@@ -112,6 +120,8 @@ export function Workspace({
   onCreateConversationSession,
   onRenameConversationSession,
   onDeleteConversationSession,
+  onArchiveConversationSession,
+  onRestoreConversationSession,
   onCloseProjectSession,
   onWorkspaceConversationsReplace,
 }: Props) {
@@ -388,6 +398,41 @@ export function Workspace({
       workspacePath,
       streamingConversationIds,
       onDeleteConversationSession,
+      onWorkspaceConversationsReplace,
+    ],
+  );
+
+  const archiveConversation = useCallback(
+    async (id: string) => {
+      if (streamingConversationIds.has(id)) return;
+      if (onArchiveConversationSession) {
+        await onArchiveConversationSession(workspacePath, id);
+        return;
+      }
+      const seq = ++navigationSeqRef.current;
+      try {
+        const summaries = await api.archiveConversation(workspacePath, id);
+        if (seq !== navigationSeqRef.current) return;
+        setConversations(summaries);
+        onWorkspaceConversationsReplace?.(workspacePath, summaries);
+        if (id !== activeConvIdRef.current) return;
+        const nextSummary = summaries[0];
+        if (!nextSummary) return;
+        const nextConversation = await api.loadConversation(workspacePath, nextSummary.id);
+        if (seq !== navigationSeqRef.current) return;
+        activeConvIdRef.current = nextConversation.id;
+        setActiveConv(nextConversation);
+      } catch (err) {
+        console.error(err);
+        if (seq === navigationSeqRef.current) {
+          navigationSeqRef.current += 1;
+        }
+      }
+    },
+    [
+      workspacePath,
+      streamingConversationIds,
+      onArchiveConversationSession,
       onWorkspaceConversationsReplace,
     ],
   );
@@ -1900,6 +1945,29 @@ export function Workspace({
     [deleteConversation, onDeleteConversationSession, workspacePath],
   );
 
+  const archiveConversationFromList = useCallback(
+    (id: string, targetWorkspacePath?: string) => {
+      if (targetWorkspacePath && targetWorkspacePath !== workspacePath) {
+        if (onArchiveConversationSession) {
+          void onArchiveConversationSession(targetWorkspacePath, id);
+        } else {
+          void api
+            .archiveConversation(targetWorkspacePath, id)
+            .then((next) => onWorkspaceConversationsReplace?.(targetWorkspacePath, next))
+            .catch((err) => console.error(err));
+        }
+        return;
+      }
+      void archiveConversation(id);
+    },
+    [
+      archiveConversation,
+      onArchiveConversationSession,
+      onWorkspaceConversationsReplace,
+      workspacePath,
+    ],
+  );
+
   const openSessionSwitcher = useCallback(() => {
     setSessionsOpen(true);
   }, []);
@@ -1943,6 +2011,21 @@ export function Workspace({
       setSessionsRefreshToken((value) => value + 1);
     },
     [deleteConversationFromList],
+  );
+
+  const restoreSessionFromSwitcher = useCallback(
+    (targetWorkspacePath: string, id: string) => {
+      if (onRestoreConversationSession) {
+        void onRestoreConversationSession(targetWorkspacePath, id);
+      } else {
+        void api
+          .restoreConversation(targetWorkspacePath, id)
+          .then((next) => onWorkspaceConversationsReplace?.(targetWorkspacePath, next))
+          .catch((err) => console.error(err));
+      }
+      setSessionsRefreshToken((value) => value + 1);
+    },
+    [onRestoreConversationSession, onWorkspaceConversationsReplace],
   );
 
   const streamingSessionKeys = useMemo(() => {
@@ -2146,6 +2229,7 @@ export function Workspace({
             onCreate={createConversation}
             onRename={renameConversationFromList}
             onDelete={deleteConversationFromList}
+            onArchive={archiveConversationFromList}
             onCloseProject={onCloseProjectSession}
             onOpenProject={onOpenProject || onOpenWorkspace ? openProjectPicker : undefined}
             onOpenSessions={openSessionSwitcher}
@@ -2321,6 +2405,7 @@ export function Workspace({
           onCreate={createSessionFromSwitcher}
           onRename={renameSessionFromSwitcher}
           onDelete={deleteSessionFromSwitcher}
+          onRestore={restoreSessionFromSwitcher}
           onClose={closeSessionSwitcher}
         />
       )}

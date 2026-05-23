@@ -24,6 +24,7 @@ type Props = {
   onCreate: (workspacePath?: string) => void;
   onRename: (id: string, title: string, workspacePath?: string) => void;
   onDelete: (id: string, workspacePath?: string) => void;
+  onArchive: (id: string, workspacePath?: string) => void;
   onCloseProject?: (workspacePath: string) => void;
   onOpenProject?: () => void;
   onOpenSessions?: () => void;
@@ -39,6 +40,7 @@ export function ConversationList({
   onCreate,
   onRename,
   onDelete,
+  onArchive,
   onCloseProject,
   onOpenProject,
   onOpenSessions,
@@ -250,6 +252,16 @@ export function ConversationList({
                           {conv.title || "Untitled"}
                         </span>
                         <span className="conv-row__actions">
+                          <button
+                            className="conv-row__btn"
+                            title="Archive"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onArchive(conv.id, project.path);
+                            }}
+                          >
+                            <Icon icon="solar:archive-linear" width={13} height={13} />
+                          </button>
                           <button
                             className="conv-row__btn"
                             title="Rename"

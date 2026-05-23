@@ -62,6 +62,7 @@ pub struct ConversationSummary {
     pub id: String,
     pub title: String,
     pub updated_at_ms: i64,
+    pub archived_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -74,6 +75,7 @@ pub struct SessionSummary {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub message_count: i64,
+    pub archived_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -625,8 +627,8 @@ impl AppStore {
         let mode_model_settings_json = serde_json::to_string(&mode_model_settings)?;
         let conn = self.connection()?;
         conn.execute(
-            "insert into conversations (id, workspace_id, title, model_json, mode_model_settings_json, system_prompt, todo_list_json, plan_workflow_json, goal_workflow_json, created_at_ms, updated_at_ms)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "insert into conversations (id, workspace_id, title, model_json, mode_model_settings_json, system_prompt, todo_list_json, plan_workflow_json, goal_workflow_json, created_at_ms, updated_at_ms, archived_at_ms)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, null)",
             params![
                 &id,
                 workspace_id,
@@ -661,8 +663,9 @@ impl AppStore {
         let conn = self.connection()?;
         let mut statement = conn
             .prepare(
-                "select id, title, updated_at_ms from conversations
+                "select id, title, updated_at_ms, archived_at_ms from conversations
                  where workspace_id = ?1
+                   and archived_at_ms is null
                  order by updated_at_ms desc",
             )
             .context("unable to prepare conversation list query")?;
@@ -673,6 +676,7 @@ impl AppStore {
                     id: row.get(0)?,
                     title: row.get(1)?,
                     updated_at_ms: row.get(2)?,
+                    archived_at_ms: row.get(3)?,
                 })
             })
             .context("unable to read conversation list")?;
@@ -684,7 +688,12 @@ impl AppStore {
         Ok(conversations)
     }
 
-    pub fn list_sessions(&self, query: Option<&str>, limit: usize) -> Result<Vec<SessionSummary>> {
+    pub fn list_sessions(
+        &self,
+        query: Option<&str>,
+        limit: usize,
+        archived: bool,
+    ) -> Result<Vec<SessionSummary>> {
         let conn = self.connection()?;
         let limit = limit.clamp(1, 500) as i64;
         let trimmed_query = query.unwrap_or_default().trim().to_lowercase();
@@ -696,18 +705,19 @@ impl AppStore {
 
         let mut statement = conn
             .prepare(
-                "select c.id, c.workspace_id, c.title, c.created_at_ms, c.updated_at_ms, count(m.ordinal) as message_count
+                "select c.id, c.workspace_id, c.title, c.created_at_ms, c.updated_at_ms, count(m.ordinal) as message_count, c.archived_at_ms
                  from conversations c
                  left join messages m on m.conversation_id = c.id
                  where (?1 is null or lower(c.title) like ?1 or lower(c.workspace_id) like ?1)
-                 group by c.id, c.workspace_id, c.title, c.created_at_ms, c.updated_at_ms
-                 order by c.updated_at_ms desc
+                   and ((?3 = 1 and c.archived_at_ms is not null) or (?3 = 0 and c.archived_at_ms is null))
+                 group by c.id, c.workspace_id, c.title, c.created_at_ms, c.updated_at_ms, c.archived_at_ms
+                 order by case when ?3 = 1 then c.archived_at_ms else c.updated_at_ms end desc
                  limit ?2",
             )
             .context("unable to prepare session list query")?;
 
         let rows = statement
-            .query_map(params![like_query, limit], |row| {
+            .query_map(params![like_query, limit, if archived { 1 } else { 0 }], |row| {
                 let workspace_id: String = row.get(1)?;
                 Ok(SessionSummary {
                     id: row.get(0)?,
@@ -717,6 +727,7 @@ impl AppStore {
                     created_at_ms: row.get(3)?,
                     updated_at_ms: row.get(4)?,
                     message_count: row.get(5)?,
+                    archived_at_ms: row.get(6)?,
                 })
             })
             .context("unable to read session list")?;
@@ -1343,6 +1354,31 @@ impl AppStore {
         Ok(())
     }
 
+    pub fn archive_conversation(&self, workspace_id: &str, id: &str) -> Result<()> {
+        let now = now_ms();
+        let conn = self.connection()?;
+        conn.execute(
+            "update conversations
+             set archived_at_ms = coalesce(archived_at_ms, ?3), updated_at_ms = ?3
+             where workspace_id = ?1 and id = ?2",
+            params![workspace_id, id, now],
+        )
+        .context("unable to archive conversation")?;
+        Ok(())
+    }
+
+    pub fn restore_conversation(&self, workspace_id: &str, id: &str) -> Result<()> {
+        let conn = self.connection()?;
+        conn.execute(
+            "update conversations
+             set archived_at_ms = null, updated_at_ms = ?3
+             where workspace_id = ?1 and id = ?2",
+            params![workspace_id, id, now_ms()],
+        )
+        .context("unable to restore conversation")?;
+        Ok(())
+    }
+
     pub fn load_conversation_model_by_id(&self, id: &str) -> Result<Option<ModelRef>> {
         let conn = self.connection()?;
         conn.query_row(
@@ -1387,7 +1423,8 @@ impl AppStore {
                 plan_workflow_json text not null default '{\"status\":\"idle\"}',
                 goal_workflow_json text not null default '{\"status\":\"idle\"}',
                 created_at_ms integer not null,
-                updated_at_ms integer not null
+                updated_at_ms integer not null,
+                archived_at_ms integer
             );
 
             create table if not exists messages (
@@ -1414,6 +1451,7 @@ impl AppStore {
         ensure_conversations_plan_workflow_column(&conn)?;
         ensure_conversations_goal_workflow_column(&conn)?;
         ensure_conversations_mode_model_settings_column(&conn)?;
+        ensure_conversations_archived_column(&conn)?;
         ensure_app_settings_table(&conn)?;
         ensure_turn_checkpoints_table(&conn)?;
         if version < 8 {
@@ -1489,6 +1527,20 @@ fn ensure_conversations_mode_model_settings_column(conn: &Connection) -> Result<
         "#,
     )
     .context("unable to add mode model settings column")?;
+    Ok(())
+}
+
+fn ensure_conversations_archived_column(conn: &Connection) -> Result<()> {
+    if conversation_has_column(conn, "archived_at_ms")? {
+        return Ok(());
+    }
+    conn.execute_batch(
+        r#"
+        alter table conversations
+            add column archived_at_ms integer;
+        "#,
+    )
+    .context("unable to add conversation archive column")?;
     Ok(())
 }
 

@@ -12,6 +12,7 @@ type Props = {
   onCreate: () => void;
   onRename: (workspacePath: string, id: string, title: string) => void;
   onDelete: (workspacePath: string, id: string) => void;
+  onRestore: (workspacePath: string, id: string) => void;
   onClose: () => void;
 };
 
@@ -29,7 +30,7 @@ type ProjectGroupedSessions = {
   dateGroups: GroupedSessions[];
 };
 
-type SessionScope = "current" | "all";
+type SessionScope = "current" | "all" | "archived";
 
 export function SessionSwitcher({
   activeWorkspacePath,
@@ -40,6 +41,7 @@ export function SessionSwitcher({
   onCreate,
   onRename,
   onDelete,
+  onRestore,
   onClose,
 }: Props) {
   const [query, setQuery] = useState("");
@@ -71,7 +73,7 @@ export function SessionSwitcher({
     setLoading(true);
     setError(null);
     api
-      .listSessions(undefined, 300)
+      .listSessions(query.trim() || undefined, 300, scope === "archived")
       .then((loaded) => {
         if (disposed) return;
         setSessions(loaded);
@@ -85,11 +87,11 @@ export function SessionSwitcher({
     return () => {
       disposed = true;
     };
-  }, [refreshToken]);
+  }, [query, refreshToken, scope]);
 
   const scopedSessions = useMemo(
     () =>
-      scope === "current"
+      scope === "current" || scope === "archived"
         ? sessions.filter((session) => session.workspaceId === activeWorkspacePath)
         : sessions,
     [activeWorkspacePath, scope, sessions],
@@ -199,7 +201,7 @@ export function SessionSwitcher({
                 {session.title || "Untitled"}
               </div>
               <div className="session-switcher__row-meta">
-                {scope === "current" && (
+                {(scope === "current" || scope === "archived") && (
                   <span title={session.workspaceId}>{session.workspaceName}</span>
                 )}
                 {isActive ? "Current session" : formatSessionTime(session.updatedAtMs)}
@@ -213,32 +215,50 @@ export function SessionSwitcher({
           )}
         </div>
         <div className="session-switcher__row-actions">
-          <button
-            type="button"
-            title="Rename"
-            onClick={(event) => {
-              event.stopPropagation();
-              beginRename(session);
-            }}
-          >
-            <Icon icon="solar:pen-linear" width={14} height={14} />
-          </button>
-          <button
-            type="button"
-            title="Delete"
-            className="session-switcher__danger"
-            onClick={(event) => {
-              event.stopPropagation();
-              if (confirm("Delete this session?")) {
-                onDelete(session.workspaceId, session.id);
+          {scope === "archived" ? (
+            <button
+              type="button"
+              title="Restore"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRestore(session.workspaceId, session.id);
                 setSessions((items) =>
                   items.filter((item) => sessionKey(item) !== key),
                 );
-              }
-            }}
-          >
-            <Icon icon="solar:trash-bin-minimalistic-linear" width={14} height={14} />
-          </button>
+              }}
+            >
+              <Icon icon="solar:archive-up-linear" width={14} height={14} />
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                title="Rename"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  beginRename(session);
+                }}
+              >
+                <Icon icon="solar:pen-linear" width={14} height={14} />
+              </button>
+              <button
+                type="button"
+                title="Delete"
+                className="session-switcher__danger"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (confirm("Delete this session?")) {
+                    onDelete(session.workspaceId, session.id);
+                    setSessions((items) =>
+                      items.filter((item) => sessionKey(item) !== key),
+                    );
+                  }
+                }}
+              >
+                <Icon icon="solar:trash-bin-minimalistic-linear" width={14} height={14} />
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -256,10 +276,14 @@ export function SessionSwitcher({
         <div className="session-switcher__head">
           <div>
             <div className="session-switcher__eyebrow">
-              {scope === "current" ? "Project sessions" : "Global sessions"}
+              {scope === "archived"
+                ? "Archived sessions"
+                : scope === "current"
+                  ? "Project sessions"
+                  : "Global sessions"}
             </div>
             <div className="session-switcher__title">
-              {scope === "current"
+              {scope === "current" || scope === "archived"
                 ? activeProjectName(scopedSessions, activeWorkspacePath)
                 : "All projects"}
             </div>
@@ -305,6 +329,13 @@ export function SessionSwitcher({
             >
               All projects
             </button>
+            <button
+              type="button"
+              data-active={scope === "archived" ? "true" : "false"}
+              onClick={() => setScope("archived")}
+            >
+              Archived
+            </button>
           </div>
           <span>Type /sessions, /session, /resume or /continue in chat.</span>
         </div>
@@ -316,10 +347,12 @@ export function SessionSwitcher({
             <div className="session-switcher__empty">
               {scope === "current"
                 ? "No matching sessions in this project."
+                : scope === "archived"
+                  ? "No archived sessions in this project."
                 : "No matching sessions."}
             </div>
           )}
-          {scope === "current"
+          {scope === "current" || scope === "archived"
             ? grouped.map((group) => (
                 <section className="session-switcher__group" key={group.label}>
                   <div className="session-switcher__group-label">{group.label}</div>

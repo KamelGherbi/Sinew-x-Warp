@@ -108,6 +108,7 @@ mod terminal;
 mod tests;
 mod turns;
 mod updater;
+mod vibe_island;
 mod workflow;
 mod workspace;
 
@@ -294,6 +295,8 @@ pub fn run() {
             conversations::load_conversation,
             conversations::rename_conversation,
             conversations::delete_conversation,
+            conversations::archive_conversation,
+            conversations::restore_conversation,
             conversations::set_conversation_mode,
             conversations::set_conversation_model_preference,
             conversations::list_mcp_settings,

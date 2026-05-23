@@ -222,9 +222,9 @@ export const api = {
       input: { workspacePath },
     });
   },
-  listSessions(query?: string, limit?: number) {
+  listSessions(query?: string, limit?: number, archived = false) {
     return invoke<SessionSummary[]>("list_sessions", {
-      input: { query, limit },
+      input: { query, limit, archived },
     });
   },
   createConversation(workspacePath: string) {
@@ -248,6 +248,16 @@ export const api = {
   },
   deleteConversation(workspacePath: string, conversationId: string) {
     return invoke<ConversationSummary[]>("delete_conversation", {
+      input: { workspacePath, conversationId },
+    });
+  },
+  archiveConversation(workspacePath: string, conversationId: string) {
+    return invoke<ConversationSummary[]>("archive_conversation", {
+      input: { workspacePath, conversationId },
+    });
+  },
+  restoreConversation(workspacePath: string, conversationId: string) {
+    return invoke<ConversationSummary[]>("restore_conversation", {
       input: { workspacePath, conversationId },
     });
   },

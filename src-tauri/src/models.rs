@@ -101,6 +101,8 @@ pub(super) struct WorkspaceInput {
 pub(super) struct ListSessionsInput {
     pub(super) query: Option<String>,
     pub(super) limit: Option<usize>,
+    #[serde(default)]
+    pub(super) archived: bool,
 }
 
 #[derive(Debug, Deserialize)]

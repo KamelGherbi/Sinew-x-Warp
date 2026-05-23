@@ -20,7 +20,11 @@ pub(super) async fn list_sessions(
 ) -> std::result::Result<Vec<SessionSummary>, String> {
     state
         .store
-        .list_sessions(input.query.as_deref(), input.limit.unwrap_or(200))
+        .list_sessions(
+            input.query.as_deref(),
+            input.limit.unwrap_or(200),
+            input.archived,
+        )
         .map_err(error_to_string)
 }
 
@@ -101,6 +105,48 @@ pub(super) async fn delete_conversation(
     state
         .store
         .delete_conversation(&workspace_id, &input.conversation_id)
+        .map_err(error_to_string)?;
+    state
+        .store
+        .list_conversations(&workspace_id)
+        .map_err(error_to_string)
+}
+
+#[tauri::command]
+pub(super) async fn archive_conversation(
+    state: State<'_, DesktopState>,
+    input: ConversationInput,
+) -> std::result::Result<Vec<ConversationSummary>, String> {
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let workspace_id = workspace_root.display().to_string();
+    {
+        let active_turns = state.active_turns.lock().await;
+        if active_turns.contains_key(&input.conversation_id) {
+            return Err("a turn is already running for this conversation".into());
+        }
+    }
+    state
+        .store
+        .archive_conversation(&workspace_id, &input.conversation_id)
+        .map_err(error_to_string)?;
+    state
+        .store
+        .list_conversations(&workspace_id)
+        .map_err(error_to_string)
+}
+
+#[tauri::command]
+pub(super) async fn restore_conversation(
+    state: State<'_, DesktopState>,
+    input: ConversationInput,
+) -> std::result::Result<Vec<ConversationSummary>, String> {
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let workspace_id = workspace_root.display().to_string();
+    state
+        .store
+        .restore_conversation(&workspace_id, &input.conversation_id)
         .map_err(error_to_string)?;
     state
         .store

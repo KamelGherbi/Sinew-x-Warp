@@ -91,6 +91,7 @@ export type ConversationSummary = {
   id: string;
   title: string;
   updatedAtMs: number;
+  archivedAtMs?: number | null;
 };
 
 export type SessionSummary = {
@@ -101,6 +102,7 @@ export type SessionSummary = {
   createdAtMs: number;
   updatedAtMs: number;
   messageCount: number;
+  archivedAtMs?: number | null;
 };
 
 export type SavedConversation = {

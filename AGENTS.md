@@ -229,6 +229,7 @@ Code map:
 │       ├── tests.rs
 │       ├── turns.rs
 │       ├── updater.rs
+│       ├── vibe_island.rs
 │       ├── workflow.rs
 │       └── workspace.rs
 └── src

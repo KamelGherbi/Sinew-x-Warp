@@ -143,6 +143,11 @@ pub(super) async fn send_message(
             });
             error_to_string(err)
         })?;
+    crate::vibe_island::emit_user_prompt_to_vibe_island(
+        &workspace_id,
+        &input.conversation_id,
+        text,
+    );
 
     let providers = provider_registry_snapshot(&state)?;
     let context = TurnContext {
@@ -826,6 +831,7 @@ pub(super) fn emit_agent_event(
     conversation_id: &str,
     event: &AgentEvent,
 ) -> Result<()> {
+    crate::vibe_island::emit_agent_event_to_vibe_island(workspace_id, conversation_id, event);
     let sequence = remember_active_turn_event(app, conversation_id, event.clone());
     app.emit(
         AGENT_EVENT_NAME,

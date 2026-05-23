@@ -314,6 +314,54 @@ export default function App() {
     [],
   );
 
+  const archiveConversationSession = useCallback(
+    async (workspacePath: string, conversationId: string) => {
+      try {
+        const conversations = await api.archiveConversation(workspacePath, conversationId);
+        const archivedKey = workspaceSessionKey(workspacePath, conversationId);
+        setState((current) => {
+          const remainingSessions =
+            current.kind === "workspace"
+              ? current.sessions.filter((session) => session.key !== archivedKey)
+              : [];
+          const sessions = remainingSessions.map((session) =>
+            session.workspacePath === workspacePath
+              ? {
+                  ...session,
+                  bootstrap: {
+                    ...session.bootstrap,
+                    conversations,
+                  },
+                }
+              : session,
+          );
+          if (sessions.length === 0) return { kind: "welcome" };
+          const activeSessionKey =
+            current.kind === "workspace" &&
+            sessions.some((session) => session.key === current.activeSessionKey)
+              ? current.activeSessionKey
+              : sessions[0].key;
+          return { kind: "workspace", sessions, activeSessionKey };
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    },
+    [],
+  );
+
+  const restoreConversationSession = useCallback(
+    async (workspacePath: string, conversationId: string) => {
+      try {
+        const conversations = await api.restoreConversation(workspacePath, conversationId);
+        updateWorkspaceConversations(workspacePath, conversations);
+      } catch (err) {
+        console.error(err);
+      }
+    },
+    [updateWorkspaceConversations],
+  );
+
   const closeProjectSession = useCallback((workspacePath: string) => {
     setState((current) => {
       if (current.kind !== "workspace") return current;
@@ -380,6 +428,8 @@ export default function App() {
       onCreateConversationSession={createConversationSession}
       onRenameConversationSession={renameConversationSession}
       onDeleteConversationSession={deleteConversationSession}
+      onArchiveConversationSession={archiveConversationSession}
+      onRestoreConversationSession={restoreConversationSession}
       onCloseProjectSession={closeProjectSession}
       onWorkspaceConversationsReplace={updateWorkspaceConversations}
       onBootstrapReplace={replaceBootstrap}
