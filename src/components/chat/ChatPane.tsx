@@ -489,6 +489,50 @@ export function ChatPane({
   const modeRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [composerHeight, setComposerHeight] = useState<number | null>(null);
+  const composerResizeStateRef = useRef<
+    { startY: number; startHeight: number } | null
+  >(null);
+  const handleComposerResizeMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      const ta = textareaRef.current;
+      if (!ta) return;
+      event.preventDefault();
+      const startHeight =
+        composerHeight ?? Math.round(ta.getBoundingClientRect().height);
+      composerResizeStateRef.current = {
+        startY: event.clientY,
+        startHeight,
+      };
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
+      document.body.style.cursor = "ns-resize";
+      document.body.style.userSelect = "none";
+      const handleMove = (ev: MouseEvent) => {
+        const state = composerResizeStateRef.current;
+        if (!state) return;
+        const delta = state.startY - ev.clientY; // drag up = grow
+        const next = Math.max(36, Math.min(800, state.startHeight + delta));
+        setComposerHeight(next);
+      };
+      const handleUp = () => {
+        composerResizeStateRef.current = null;
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+        window.removeEventListener("mousemove", handleMove);
+        window.removeEventListener("mouseup", handleUp);
+      };
+      window.addEventListener("mousemove", handleMove);
+      window.addEventListener("mouseup", handleUp);
+    },
+    [composerHeight],
+  );
+  const handleComposerResizeDoubleClick = useCallback(() => {
+    setComposerHeight(null);
+  }, []);
+  const compactInstructionInputRef = useRef<HTMLInputElement | null>(null);
+  const compactPopoverRef = useRef<HTMLDivElement | null>(null);
   const pendingCaretRef = useRef<number | null>(null);
   const mentionLoadingRef = useRef(false);
   const [mentionFiles, setMentionFiles] = useState<WorkspaceEntry[] | null>(
@@ -3181,6 +3225,14 @@ export function ChatPane({
               )}
             </div>
           )}
+          <div
+            className="composer__resize-handle"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize composer (double-click to reset)"
+            onMouseDown={handleComposerResizeMouseDown}
+            onDoubleClick={handleComposerResizeDoubleClick}
+          />
           <div className="composer__input-wrap">
             <div
               className="composer__overlay"
@@ -3197,6 +3249,11 @@ export function ChatPane({
             <textarea
               ref={textareaRef}
               className="composer__input"
+              style={
+                composerHeight !== null
+                  ? { height: composerHeight, maxHeight: "none" }
+                  : undefined
+              }
               value={text}
               placeholder={
                 view.status === "streaming" || isStreaming
@@ -3452,8 +3509,8 @@ export function ChatPane({
                     selectorLocked
                       ? "Fast locked while streaming"
                       : serviceTier === "fast"
-                        ? "Fast on"
-                        : "Fast"
+                        ? "Fast on (uses more tokens)"
+                        : "Fast (uses more tokens)"
                   }
                 >
                   <Icon icon="solar:bolt-bold-duotone" width={15} height={15} />
@@ -3462,7 +3519,7 @@ export function ChatPane({
                     role="tooltip"
                     aria-hidden="true"
                   >
-                    {serviceTier === "fast" ? "Fast on" : "Fast"}
+                    {serviceTier === "fast" ? "Fast on (uses more tokens)" : "Fast (uses more tokens)"}
                   </span>
                 </button>
               )}

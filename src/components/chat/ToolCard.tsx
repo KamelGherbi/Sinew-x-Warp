@@ -16,6 +16,29 @@ import type {
 } from "../../types";
 import { FileChangeBlock } from "./FileChangeBlock";
 
+function extractEditFilePaths(argsPretty?: string): string[] {
+  if (!argsPretty) return [];
+  try {
+    const parsed = JSON.parse(argsPretty);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    const files = (parsed as Record<string, unknown>).files;
+    if (!Array.isArray(files)) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const file of files) {
+      if (!file || typeof file !== "object") continue;
+      const raw = (file as Record<string, unknown>).path;
+      const path = typeof raw === "string" ? raw.trim() : "";
+      if (!path || seen.has(path)) continue;
+      seen.add(path);
+      out.push(path);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export type ToolCardProps = {
   name: string;
   status: "running" | "done" | "error";
@@ -1043,6 +1066,9 @@ export function ToolCard({
   const isTeam = isTeamRun || isTeamCreate || isTeamStatus || isTeamStop;
   const isSubAgent = name.startsWith("subagent_") || name === "Agent";
   const hasImages = !!images && images.length > 0;
+  const editingPaths =
+    isEditFile && status === "running" ? extractEditFilePaths(argsPretty) : [];
+  const showEditingTitle = editingPaths.length > 0;
   const displayOutput =
     isTeamRunRestart && !isError
       ? teamRunRestartOutput(teamRunAgent)
@@ -1124,7 +1150,12 @@ export function ToolCard({
       : null;
   const mcpTitle = isMcp ? mcpTitleParts(name, summary) : null;
   const bashTitle = isBash && command ? command : null;
-  const title = bashTitle
+  const editingTitle = showEditingTitle
+    ? `Editing ${editingPaths.length} file${editingPaths.length > 1 ? "s" : ""}`
+    : null;
+  const title = editingTitle
+    ? editingTitle
+    : bashTitle
     ? bashTitle
     : isSubAgent
     ? subAgentToolTitle(summary, subAgentName)

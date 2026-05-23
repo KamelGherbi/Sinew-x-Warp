@@ -145,17 +145,17 @@ export function UpdateBadge() {
       });
       return;
     }
-    setStatus({ kind: "downloading", info, downloaded: 0, total: null });
-    try {
-      await api.installUpdate();
-      // The FINISHED_EVENT listener will flip us to `ready`. As a safety net
-      // we also reflect success here in case the event was missed.
-      setStatus((current) =>
-        current.kind === "downloading" ? { kind: "ready", info } : current,
-      );
-    } catch (err) {
-      setStatus({ kind: "error", message: String(err) });
-    }
+    // Hand off to the global <UpdaterLockScreen />: <App /> listens for
+    // this event, swaps the whole window to the lock screen, and the
+    // lock screen auto-starts the install. We keep the custom-build
+    // protection above so official updates never replace local builds
+    // without an explicit safe path.
+    window.dispatchEvent(
+      new CustomEvent<{ info: UpdateInfo }>("sinew:install-update", {
+        detail: { info },
+      }),
+    );
+    setOpen(false);
   }, []);
 
   const onRestart = useCallback(async () => {

@@ -22,6 +22,21 @@ export type UpdateProgress = {
   total: number | null;
 };
 
+/// Detail payload of the `sinew:install-update` DOM event. Dispatched on the
+/// `window` by <UpdateBadge /> when the user clicks "Install & restart" in
+/// the in-session popover. <App /> listens for it and swaps the whole UI
+/// for <UpdaterLockScreen autoInstall />, which then drives the download +
+/// install + auto-restart flow.
+export type InstallUpdateEventDetail = {
+  info: UpdateInfo;
+};
+
+declare global {
+  interface WindowEventMap {
+    "sinew:install-update": CustomEvent<InstallUpdateEventDetail>;
+  }
+}
+
 export type TextPart = {
   type: "text";
   text: string;

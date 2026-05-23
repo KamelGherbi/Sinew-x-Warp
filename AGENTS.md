@@ -6,14 +6,16 @@ Code map:
 ├── AGENTS.md
 ├── Cargo.lock
 ├── Cargo.toml
-├── editharness.md
+├── EDIT_FILE_HARNESS_COMPARISON.md
 ├── FEATURES.md
+├── GLOB_HARNESS_COMPARISON.md
+├── GREP_HARNESS_COMPARISON.md
 ├── index.html
 ├── LICENSE
 ├── package-lock.json
 ├── package.json
 ├── README.md
-├── test.md
+├── test-stop.md
 ├── scripts
 │   └── prepare-sidecars.mjs
 ├── tsconfig.json
