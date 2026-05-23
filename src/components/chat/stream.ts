@@ -797,6 +797,7 @@ function genericMcpLabel(value: string): string {
 function pendingSummary(name: string): string | undefined {
   if (name === "bash") return "Running command";
   if (name === "bash_input") return "Interacting with command";
+  if (name === "edit_file") return "Preparing edit";
   if (name === "write_file") return "Preparing write";
   if (name === "clean_context") return "Cleaning context";
   if (name === "context_compaction") return "Compacting context";
@@ -992,12 +993,13 @@ function liveWriteFileChangeFromInput(input: unknown): FileChange | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
   const record = input as Record<string, unknown>;
   const path = typeof record.path === "string" ? record.path.trim() : "";
+  if (!path) return undefined;
   if (typeof record.content !== "string" || record.content.length === 0) return undefined;
   const allLines = record.content.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   return {
-    relativePath: path || "Writing file",
+    relativePath: path,
     kind: "added",
-    summary: path ? `Writing ${path}` : "Writing file",
+    summary: `Writing ${path}`,
     binary: false,
     addedLines: allLines.length,
     removedLines: 0,
@@ -1465,10 +1467,28 @@ export function applyEvent(
     case "token_usage":
       return state;
 
-    case "interrupted":
+    case "interrupted": {
+      const blocks = state.blocks.map((block) => {
+        if (block.kind === "tool" && block.status === "running") {
+          const output =
+            block.output && block.output.length > 0
+              ? block.output
+              : "Tool call interrupted by user";
+          return {
+            ...block,
+            status: "error" as const,
+            isError: true,
+            output,
+            liveFileChange: undefined,
+          };
+        }
+        return block;
+      });
       return withStreamPhase(state, "idle", {
         status: "stopped",
+        blocks,
       });
+    }
 
     case "error":
       return withStreamPhase(state, "idle", {

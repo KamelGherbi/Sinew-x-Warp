@@ -31,6 +31,12 @@ type Props = {
   /// optional publish date. The screen reuses these to render headers and
   /// the install CTA label.
   info: UpdateInfo;
+  /// When `true`, the screen skips the "prompt" phase entirely and kicks
+  /// off the install on mount. Used when the gate is opened from the
+  /// in-session <UpdateBadge /> (the user has already confirmed in the
+  /// popover — surfacing the prompt again would feel like a re-ask).
+  /// Defaults to `false` (boot flow).
+  autoInstall?: boolean;
 };
 
 /// Full-screen, unbypassable update gate. Mounted by `App.tsx` when the boot
@@ -46,7 +52,7 @@ type Props = {
 /// the install, listens to `updater://progress` / `updater://finished`,
 /// runs the auto-restart countdown, and surfaces errors with a Retry
 /// path.
-export function UpdaterLockScreen({ info }: Props) {
+export function UpdaterLockScreen({ info, autoInstall = false }: Props) {
   const [phase, setPhase] = useState<Phase>({ kind: "prompt" });
   const [countdown, setCountdown] = useState<number>(AUTO_RESTART_SECS);
 
@@ -132,6 +138,19 @@ export function UpdaterLockScreen({ info }: Props) {
   const onRestart = useCallback(() => {
     void api.restartForUpdate();
   }, []);
+
+  // Auto-kick the install when the screen was opened mid-session from
+  // the badge (the user already confirmed in the popover). We gate on
+  // `phase.kind === "prompt"` so a re-render of the effect (e.g. on
+  // hot-reload) doesn't loop us back into a fresh install once we've
+  // moved past the initial phase. `startInstall` is stable (empty deps
+  // in its `useCallback`), so in practice this effect fires once on
+  // mount.
+  useEffect(() => {
+    if (!autoInstall) return;
+    if (phase.kind !== "prompt") return;
+    void startInstall();
+  }, [autoInstall, phase.kind, startInstall]);
 
   const onQuit = useCallback(() => {
     void getCurrentWindow()

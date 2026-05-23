@@ -4892,10 +4892,15 @@ textarea {
   font-size: var(--fs-sm);
   letter-spacing: -0.005em;
 }
-.md table {
-  display: block;
+.md-table-wrap {
   max-width: 100%;
   overflow-x: auto;
+  margin: 8px 0;
+}
+.md-table-wrap > table {
+  margin: 0;
+}
+.md table {
   border-collapse: collapse;
   margin: 8px 0;
   width: 100%;
@@ -4906,6 +4911,11 @@ textarea {
   padding: 5px 9px;
   border-bottom: 1px solid rgba(232, 233, 236, 0.06);
   text-align: left;
+  /* Use break-word (not anywhere) so the cell min-content stays at the
+     longest word width — otherwise the inherited overflow-wrap: anywhere
+     from .md collapses each column to ~1 character of min-width. */
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 .md th {
   background: transparent;
@@ -5253,6 +5263,26 @@ textarea {
   border-radius: 50%;
   background: var(--danger);
   flex: 0 0 6px;
+}
+.tool-card__file-stack {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  position: relative;
+}
+.tool-card__file-stack-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--bg-2);
+  box-shadow: 0 0 0 1.5px var(--bg-2);
+  position: relative;
+}
+.tool-card__file-stack-item + .tool-card__file-stack-item {
+  margin-left: -6px;
 }
 .tool-card__caret {
   color: var(--text-3);
@@ -6324,6 +6354,37 @@ textarea {
   min-height: 0;
 }
 
+.composer__resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  margin: 0;
+  cursor: ns-resize;
+  user-select: none;
+  touch-action: none;
+  z-index: 2;
+}
+.composer__resize-handle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 28px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-3);
+  opacity: 0;
+  transition: opacity 120ms ease, width 120ms ease;
+}
+.composer__resize-handle:hover::before,
+.composer__resize-handle:active::before {
+  opacity: 0.6;
+  width: 40px;
+}
+
 .composer__overlay {
   position: absolute;
   inset: 0;
@@ -6385,7 +6446,7 @@ textarea {
   display: block;
   width: 100%;
   margin: 0;
-  min-height: 48px;
+  min-height: 60px;
   max-height: 200px;
   padding: 9px 11px 2px;
   background: transparent;
@@ -6813,12 +6874,24 @@ textarea {
   color: var(--text-3);
 }
 .composer__fast-btn[data-active="true"] {
-  background: rgba(244, 201, 93, 0.16);
-  color: #f4c95d;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-0);
 }
 .composer__fast-btn[data-active="true"]:hover:not(:disabled) {
-  background: rgba(244, 201, 93, 0.24);
-  color: #ffe29a;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text-0);
+}
+/* Keep full opacity while the composer is locked (e.g. during streaming),
+   so the Fast indicator does not visually fade out while the agent walks. */
+.composer__fast-btn:disabled {
+  opacity: 1;
+}
+/* Preserve the active background/color even when disabled + hovered,
+   otherwise the generic .composer__iconbtn:disabled:hover would clear it. */
+.composer__fast-btn[data-active="true"]:disabled,
+.composer__fast-btn[data-active="true"]:disabled:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-0);
 }
 .composer__fast-btn svg {
   color: inherit;

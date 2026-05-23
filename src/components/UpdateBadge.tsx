@@ -136,17 +136,17 @@ export function UpdateBadge() {
   const onInstall = useCallback(async () => {
     const info = lastInfoRef.current;
     if (!info) return;
-    setStatus({ kind: "downloading", info, downloaded: 0, total: null });
-    try {
-      await api.installUpdate();
-      // The FINISHED_EVENT listener will flip us to `ready`. As a safety net
-      // we also reflect success here in case the event was missed.
-      setStatus((current) =>
-        current.kind === "downloading" ? { kind: "ready", info } : current,
-      );
-    } catch (err) {
-      setStatus({ kind: "error", message: String(err) });
-    }
+    // Hand off to the global <UpdaterLockScreen />: <App /> listens for
+    // this event, swaps the whole window to the lock screen, and the
+    // lock screen auto-starts the install. We don't kick the local
+    // `downloading` state — by the next frame this <UpdateBadge /> is
+    // unmounted along with the Workspace.
+    window.dispatchEvent(
+      new CustomEvent<{ info: UpdateInfo }>("sinew:install-update", {
+        detail: { info },
+      }),
+    );
+    setOpen(false);
   }, []);
 
   const onRestart = useCallback(async () => {

@@ -193,6 +193,17 @@ export const Markdown = memo(function Markdown({ text, onOpenFile }: Props) {
             }
             return <code className={className}>{children}</code>;
           },
+          table({ children }) {
+            // Wrap the table so horizontal scrolling lives on a block-level
+            // ancestor. The <table> itself stays a real display: table so
+            // the auto column-width algorithm distributes space correctly
+            // (otherwise display: block on the table collapses left columns).
+            return (
+              <div className="md-table-wrap">
+                <table>{children}</table>
+              </div>
+            );
+          },
           a({ href, children }) {
             const value = href ?? childrenToString(children);
             if (isFileToken(value)) {

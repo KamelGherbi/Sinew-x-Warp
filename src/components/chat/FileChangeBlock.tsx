@@ -26,7 +26,7 @@ export function FileChangeBlock({
   change: FileChange;
   live?: boolean;
 }) {
-  const [open, setOpen] = useState(live);
+  const [open, setOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const name = basename(change.relativePath);
   const visibleLineKinds = change.lines.map((line) =>
@@ -54,10 +54,6 @@ export function FileChangeBlock({
       ? "binary"
       : "no text diff"
     : null;
-
-  useEffect(() => {
-    if (live) setOpen(true);
-  }, [live]);
 
   useEffect(() => {
     if (!open || firstChangedLineIndex < 0 || live) return undefined;

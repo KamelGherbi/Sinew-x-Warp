@@ -1,5 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
+    fs::File,
+    io::{BufRead, BufReader as StdBufReader},
     path::{Component, Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -11,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sinew_core::ToolDescriptor;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt, BufReader as TokioBufReader},
     process::Command,
     time::timeout,
 };
@@ -22,6 +24,7 @@ use crate::{
     workspace::{normalize_workspace_relative_path, resolve_workspace_path},
 };
 
+const MAX_CONTEXT_LINES: usize = 20;
 const MAX_LIMIT: usize = 500;
 const MAX_LINE_CHARS: usize = 240;
 const STDERR_LIMIT: usize = 8 * 1024;
@@ -55,19 +58,79 @@ impl GrepTool {
                         "description": "Regex pattern to search for."
                     },
                     "path": {
-                        "type": "array",
-                        "items": { "type": "string" },
+                        "oneOf": [
+                            { "type": "string" },
+                            { "type": "array", "items": { "type": "string" } }
+                        ],
                         "description": "Optional files or directories to search. Relative paths are resolved from the workspace root; absolute paths are allowed. Defaults to the workspace root."
                     },
                     "include": {
-                        "type": "string",
-                        "description": "Optional file glob."
+                        "oneOf": [
+                            { "type": "string" },
+                            { "type": "array", "items": { "type": "string" } }
+                        ],
+                        "description": "Optional file glob or globs to include. Passed to ripgrep as -g."
+                    },
+                    "exclude": {
+                        "oneOf": [
+                            { "type": "string" },
+                            { "type": "array", "items": { "type": "string" } }
+                        ],
+                        "description": "Optional file glob or globs to exclude. Each value is passed to ripgrep as -g !<glob>."
                     },
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": MAX_LIMIT,
                         "description": "Required maximum number of matches to show. Hard-capped at 500."
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0,
+                        "description": "Number of output items to skip before showing results. Use with limit for pagination."
+                    },
+                    "ignore_case": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Search case-insensitively."
+                    },
+                    "literal": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Treat pattern as a literal string instead of a regex."
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "Optional ripgrep file type filter, such as rust, js, py, ts, markdown."
+                    },
+                    "multiline": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Allow matches to span multiple lines; uses ripgrep -U --multiline-dotall."
+                    },
+                    "before": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": MAX_CONTEXT_LINES,
+                        "description": "Lines of context to show before each match in output_mode=context."
+                    },
+                    "after": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": MAX_CONTEXT_LINES,
+                        "description": "Lines of context to show after each match in output_mode=context."
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": MAX_CONTEXT_LINES,
+                        "description": "Shortcut for setting both before and after context lines."
+                    },
+                    "exhaustive": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "When false, stop ripgrep as soon as enough output items have been collected; totals may be lower bounds."
                     },
                     "output_mode": {
                         "type": "string",
@@ -113,13 +176,24 @@ impl GrepTool {
             bail!("limit must be greater than 0");
         }
         let limit = requested_limit.min(MAX_LIMIT);
+        let offset = parsed.offset;
         let targets = self.resolve_targets(parsed.path)?;
-        let include = parsed
-            .include
+        let include = normalize_globs(parsed.include);
+        let exclude = normalize_globs(parsed.exclude);
+        let file_type = parsed
+            .file_type
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned);
+        if file_type
+            .as_deref()
+            .map(|value| value.starts_with('-'))
+            .unwrap_or(false)
+        {
+            bail!("type cannot start with '-'");
+        }
+        let context = GrepContext::from_input(parsed.before, parsed.after, parsed.context_lines)?;
         let exclude_pattern = parsed
             .exclude_pattern
             .as_deref()
@@ -130,23 +204,35 @@ impl GrepTool {
                 Regex::new(pattern).with_context(|| format!("invalid exclude_pattern `{pattern}`"))
             })
             .transpose()?;
+        if parsed.output_mode != GrepOutputMode::Context && context.has_surrounding_lines() {
+            bail!("before/after/context_lines are only supported with output_mode=context");
+        }
+        let config = GrepRunConfig {
+            pattern,
+            targets: targets.args,
+            include,
+            exclude,
+            limit,
+            offset,
+            output_mode: parsed.output_mode,
+            unique: parsed.unique,
+            ignore_case: parsed.ignore_case,
+            literal: parsed.literal,
+            file_type,
+            multiline: parsed.multiline,
+            context,
+            exhaustive: parsed.exhaustive,
+            exclude_regex,
+        };
 
-        let result = timeout(
-            self.timeout,
-            self.run_ripgrep(
-                &pattern,
-                &targets.args,
-                include.as_deref(),
-                limit,
-                parsed.output_mode,
-                parsed.unique,
-                exclude_regex.as_ref(),
-            ),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("Grep timed out after {}s", self.timeout.as_secs()))??;
+        let output_mode = config.output_mode;
+        let limit = config.limit;
+        let offset = config.offset;
+        let result = timeout(self.timeout, self.run_ripgrep(config))
+            .await
+            .map_err(|_| anyhow::anyhow!("Grep timed out after {}s", self.timeout.as_secs()))??;
 
-        Ok(format_output(limit, parsed.output_mode, result))
+        Ok(format_output(limit, offset, output_mode, result))
     }
 
     fn resolve_targets(&self, raw_path: Option<GrepPathInput>) -> Result<GrepTargets> {
@@ -205,16 +291,7 @@ impl GrepTool {
         })
     }
 
-    async fn run_ripgrep(
-        &self,
-        pattern: &str,
-        targets: &[String],
-        include: Option<&str>,
-        limit: usize,
-        output_mode: GrepOutputMode,
-        unique: bool,
-        exclude_pattern: Option<&Regex>,
-    ) -> Result<GrepSearchResult> {
+    async fn run_ripgrep(&self, config: GrepRunConfig) -> Result<GrepSearchResult> {
         let mut command = Command::new(ripgrep_executable());
         command
             .arg("--json")
@@ -223,13 +300,33 @@ impl GrepTool {
             .arg("never")
             .arg("--no-messages")
             .arg("--with-filename");
-        if let Some(include) = include {
+        if config.ignore_case {
+            command.arg("--ignore-case");
+        }
+        if config.literal {
+            command.arg("--fixed-strings");
+        }
+        if config.multiline {
+            command.arg("-U").arg("--multiline-dotall");
+        }
+        if let Some(file_type) = &config.file_type {
+            command.arg("--type").arg(file_type);
+        }
+        for include in &config.include {
             command.arg("-g").arg(include);
+        }
+        for exclude in &config.exclude {
+            let exclude_glob = if exclude.starts_with('!') {
+                exclude.clone()
+            } else {
+                format!("!{exclude}")
+            };
+            command.arg("-g").arg(exclude_glob);
         }
         command
             .arg("--")
-            .arg(pattern)
-            .args(targets)
+            .arg(&config.pattern)
+            .args(&config.targets)
             .current_dir(&self.workspace_root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -253,26 +350,29 @@ impl GrepTool {
             .ok_or_else(|| anyhow::anyhow!("ripgrep stderr pipe missing"))?;
         let stderr_task = tokio::spawn(async move { read_stderr(&mut stderr).await });
 
-        let mut reader = BufReader::new(stdout).lines();
+        let mut reader = TokioBufReader::new(stdout).lines();
         let mut context_matches = Vec::new();
         let mut match_texts = Vec::new();
-        let mut seen_match_texts =
-            (output_mode == GrepOutputMode::Matches && unique).then(HashSet::<String>::new);
+        let mut seen_match_texts = (config.output_mode == GrepOutputMode::Matches && config.unique)
+            .then(HashSet::<String>::new);
         let mut files = Vec::new();
         let mut counts = Vec::<GrepFileCount>::new();
         let mut count_indexes = HashMap::<String, usize>::new();
         let mut total_line_matches = 0usize;
         let mut total_match_occurrences = 0usize;
+        let mut stopped_early = false;
 
         while let Some(line) = reader
             .next_line()
             .await
             .context("unable to read ripgrep output")?
         {
-            let Some(entry) = parse_match_line(&self.workspace_root, &line)? else {
+            let Some(mut entry) = parse_match_line(&self.workspace_root, &line)? else {
                 continue;
             };
-            if exclude_pattern
+            if config
+                .exclude_regex
+                .as_ref()
                 .map(|pattern| pattern.is_match(&entry.line_text))
                 .unwrap_or(false)
             {
@@ -286,41 +386,89 @@ impl GrepTool {
             if let Some(index) = count_indexes.get(&entry.relative_path).copied() {
                 counts[index].count += occurrence_count;
             } else {
-                let index = counts.len();
-                count_indexes.insert(entry.relative_path.clone(), index);
+                let item_index = counts.len();
+                count_indexes.insert(entry.relative_path.clone(), item_index);
                 counts.push(GrepFileCount {
                     relative_path: entry.relative_path.clone(),
                     count: occurrence_count,
                 });
-                if files.len() < limit {
+                if config.output_mode == GrepOutputMode::Files
+                    && in_window(item_index, config.offset, config.limit)
+                {
                     files.push(entry.relative_path.clone());
                 }
             }
 
-            if output_mode == GrepOutputMode::Matches {
-                for matched_text in &entry.matched_texts {
-                    if let Some(seen) = &mut seen_match_texts {
-                        if seen.insert(matched_text.clone()) && match_texts.len() < limit {
-                            match_texts.push(matched_text.clone());
+            match config.output_mode {
+                GrepOutputMode::Context => {
+                    let item_index = total_line_matches - 1;
+                    if in_window(item_index, config.offset, config.limit) {
+                        if config.context.has_surrounding_lines() {
+                            entry.attach_context(&self.workspace_root, config.context)?;
                         }
-                    } else if match_texts.len() < limit {
-                        match_texts.push(matched_text.clone());
+                        context_matches.push(entry);
+                    }
+                    if should_stop_early(&config, total_line_matches) {
+                        stopped_early = true;
+                        break;
+                    }
+                }
+                GrepOutputMode::Matches => {
+                    if let Some(seen) = &mut seen_match_texts {
+                        for matched_text in &entry.matched_texts {
+                            if seen.insert(matched_text.clone()) {
+                                let item_index = seen.len() - 1;
+                                if in_window(item_index, config.offset, config.limit) {
+                                    match_texts.push(matched_text.clone());
+                                }
+                                if should_stop_early(&config, seen.len()) {
+                                    stopped_early = true;
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        let mut seen_occurrences = total_match_occurrences - occurrence_count;
+                        for matched_text in &entry.matched_texts {
+                            if in_window(seen_occurrences, config.offset, config.limit) {
+                                match_texts.push(matched_text.clone());
+                            }
+                            seen_occurrences += 1;
+                            if should_stop_early(&config, seen_occurrences) {
+                                stopped_early = true;
+                                break;
+                            }
+                        }
+                    }
+                    if stopped_early {
+                        break;
+                    }
+                }
+                GrepOutputMode::Files => {
+                    if should_stop_early(&config, counts.len()) {
+                        stopped_early = true;
+                        break;
+                    }
+                }
+                GrepOutputMode::Count => {
+                    if should_stop_early(&config, counts.len()) {
+                        stopped_early = true;
+                        break;
                     }
                 }
             }
-
-            if output_mode == GrepOutputMode::Context && context_matches.len() < limit {
-                context_matches.push(entry);
-            }
         }
 
+        if stopped_early {
+            let _ = child.kill().await;
+        }
         let status = child.wait().await.context("ripgrep failed to exit")?;
         let stderr = stderr_task
             .await
             .unwrap_or_else(|err| Err(std::io::Error::other(err.to_string())))
             .context("unable to read ripgrep stderr")?;
 
-        if !status.success() && status.code() != Some(1) {
+        if !stopped_early && !status.success() && status.code() != Some(1) {
             let message = stderr.trim();
             if message.is_empty() {
                 bail!("ripgrep failed with status {status}");
@@ -336,6 +484,7 @@ impl GrepTool {
             total_line_matches,
             total_match_occurrences,
             unique_match_occurrences: seen_match_texts.map(|seen| seen.len()),
+            partial: stopped_early,
         })
     }
 }
@@ -346,12 +495,32 @@ struct GrepInput {
     #[serde(default)]
     path: Option<GrepPathInput>,
     #[serde(default)]
-    include: Option<String>,
+    include: Option<GrepStringList>,
+    #[serde(default)]
+    exclude: Option<GrepStringList>,
     limit: Option<usize>,
+    #[serde(default)]
+    offset: usize,
     #[serde(default)]
     output_mode: GrepOutputMode,
     #[serde(default)]
     unique: bool,
+    #[serde(default)]
+    ignore_case: bool,
+    #[serde(default)]
+    literal: bool,
+    #[serde(default, rename = "type")]
+    file_type: Option<String>,
+    #[serde(default)]
+    multiline: bool,
+    #[serde(default)]
+    before: Option<usize>,
+    #[serde(default)]
+    after: Option<usize>,
+    #[serde(default)]
+    context_lines: Option<usize>,
+    #[serde(default = "default_exhaustive")]
+    exhaustive: bool,
     #[serde(default)]
     exclude_pattern: Option<String>,
 }
@@ -361,6 +530,35 @@ struct GrepInput {
 enum GrepPathInput {
     One(String),
     Many(Vec<String>),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum GrepStringList {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl GrepStringList {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            GrepStringList::One(value) => vec![value],
+            GrepStringList::Many(values) => values,
+        }
+    }
+}
+
+fn normalize_globs(raw: Option<GrepStringList>) -> Vec<String> {
+    raw.map(GrepStringList::into_vec)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn default_exhaustive() -> bool {
+    true
 }
 
 impl GrepPathInput {
@@ -382,6 +580,53 @@ enum GrepOutputMode {
     Count,
 }
 
+struct GrepRunConfig {
+    pattern: String,
+    targets: Vec<String>,
+    include: Vec<String>,
+    exclude: Vec<String>,
+    limit: usize,
+    offset: usize,
+    output_mode: GrepOutputMode,
+    unique: bool,
+    ignore_case: bool,
+    literal: bool,
+    file_type: Option<String>,
+    multiline: bool,
+    context: GrepContext,
+    exhaustive: bool,
+    exclude_regex: Option<Regex>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct GrepContext {
+    before: usize,
+    after: usize,
+}
+
+impl GrepContext {
+    fn from_input(
+        before: Option<usize>,
+        after: Option<usize>,
+        context_lines: Option<usize>,
+    ) -> Result<Self> {
+        let mut before = before.unwrap_or(0);
+        let mut after = after.unwrap_or(0);
+        if let Some(context_lines) = context_lines {
+            before = before.max(context_lines);
+            after = after.max(context_lines);
+        }
+        if before > MAX_CONTEXT_LINES || after > MAX_CONTEXT_LINES {
+            bail!("context lines cannot exceed {MAX_CONTEXT_LINES}");
+        }
+        Ok(Self { before, after })
+    }
+
+    fn has_surrounding_lines(self) -> bool {
+        self.before > 0 || self.after > 0
+    }
+}
+
 #[derive(Debug)]
 struct GrepTargets {
     args: Vec<String>,
@@ -396,6 +641,7 @@ struct GrepSearchResult {
     total_line_matches: usize,
     total_match_occurrences: usize,
     unique_match_occurrences: Option<usize>,
+    partial: bool,
 }
 
 #[derive(Debug)]
@@ -410,11 +656,61 @@ struct GrepMatch {
     line_number: u64,
     line_text: String,
     matched_texts: Vec<String>,
+    before_lines: Vec<GrepContextLine>,
+    after_lines: Vec<GrepContextLine>,
 }
 
+#[derive(Debug)]
+struct GrepContextLine {
+    line_number: u64,
+    line_text: String,
+}
 impl GrepMatch {
     fn match_count(&self) -> usize {
         self.matched_texts.len().max(1)
+    }
+
+    fn attach_context(&mut self, root: &Path, context: GrepContext) -> Result<()> {
+        let path = if Path::new(&self.relative_path).is_absolute() {
+            PathBuf::from(&self.relative_path)
+        } else {
+            root.join(&self.relative_path)
+        };
+        let file = File::open(&path)
+            .with_context(|| format!("unable to read context for {}", self.relative_path))?;
+        let start = self
+            .line_number
+            .saturating_sub(context.before as u64)
+            .max(1);
+        let end = self.line_number.saturating_add(context.after as u64);
+        let mut before_lines = Vec::new();
+        let mut after_lines = Vec::new();
+        for (index, line) in StdBufReader::new(file).lines().enumerate() {
+            let number = index as u64 + 1;
+            if number < start {
+                continue;
+            }
+            if number > end {
+                break;
+            }
+            if number == self.line_number {
+                continue;
+            }
+            let line =
+                line.with_context(|| format!("unable to read context for {}", self.relative_path))?;
+            let context_line = GrepContextLine {
+                line_number: number,
+                line_text: line,
+            };
+            if number < self.line_number {
+                before_lines.push(context_line);
+            } else {
+                after_lines.push(context_line);
+            }
+        }
+        self.before_lines = before_lines;
+        self.after_lines = after_lines;
+        Ok(())
     }
 }
 
@@ -468,7 +764,17 @@ fn parse_match_line(root: &Path, line: &str) -> Result<Option<GrepMatch>> {
         line_number,
         line_text,
         matched_texts,
+        before_lines: Vec::new(),
+        after_lines: Vec::new(),
     }))
+}
+
+fn in_window(index: usize, offset: usize, limit: usize) -> bool {
+    index >= offset && index < offset.saturating_add(limit)
+}
+
+fn should_stop_early(config: &GrepRunConfig, seen_items: usize) -> bool {
+    !config.exhaustive && seen_items >= config.offset.saturating_add(config.limit)
 }
 
 fn display_match_path(root: &Path, raw_path: &str) -> Result<String> {
@@ -512,31 +818,51 @@ async fn read_stderr<R: AsyncReadExt + Unpin>(reader: &mut R) -> std::io::Result
 }
 
 fn clip_line(raw: &str) -> String {
-    let line = raw.trim_end_matches(['\r', '\n']);
-    let mut clipped = line.chars().take(MAX_LINE_CHARS).collect::<String>();
-    if line.chars().count() > MAX_LINE_CHARS {
+    let normalized = raw
+        .trim_end_matches(['\r', '\n'])
+        .replace('\r', "\\r")
+        .replace('\n', "\\n");
+    let mut clipped = normalized.chars().take(MAX_LINE_CHARS).collect::<String>();
+    if normalized.chars().count() > MAX_LINE_CHARS {
         clipped.push_str("...");
     }
     clipped
 }
 
-fn format_output(limit: usize, output_mode: GrepOutputMode, result: GrepSearchResult) -> String {
-    let shown = shown_items(limit, output_mode, &result);
+fn format_output(
+    limit: usize,
+    offset: usize,
+    output_mode: GrepOutputMode,
+    result: GrepSearchResult,
+) -> String {
+    let shown = shown_items(limit, offset, output_mode, &result);
     let total_items = total_items(output_mode, &result);
     let total_matches = total_matches(output_mode, &result);
 
     let mut output = String::new();
     output.push_str(&format!(
-        "matches: {}\nfiles: {}\n",
+        "matches: {}{}\nfiles: {}{}\n",
         total_matches,
-        result.counts.len()
+        if result.partial { "+" } else { "" },
+        result.counts.len(),
+        if result.partial { "+" } else { "" }
     ));
-    if shown < total_items {
+    if offset > 0 {
+        output.push_str(&format!("offset: {offset}\n"));
+    }
+    if result.partial {
+        output.push_str("partial: true\n");
+    }
+    if offset > 0 || shown < total_items {
         output.push_str(&format!("shown: {shown}\n"));
     }
 
     if total_items == 0 {
         output.push_str("\nNo matches.");
+        return output;
+    }
+    if shown == 0 {
+        output.push_str("\nNo matches in requested page.");
         return output;
     }
 
@@ -547,11 +873,25 @@ fn format_output(limit: usize, output_mode: GrepOutputMode, result: GrepSearchRe
             for group in groups {
                 output.push_str(&format!("{}\n", group.relative_path));
                 for item in group.matches {
+                    for line in item.before_lines {
+                        output.push_str(&format!(
+                            "  {} - {}\n",
+                            line.line_number,
+                            clip_line(&line.line_text)
+                        ));
+                    }
                     output.push_str(&format!(
                         "  {} | {}\n",
                         item.line_number,
                         clip_line(&item.line_text)
                     ));
+                    for line in item.after_lines {
+                        output.push_str(&format!(
+                            "  {} - {}\n",
+                            line.line_number,
+                            clip_line(&line.line_text)
+                        ));
+                    }
                 }
                 output.push('\n');
             }
@@ -569,7 +909,7 @@ fn format_output(limit: usize, output_mode: GrepOutputMode, result: GrepSearchRe
             }
         }
         GrepOutputMode::Count => {
-            for item in result.counts.into_iter().take(limit) {
+            for item in result.counts.into_iter().skip(offset).take(limit) {
                 output.push_str(&format!("{}: {}\n", item.relative_path, item.count));
             }
         }
@@ -578,12 +918,17 @@ fn format_output(limit: usize, output_mode: GrepOutputMode, result: GrepSearchRe
     output.trim_end().to_string()
 }
 
-fn shown_items(limit: usize, output_mode: GrepOutputMode, result: &GrepSearchResult) -> usize {
+fn shown_items(
+    limit: usize,
+    offset: usize,
+    output_mode: GrepOutputMode,
+    result: &GrepSearchResult,
+) -> usize {
     match output_mode {
         GrepOutputMode::Context => result.context_matches.len(),
         GrepOutputMode::Matches => result.match_texts.len(),
         GrepOutputMode::Files => result.files.len(),
-        GrepOutputMode::Count => result.counts.len().min(limit),
+        GrepOutputMode::Count => result.counts.len().saturating_sub(offset).min(limit),
     }
 }
 
@@ -969,6 +1314,241 @@ mod tests {
         assert!(result.contains("keep needle"));
         assert!(result.contains("needle keep"));
         assert!(!result.contains("skip needle TODO"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn grep_supports_ignore_case_and_literal() {
+        if !ripgrep_available() {
+            return;
+        }
+
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        let root = root.canonicalize().expect("canonical temp workspace");
+        fs::write(root.join("app.txt"), "FOO.bar(1)\nfooXbar(2)\n").expect("write file");
+
+        let tool = GrepTool::new(&root);
+        let result = tool
+            .search(json!({
+                "pattern": "foo.bar(",
+                "ignore_case": true,
+                "literal": true,
+                "limit": 10
+            }))
+            .await
+            .expect("grep should search literal text case-insensitively");
+
+        assert!(result.contains("matches: 1"));
+        assert!(result.contains("FOO.bar(1)"));
+        assert!(!result.contains("fooXbar(2)"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn grep_supports_multiple_include_and_exclude_globs() {
+        if !ripgrep_available() {
+            return;
+        }
+
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("src")).expect("create src");
+        fs::create_dir_all(root.join("tests")).expect("create tests");
+        let root = root.canonicalize().expect("canonical temp workspace");
+        fs::write(root.join("src").join("app.rs"), "needle\n").expect("write rust");
+        fs::write(root.join("src").join("app.ts"), "needle\n").expect("write ts");
+        fs::write(root.join("tests").join("app.rs"), "needle\n").expect("write test rust");
+        fs::write(root.join("src").join("app.txt"), "needle\n").expect("write txt");
+
+        let tool = GrepTool::new(&root);
+        let result = tool
+            .search(json!({
+                "pattern": "needle",
+                "include": ["*.rs", "*.ts"],
+                "exclude": "tests/**",
+                "output_mode": "files",
+                "limit": 10
+            }))
+            .await
+            .expect("grep should support multiple include globs and exclude globs");
+
+        let lines = payload_lines(&result);
+        assert_eq!(lines.len(), 2);
+        assert!(lines.contains(&"src/app.rs"));
+        assert!(lines.contains(&"src/app.ts"));
+        assert!(!lines.contains(&"tests/app.rs"));
+        assert!(!lines.contains(&"src/app.txt"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn grep_supports_type_filter() {
+        if !ripgrep_available() {
+            return;
+        }
+
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        let root = root.canonicalize().expect("canonical temp workspace");
+        fs::write(root.join("lib.rs"), "needle\n").expect("write rust");
+        fs::write(root.join("notes.txt"), "needle\n").expect("write txt");
+
+        let tool = GrepTool::new(&root);
+        let result = tool
+            .search(json!({
+                "pattern": "needle",
+                "type": "rust",
+                "output_mode": "files",
+                "limit": 10
+            }))
+            .await
+            .expect("grep should filter by ripgrep type");
+
+        let lines = payload_lines(&result);
+        assert_eq!(lines, vec!["lib.rs"]);
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn grep_supports_offset_pagination() {
+        if !ripgrep_available() {
+            return;
+        }
+
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        let root = root.canonicalize().expect("canonical temp workspace");
+        fs::write(root.join("items.txt"), "needle 1\nneedle 2\nneedle 3\n").expect("write file");
+
+        let tool = GrepTool::new(&root);
+        let result = tool
+            .search(json!({
+                "pattern": "needle",
+                "limit": 1,
+                "offset": 1
+            }))
+            .await
+            .expect("grep should paginate results");
+
+        assert!(result.contains("matches: 3"));
+        assert!(result.contains("offset: 1"));
+        assert!(result.contains("shown: 1"));
+        assert!(payload(&result).contains("needle 2"));
+        assert!(!payload(&result).contains("needle 1"));
+        assert!(!payload(&result).contains("needle 3"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn grep_context_mode_supports_before_after_lines() {
+        if !ripgrep_available() {
+            return;
+        }
+
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        let root = root.canonicalize().expect("canonical temp workspace");
+        fs::write(root.join("app.txt"), "before\nneedle\nafter\n").expect("write file");
+
+        let tool = GrepTool::new(&root);
+        let result = tool
+            .search(json!({
+                "pattern": "needle",
+                "before": 1,
+                "after": 1,
+                "limit": 10
+            }))
+            .await
+            .expect("grep should show surrounding context lines");
+
+        assert!(result.contains("  1 - before"));
+        assert!(result.contains("  2 | needle"));
+        assert!(result.contains("  3 - after"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn grep_supports_multiline_patterns() {
+        if !ripgrep_available() {
+            return;
+        }
+
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        let root = root.canonicalize().expect("canonical temp workspace");
+        fs::write(root.join("block.txt"), "alpha\nbeta\ngamma\n").expect("write file");
+
+        let tool = GrepTool::new(&root);
+        let result = tool
+            .search(json!({
+                "pattern": "alpha\\nbeta",
+                "multiline": true,
+                "limit": 10
+            }))
+            .await
+            .expect("grep should support multiline patterns");
+
+        assert!(result.contains("matches: 1"));
+        assert!(payload(&result).contains("alpha\\nbeta"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn grep_non_exhaustive_stops_after_requested_window() {
+        if !ripgrep_available() {
+            return;
+        }
+
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        let root = root.canonicalize().expect("canonical temp workspace");
+        fs::write(root.join("items.txt"), "needle 1\nneedle 2\nneedle 3\n").expect("write file");
+
+        let tool = GrepTool::new(&root);
+        let result = tool
+            .search(json!({
+                "pattern": "needle",
+                "limit": 1,
+                "exhaustive": false
+            }))
+            .await
+            .expect("grep should stop early when exhaustive is false");
+
+        assert!(result.contains("partial: true"));
+        assert!(result.contains("matches: 1+"));
+        assert!(payload(&result).contains("needle 1"));
+        assert!(!payload(&result).contains("needle 2"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn grep_rejects_context_lines_outside_context_mode() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("create temp workspace");
+        let root = root.canonicalize().expect("canonical temp workspace");
+
+        let tool = GrepTool::new(&root);
+        let error = tool
+            .search(json!({
+                "pattern": "needle",
+                "output_mode": "files",
+                "before": 1,
+                "limit": 10
+            }))
+            .await
+            .expect_err("context lines outside context mode should fail");
+
+        assert!(error
+            .to_string()
+            .contains("before/after/context_lines are only supported"));
 
         fs::remove_dir_all(root).ok();
     }
