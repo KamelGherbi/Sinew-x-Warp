@@ -308,6 +308,7 @@ fn team_agent_profiles_keep_current_chat_model_by_default() {
         SkillSettings::default(),
         current_model.clone(),
         1,
+        None,
         Arc::new(RwLock::new(TeamRuntime::default())),
         TurnCancel::empty(),
     );
@@ -347,6 +348,7 @@ fn team_agent_models_override_current_chat_model_per_teammate() {
         SkillSettings::default(),
         current_model.clone(),
         1,
+        None,
         Arc::new(RwLock::new(TeamRuntime::default())),
         TurnCancel::empty(),
     );
@@ -468,6 +470,7 @@ fn team_agent_models_reject_unsupported_model_id() {
         SkillSettings::default(),
         ModelRef::new("test", "known-model"),
         1,
+        None,
         Arc::new(RwLock::new(TeamRuntime::default())),
         TurnCancel::empty(),
     );
