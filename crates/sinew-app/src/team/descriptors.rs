@@ -226,7 +226,8 @@ impl TeamTool {
     }
 
     pub fn summary_for_tool_name(&self, name: &str) -> Option<String> {
-        match name {
+        let canonical = tool_names::canonical_tool_name(name);
+        match canonical {
             TEAM_RUN_TOOL => Some("Agent Swarm · run".to_string()),
             TEAM_CREATE_TOOL => Some("Agent Swarm · disabled create".to_string()),
             AGENT_TOOL => Some("Agent Swarm · disabled agent spawn".to_string()),
@@ -241,8 +242,9 @@ impl TeamTool {
 }
 
 pub fn is_team_tool_name(name: &str) -> bool {
+    let canonical = tool_names::canonical_tool_name(name);
     matches!(
-        name,
+        canonical,
         TEAM_RUN_TOOL
             | TEAM_CREATE_TOOL
             | AGENT_TOOL

@@ -87,6 +87,7 @@ Code map:
 │   │       │   └── tests.rs
 │   │       ├── text.rs
 │   │       ├── todo.rs
+│   │       ├── tool_names.rs
 │   │       ├── tool_run.rs
 │   │       ├── web.rs
 │   │       ├── write.rs
@@ -275,4 +276,5 @@ Code map:
     │   ├── ipc.ts
     │   ├── language.ts
     │   ├── models.ts
-    │   └── recents.ts
+    │   ├── recents.ts
+    │   └── tools.ts

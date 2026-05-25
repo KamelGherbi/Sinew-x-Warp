@@ -14,22 +14,22 @@ use uuid::Uuid;
 
 use crate::tool_run::{DiffLineKind, FileChange, FileChangeKind, ToolRunImage};
 use crate::{
-    run_turn, subagent_system_prompt, AgentEvent, AgentEventScope, AgentMode, BashTool,
+    run_turn, subagent_system_prompt, tool_names, AgentEvent, AgentEventScope, AgentMode, BashTool,
     CreateImageTool, EditFileTool, GlobTool, GoalWorkflowState, GrepTool, McpSettings,
     McpToolRegistry, ReadTool, SkillSettings, SkillTool, SubAgentConfig, SubAgentSettings,
     TodoListState, ToolRunResult, ToolSettings, TurnCancel, TurnContext, WebFetchTool,
     WebSearchTool, WriteFileTool,
 };
 
-const TEAM_RUN_TOOL: &str = "TeamRun";
-const TEAM_CREATE_TOOL: &str = "TeamCreate";
-const AGENT_TOOL: &str = "Agent";
-const SEND_MESSAGE_TOOL: &str = "SendMessage";
-const TEAM_STATUS_TOOL: &str = "TeamStatus";
-const TEAM_STOP_TOOL: &str = "TeamStop";
-const TASK_CREATE_TOOL: &str = "TaskCreate";
-const TASK_LIST_TOOL: &str = "TaskList";
-const TASK_UPDATE_TOOL: &str = "TaskUpdate";
+const TEAM_RUN_TOOL: &str = tool_names::TEAM_RUN;
+const TEAM_CREATE_TOOL: &str = tool_names::TEAM_CREATE;
+const AGENT_TOOL: &str = tool_names::AGENT;
+const SEND_MESSAGE_TOOL: &str = tool_names::SEND_MESSAGE;
+const TEAM_STATUS_TOOL: &str = tool_names::TEAM_STATUS;
+const TEAM_STOP_TOOL: &str = tool_names::TEAM_STOP;
+const TASK_CREATE_TOOL: &str = tool_names::TASK_CREATE;
+const TASK_LIST_TOOL: &str = tool_names::TASK_LIST;
+const TASK_UPDATE_TOOL: &str = tool_names::TASK_UPDATE;
 const TEAM_SETTLE_GRACE_MS: u64 = 100;
 const TEAM_RECENT_FILE_CHANGE_LIMIT: usize = 20;
 

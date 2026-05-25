@@ -9,7 +9,7 @@ impl TeamTool {
     ) -> ToolRunResult {
         if self.current_agent.is_none() {
             return ToolRunResult::err(
-                "TaskCreate is only available to team teammates. Use TeamRun to start the team.",
+                "task_create is only available to team teammates. Use team_run to start the team.",
                 Vec::new(),
             );
         }
@@ -19,7 +19,7 @@ impl TeamTool {
         let parsed: TaskCreateInput = match serde_json::from_value(input) {
             Ok(value) => value,
             Err(err) => {
-                return ToolRunResult::err(format!("invalid TaskCreate input: {err}"), Vec::new())
+                return ToolRunResult::err(format!("invalid task_create input: {err}"), Vec::new())
             }
         };
         let subject = parsed.subject.trim();
@@ -49,7 +49,7 @@ impl TeamTool {
             let mut runtime = self.runtime.write().await;
             let Some(scope) = runtime.scopes.get_mut(&self.scope_id) else {
                 return ToolRunResult::err(
-                    "no active team found; start one with TeamRun first",
+                    "no active team found; start one with team_run first",
                     Vec::new(),
                 );
             };
@@ -111,19 +111,19 @@ impl TeamTool {
         let parsed: TaskListInput = match serde_json::from_value(input) {
             Ok(value) => value,
             Err(err) => {
-                return ToolRunResult::err(format!("invalid TaskList input: {err}"), Vec::new())
+                return ToolRunResult::err(format!("invalid task_list input: {err}"), Vec::new())
             }
         };
         let Some(action) = parsed.action else {
             return ToolRunResult::err(
-                "TaskList action is required: create, update, delete, or claim",
+                "task_list action is required: create, update, delete, or claim",
                 Vec::new(),
             );
         };
 
         if self.current_agent.is_none() {
             return ToolRunResult::err(
-                "TaskList mutations are only available to team teammates. Use TeamRun to start the team.",
+                "task_list mutations are only available to team teammates. Use team_run to start the team.",
                 Vec::new(),
             );
         }
@@ -232,7 +232,7 @@ impl TeamTool {
             let mut runtime = self.runtime.write().await;
             let Some(scope) = runtime.scopes.get_mut(&self.scope_id) else {
                 return ToolRunResult::err(
-                    "no active team found; start one with TeamRun first",
+                    "no active team found; start one with team_run first",
                     Vec::new(),
                 );
             };
@@ -260,7 +260,7 @@ impl TeamTool {
     ) -> ToolRunResult {
         if self.current_agent.is_none() {
             return ToolRunResult::err(
-                "TaskUpdate is only available to team teammates. Use TeamRun to start the team.",
+                "task_update is only available to team teammates. Use team_run to start the team.",
                 Vec::new(),
             );
         }
@@ -270,7 +270,7 @@ impl TeamTool {
         let parsed: TaskUpdateInput = match serde_json::from_value(input) {
             Ok(value) => value,
             Err(err) => {
-                return ToolRunResult::err(format!("invalid TaskUpdate input: {err}"), Vec::new())
+                return ToolRunResult::err(format!("invalid task_update input: {err}"), Vec::new())
             }
         };
         let task_id = match parsed.task_id.to_u64() {
@@ -315,7 +315,7 @@ impl TeamTool {
             let mut runtime = self.runtime.write().await;
             let Some(scope) = runtime.scopes.get_mut(&self.scope_id) else {
                 return ToolRunResult::err(
-                    "no active team found; start one with TeamRun first",
+                    "no active team found; start one with team_run first",
                     Vec::new(),
                 );
             };
@@ -463,7 +463,10 @@ impl TeamTool {
 
     pub(super) async fn run_task_delete(&self, parsed: TaskListInput) -> ToolRunResult {
         let Some(task_id) = parsed.task_id else {
-            return ToolRunResult::err("taskId is required for TaskList action=delete", Vec::new());
+            return ToolRunResult::err(
+                "taskId is required for task_list action=delete",
+                Vec::new(),
+            );
         };
         let task_id = match task_id.to_u64() {
             Ok(value) => value,
@@ -477,7 +480,7 @@ impl TeamTool {
             let mut runtime = self.runtime.write().await;
             let Some(scope) = runtime.scopes.get_mut(&self.scope_id) else {
                 return ToolRunResult::err(
-                    "no active team found; start one with TeamRun first",
+                    "no active team found; start one with team_run first",
                     Vec::new(),
                 );
             };
@@ -525,7 +528,7 @@ impl TeamTool {
             let mut runtime = self.runtime.write().await;
             let Some(scope) = runtime.scopes.get_mut(&self.scope_id) else {
                 return ToolRunResult::err(
-                    "no active team found; start one with TeamRun first",
+                    "no active team found; start one with team_run first",
                     Vec::new(),
                 );
             };
@@ -913,7 +916,7 @@ pub(super) fn file_change_line_counts(change: &FileChange) -> (usize, usize) {
 
 pub(super) fn team_ready_task_message(task: &TeamTask) -> String {
     format!(
-        "<task_ready>\n{}\n</task_ready>\n\nThis task is ready and assigned to you. The current board is already in your system context; do not call TaskList action=list just to inspect it. Start this task with TaskList action=update taskId={} status=in_progress, do the work, then mark it completed when finished. Only sleep if the task is actually status=blocked with real blockedBy task IDs.",
+        "<task_ready>\n{}\n</task_ready>\n\nThis task is ready and assigned to you. The current board is already in your system context; do not call task_list action=list just to inspect it. Start this task with task_list action=update taskId={} status=in_progress, do the work, then mark it completed when finished. Only sleep if the task is actually status=blocked with real blockedBy task IDs.",
         render_task_line(task),
         task.id
     )
@@ -921,7 +924,7 @@ pub(super) fn team_ready_task_message(task: &TeamTask) -> String {
 
 pub(super) fn team_continue_task_message(task: &TeamTask) -> String {
     format!(
-        "<task_continue>\n{}\n</task_continue>\n\nThis task is still in progress and assigned to you. Continue working now. If it is genuinely blocked, use TaskList action=update taskId={} status=blocked blockedBy=[...] with real blocking task IDs; otherwise keep working and mark it completed when finished. Do not sleep while this task is not truly blocked.",
+        "<task_continue>\n{}\n</task_continue>\n\nThis task is still in progress and assigned to you. Continue working now. If it is genuinely blocked, use task_list action=update taskId={} status=blocked blockedBy=[...] with real blocking task IDs; otherwise keep working and mark it completed when finished. Do not sleep while this task is not truly blocked.",
         render_task_line(task),
         task.id
     )

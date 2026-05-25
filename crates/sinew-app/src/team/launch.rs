@@ -9,17 +9,18 @@ impl TeamTool {
         mode: AgentMode,
         parent_event_tx: mpsc::UnboundedSender<AgentEvent>,
     ) -> Option<ToolRunResult> {
-        let result = match name {
+        let canonical_name = tool_names::canonical_tool_name(name);
+        let result = match canonical_name {
             TEAM_RUN_TOOL => {
                 self.run_team_run(tool_call_id, input, mode, parent_event_tx)
                     .await
             }
             TEAM_CREATE_TOOL => ToolRunResult::err(
-                "TeamCreate is disabled. Use TeamRun to start an agent team.",
+                "team_create is disabled. Use team_run to start an agent team.",
                 Vec::new(),
             ),
             AGENT_TOOL => ToolRunResult::err(
-                "Agent is disabled for teams. Use TeamRun to start an agent team.",
+                "agent is disabled for teams. Use team_run to start an agent team.",
                 Vec::new(),
             ),
             SEND_MESSAGE_TOOL => {
@@ -45,18 +46,18 @@ impl TeamTool {
     ) -> ToolRunResult {
         if self.current_agent.is_some() {
             return ToolRunResult::err(
-                "TeamRun can only be started by the user-facing agent",
+                "team_run can only be started by the user-facing agent",
                 Vec::new(),
             );
         }
         let parsed: TeamRunInput = match serde_json::from_value(input) {
             Ok(value) => value,
             Err(err) => {
-                return ToolRunResult::err(format!("invalid TeamRun input: {err}"), Vec::new())
+                return ToolRunResult::err(format!("invalid team_run input: {err}"), Vec::new())
             }
         };
         if let Some(key) = parsed.extra.keys().next() {
-            return ToolRunResult::err(format!("unknown TeamRun field `{key}`"), Vec::new());
+            return ToolRunResult::err(format!("unknown team_run field `{key}`"), Vec::new());
         }
         let agent_profiles = match parsed.agent_profiles.as_ref() {
             Some(value) => match value.to_profile_map() {
@@ -84,7 +85,7 @@ impl TeamTool {
             .filter(|value| !value.is_empty())
         {
             if has_start_only_fields {
-                return ToolRunResult::err("TeamRun restart accepts only agent", Vec::new());
+                return ToolRunResult::err("team_run restart accepts only agent", Vec::new());
             }
             return self
                 .run_team_agent_restart(tool_call_id, None, agent_name, mode, parent_event_tx)
@@ -321,11 +322,11 @@ impl TeamTool {
         let subagents = self.team_subagents_meta(team_name).await;
         let content = match &snapshot {
             Some(snapshot) => format!(
-                "{label}\n\n{}\n\nAgent Swarm is running asynchronously. Do not poll with shell commands or TeamStatus to check progress; end this turn after acknowledging launch and wait for a user/system wake.",
+                "{label}\n\n{}\n\nAgent Swarm is running asynchronously. Do not poll with shell commands or team_status to check progress; end this turn after acknowledging launch and wait for a user/system wake.",
                 render_team_snapshot(snapshot)
             ),
             None => format!(
-                "{label}\n\nAgent Swarm is running asynchronously. Do not poll with shell commands or TeamStatus to check progress; end this turn after acknowledging launch and wait for a user/system wake."
+                "{label}\n\nAgent Swarm is running asynchronously. Do not poll with shell commands or team_status to check progress; end this turn after acknowledging launch and wait for a user/system wake."
             ),
         };
         let mut result = match snapshot {

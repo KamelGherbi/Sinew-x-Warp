@@ -4,7 +4,7 @@ impl TeamTool {
     pub(super) async fn run_status(&self, input: Value) -> ToolRunResult {
         if self.current_agent.is_some() {
             return ToolRunResult::err(
-                "TeamStatus is only available to the main agent.",
+                "team_status is only available to the main agent.",
                 Vec::new(),
             );
         }
@@ -12,7 +12,7 @@ impl TeamTool {
         let parsed: TeamNameInput = match serde_json::from_value(input) {
             Ok(value) => value,
             Err(err) => {
-                return ToolRunResult::err(format!("invalid TeamStatus input: {err}"), Vec::new())
+                return ToolRunResult::err(format!("invalid team_status input: {err}"), Vec::new())
             }
         };
         let team_name = match self.resolve_team_name(parsed.team_name.as_deref()).await {
@@ -41,13 +41,16 @@ impl TeamTool {
         parent_event_tx: mpsc::UnboundedSender<AgentEvent>,
     ) -> ToolRunResult {
         if self.current_agent.is_some() {
-            return ToolRunResult::err("TeamStop is only available to the main agent.", Vec::new());
+            return ToolRunResult::err(
+                "team_stop is only available to the main agent.",
+                Vec::new(),
+            );
         }
         let input = normalize_optional_object_input(input);
         let parsed: TeamStopInput = match serde_json::from_value(input) {
             Ok(value) => value,
             Err(err) => {
-                return ToolRunResult::err(format!("invalid TeamStop input: {err}"), Vec::new())
+                return ToolRunResult::err(format!("invalid team_stop input: {err}"), Vec::new())
             }
         };
         let team_name = match self.resolve_team_name(parsed.team_name.as_deref()).await {
@@ -191,7 +194,7 @@ impl TeamTool {
         }
         let runtime = self.runtime.read().await;
         let Some(scope) = runtime.scopes.get(&self.scope_id) else {
-            return Err("no active team found; start one with TeamRun first".to_string());
+            return Err("no active team found; start one with team_run first".to_string());
         };
         scope
             .active_team

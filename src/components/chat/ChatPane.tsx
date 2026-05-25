@@ -27,6 +27,7 @@ import {
 import { TodoStrip, type QueuedPromptStripItem } from "./TodoStrip";
 import { fileIcon } from "../../lib/fileIcon";
 import { api } from "../../lib/ipc";
+import { canonicalToolName, isToolName } from "../../lib/tools";
 import {
   MODELS,
   PROVIDERS,
@@ -301,7 +302,7 @@ const GOAL_CONTINUATION_PROMPT =
   "Continue working toward the active goal. Do not repeat completed work. If the goal is now truly complete, audit it and call update_goal with status complete.";
 const PROVIDERS_CHANGED_EVENT = "sinew:providers-changed";
 const TOOL_SETTINGS_CHANGED_EVENT = "sinew:tool-settings-changed";
-const AGENT_TEAMS_TOOL_NAME = "TeamRun";
+const AGENT_TEAMS_TOOL_NAME = "team_run";
 const AGENT_TEAMS_DISABLED_TITLE = "Please activate Agent teams in settings.";
 const IMPLEMENT_PLAN_PROMPT =
   "Implement completely this plan. Use the attached plan as the source of truth.";
@@ -608,7 +609,7 @@ export function ChatPane({
       const settings = await api.listToolSettings(workspacePath);
       setAgentTeamsEnabled(
         settings.tools.some(
-          (tool) => tool.name === AGENT_TEAMS_TOOL_NAME && tool.enabled,
+          (tool) => canonicalToolName(tool.name) === AGENT_TEAMS_TOOL_NAME && tool.enabled,
         ),
       );
     } catch {
@@ -3748,7 +3749,7 @@ function shouldShowPlanningNextMove(view: ChatViewState): boolean {
     !view.blocks.some(
       (block) =>
         block.kind === "tool" &&
-        block.name === "Question" &&
+        isToolName(block.name, "question") &&
         block.status === "running",
     ) &&
     !view.blocks.some((block) => block.kind === "plan-writing")
@@ -4153,7 +4154,7 @@ function subAgentNameFromToolBlock(
   block: Extract<ChatBlock, { kind: "tool" }>,
 ): string | null {
   const input = parseJsonRecord(block.argsPretty) ?? parseJsonRecord(block.argsRaw);
-  if (block.name === "Agent") {
+  if (isToolName(block.name, "agent")) {
     const fromArgs = typeof input?.name === "string" ? input.name.trim() : "";
     if (fromArgs) return fromArgs;
   }
@@ -4215,7 +4216,7 @@ function mergeAgentStatus(
 }
 
 function isSubAgentToolName(name: string): boolean {
-  return name.startsWith("subagent_") || name === "Agent";
+  return name.startsWith("subagent_") || isToolName(name, "agent");
 }
 
 function isGenericSubAgentName(value: string): boolean {
@@ -4444,7 +4445,7 @@ function subAgentInitialMessageFromToolBlock(
   block: Extract<ChatBlock, { kind: "tool" }>,
 ): string | undefined {
   const input = parseJsonRecord(block.argsPretty) ?? parseJsonRecord(block.argsRaw);
-  if (block.name === "Agent") {
+  if (isToolName(block.name, "agent")) {
     const prompt = typeof input?.prompt === "string" ? input.prompt.trim() : "";
     const description =
       typeof input?.description === "string" ? input.description.trim() : "";
@@ -4492,9 +4493,9 @@ function activeTeamNameChange(
       candidate.kind === "tool" && candidate.id === event.id,
   );
   const teamRunStatus = teamRunStatusFromMeta(event.meta);
-  const isTeamStop = block?.name === "TeamStop";
+  const isTeamStop = block ? isToolName(block.name, "team_stop") : false;
   const isTeamRunSpawn =
-    block?.name === "TeamRun" && !teamRunAgentFromArgs(block.argsPretty ?? block.argsRaw);
+    !!block && isToolName(block.name, "team_run") && !teamRunAgentFromArgs(block.argsPretty ?? block.argsRaw);
   const teamName =
     teamNameFromMeta(event.meta) ??
     (isTeamRunSpawn || isTeamStop
@@ -4903,7 +4904,7 @@ function teamMessageFromSendMessageTool(
   block: Extract<ChatBlock, { kind: "tool" }>,
   activeAgentName?: string,
 ): TeamMessageItem | null {
-  if (block.name !== "SendMessage" || !activeAgentName?.trim()) return null;
+  if (!isToolName(block.name, "send_message") || !activeAgentName?.trim()) return null;
   const input = parseJsonRecord(block.argsPretty) ?? parseJsonRecord(block.argsRaw);
   const message =
     typeof input?.message === "string" ? input.message.trim() : "";
@@ -5329,7 +5330,7 @@ function renderItemsFromBlocks(blocks: ChatBlock[]): RenderItem[] {
     if (block.kind === "tool" && block.hidden) return [];
     if (
       block.kind === "tool" &&
-      block.name === "Question" &&
+      isToolName(block.name, "question") &&
       (block.status === "running" || block.status === "done")
     ) {
       return [{
@@ -5652,15 +5653,14 @@ function BlockView({
     case "tool":
       if (
         !block.isError &&
-        (block.name === "ToDoList" ||
-          block.name === "TaskCreate" ||
-          block.name === "TaskList" ||
-          block.name === "TaskUpdate")
+        ["todo_list", "task_create", "task_list", "task_update"].includes(
+          canonicalToolName(block.name),
+        )
       ) {
         return null;
       }
       const preparingQuestion =
-        block.name === "Question" && block.status === "running";
+        isToolName(block.name, "question") && block.status === "running";
       const sentTeamMessage = teamMessageFromSendMessageTool(
         block,
         activeAgentName,
@@ -5693,13 +5693,13 @@ function BlockView({
             meta={block.meta}
             onOpenFile={onOpenFile}
             onStopTeam={
-              block.name === "TeamRun" ? onStopAgentSwarm : undefined
+              isToolName(block.name, "team_run") ? onStopAgentSwarm : undefined
             }
             teamAgents={teamAgents}
             teamCompletionByTeam={teamCompletionByTeam}
             activeTeamNames={activeTeamNames}
             onOpenSubAgent={
-              block.name.startsWith("subagent_") || block.name === "Agent"
+              isSubAgentToolName(block.name)
                 ? () => onOpenSubAgent(block)
                 : undefined
             }

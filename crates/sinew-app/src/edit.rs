@@ -66,13 +66,13 @@ impl EditFileTool {
                                     "type": "array",
                                     "minItems": 1,
                                     "maxItems": MAX_EDIT_COUNT,
-                                    "description": "Exact replacements to apply to this file. Replacements in the same file must target disjoint regions in the original content.",
+                                    "description": "Ordered replacements to apply to this file. Edits in the same file are applied sequentially.",
                                     "items": {
                                         "type": "object",
                                         "properties": {
                                             "oldContent": {
                                                 "type": "string",
-                                                "description": "Exact text to replace. ALWAYS use the shortest old_content that is still unique in the file. Do not include surrounding context beyond what is strictly needed for an unambiguous match."
+                                                "description": "Target text to replace at this step. ALWAYS use the shortest oldContent that is unique in the current content. Do not include surrounding context beyond what is strictly needed for an unambiguous match."
                                             },
                                             "newContent": {
                                                 "type": "string",
@@ -80,7 +80,7 @@ impl EditFileTool {
                                             },
                                             "replaceAll": {
                                                 "type": "boolean",
-                                                "description": "When true, replace every non-overlapping occurrence of oldContent. Defaults to false, which requires oldContent to match exactly once."
+                                                "description": "When true, replace every non-overlapping occurrence of oldContent in the current content at this step. Defaults to false, which requires oldContent to match once."
                                             }
                                         },
                                         "required": ["oldContent", "newContent"],
@@ -341,16 +341,9 @@ impl FuzzyNormalizedText {
 
 #[derive(Debug, Clone)]
 struct PlannedReplacement {
-    edit_index: usize,
     start: usize,
     old_len: usize,
     new_content: String,
-}
-
-impl PlannedReplacement {
-    fn end(&self) -> usize {
-        self.start + self.old_len
-    }
 }
 
 #[derive(Debug)]
@@ -415,7 +408,8 @@ fn plan_file_edits(
     edits: &[ReplacementInput],
 ) -> Result<PlannedFileEdit> {
     let multiple = edits.len() > 1;
-    let mut replacements = Vec::with_capacity(edits.len());
+    let mut updated_content = original.to_string();
+    let mut replacement_count = 0usize;
 
     for (index, edit) in edits.iter().enumerate() {
         let old_content = normalize_line_endings(&edit.old_content);
@@ -429,11 +423,17 @@ fn plan_file_edits(
         }
 
         let matched = if edit.replace_all {
-            find_all_replacement_matches(relative_path, original, &old_content, index, multiple)?
+            find_all_replacement_matches(
+                relative_path,
+                &updated_content,
+                &old_content,
+                index,
+                multiple,
+            )?
         } else {
             vec![find_unique_replacement_match(
                 relative_path,
-                original,
+                &updated_content,
                 &old_content,
                 index,
                 multiple,
@@ -446,22 +446,21 @@ fn plan_file_edits(
             );
         }
 
-        for matched in matched {
-            replacements.push(PlannedReplacement {
-                edit_index: index,
+        let replacements = matched
+            .into_iter()
+            .map(|matched| PlannedReplacement {
                 start: matched.start,
                 old_len: matched.len,
                 new_content: new_content.clone(),
-            });
-        }
+            })
+            .collect::<Vec<_>>();
+        replacement_count += replacements.len();
+        updated_content = apply_replacements(&updated_content, &replacements);
     }
 
-    validate_no_overlaps(relative_path, &replacements)?;
-    let replacement_count = replacements.len();
-    let updated_content = apply_replacements(original, &replacements);
     if updated_content == original {
         bail!(
-            "No changes made to {relative_path}. The replacement produced identical content. The oldContent and newContent are the same."
+            "No changes made to {relative_path}. The sequential edits produced identical content."
         );
     }
 
@@ -552,12 +551,17 @@ fn not_found_error(
     multiple: bool,
 ) -> Result<ReplacementMatch> {
     if multiple {
+        let sequence_context = if edit_index == 0 {
+            ""
+        } else {
+            " after applying previous edits"
+        };
         bail!(
-            "Could not find edits[{edit_index}] in {relative_path}. The oldContent must match exactly including all whitespace and newlines."
+            "Could not find edits[{edit_index}] in {relative_path}{sequence_context}. No exact, fuzzy, or whitespace-tolerant match was found for oldContent."
         );
     }
     bail!(
-        "Could not find the exact text in {relative_path}. The old content must match exactly including all whitespace and newlines."
+        "Could not find oldContent in {relative_path}. No exact, fuzzy, or whitespace-tolerant match was found."
     );
 }
 
@@ -620,7 +624,7 @@ fn fuzzy_replacement_matches(
                 .original_range_with_trimmed_suffix(start, end)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Could not find the exact text. The old content must match exactly including all whitespace and newlines."
+                        "Could not map a fuzzy oldContent match back to the original text."
                     )
                 })?;
             Ok(ReplacementMatch {
@@ -1117,24 +1121,6 @@ fn next_char_boundary(text: &str, offset: usize) -> usize {
             .unwrap_or(1)
 }
 
-fn validate_no_overlaps(relative_path: &str, replacements: &[PlannedReplacement]) -> Result<()> {
-    let mut sorted = replacements.iter().collect::<Vec<_>>();
-    sorted.sort_by_key(|replacement| (replacement.start, replacement.end()));
-
-    for pair in sorted.windows(2) {
-        let left = pair[0];
-        let right = pair[1];
-        if left.end() > right.start {
-            bail!(
-                "edits[{}] and edits[{}] overlap in {relative_path}. Merge them into one edit or target disjoint regions.",
-                left.edit_index,
-                right.edit_index
-            );
-        }
-    }
-    Ok(())
-}
-
 fn apply_replacements(original: &str, replacements: &[PlannedReplacement]) -> String {
     let mut updated = original.to_string();
     let mut sorted = replacements.iter().collect::<Vec<_>>();
@@ -1625,7 +1611,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "Could not find the exact text in app.rs. The old content must match exactly including all whitespace and newlines."
+            "Could not find oldContent in app.rs. No exact, fuzzy, or whitespace-tolerant match was found."
         );
         fs::remove_dir_all(root).ok();
     }
@@ -1656,7 +1642,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "Could not find edits[1] in app.rs. The oldContent must match exactly including all whitespace and newlines."
+            "Could not find edits[1] in app.rs after applying previous edits. No exact, fuzzy, or whitespace-tolerant match was found for oldContent."
         );
         assert_eq!(fs::read_to_string(root.join("app.rs")).unwrap(), "a\nb\n");
         fs::remove_dir_all(root).ok();
@@ -1722,37 +1708,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_overlapping_edits_before_writing() {
+    async fn applies_edits_sequentially_within_one_file() {
         let root = unique_temp_dir();
         fs::create_dir_all(&root).expect("create temp workspace");
         fs::write(root.join("app.rs"), "a\nb\nc\nd\n").expect("write file");
         let tool = EditFileTool::new(&root);
         let fingerprints = fingerprints(&root, &["app.rs"]);
 
-        let error = tool
+        let result = tool
             .edit(
                 json!({
                     "files": [{
                         "path": "app.rs",
                         "edits": [
-                            {"oldContent": "b\nc", "newContent": "x"},
-                            {"oldContent": "c\nd", "newContent": "y"}
+                            {"oldContent": "b\nc", "newContent": "x\nc"},
+                            {"oldContent": "x\nc\nd", "newContent": "done"}
                         ]
                     }]
                 }),
                 &fingerprints,
             )
             .await
-            .expect_err("overlap should fail");
+            .expect("sequential edits should apply");
 
         assert_eq!(
-            error.to_string(),
-            "edits[0] and edits[1] overlap in app.rs. Merge them into one edit or target disjoint regions."
-        );
-        assert_eq!(
             fs::read_to_string(root.join("app.rs")).unwrap(),
-            "a\nb\nc\nd\n"
+            "a\ndone\n"
         );
+        assert_eq!(result.content, "Edited app.rs (2 replacements).");
         fs::remove_dir_all(root).ok();
     }
 
@@ -1872,37 +1855,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replace_all_rejects_overlap_with_other_edits() {
+    async fn replace_all_runs_on_current_sequential_content() {
         let root = unique_temp_dir();
         fs::create_dir_all(&root).expect("create temp workspace");
-        fs::write(root.join("app.rs"), "foo\nfoo\n").expect("write file");
+        fs::write(root.join("app.rs"), "seed\n").expect("write file");
         let tool = EditFileTool::new(&root);
         let fingerprints = fingerprints(&root, &["app.rs"]);
 
-        let error = tool
+        let result = tool
             .edit(
                 json!({
                     "files": [{
                         "path": "app.rs",
                         "edits": [
-                            {"oldContent": "foo", "newContent": "bar", "replaceAll": true},
-                            {"oldContent": "foo\nfoo", "newContent": "baz"}
+                            {"oldContent": "seed", "newContent": "foo foo\nfoo"},
+                            {"oldContent": "foo", "newContent": "bar", "replaceAll": true}
                         ]
                     }]
                 }),
                 &fingerprints,
             )
             .await
-            .expect_err("overlap should fail");
+            .expect("sequential replaceAll should apply");
 
         assert_eq!(
-            error.to_string(),
-            "edits[0] and edits[1] overlap in app.rs. Merge them into one edit or target disjoint regions."
-        );
-        assert_eq!(
             fs::read_to_string(root.join("app.rs")).unwrap(),
-            "foo\nfoo\n"
+            "bar bar\nbar\n"
         );
+        assert_eq!(result.content, "Edited app.rs (4 replacements).");
         fs::remove_dir_all(root).ok();
     }
 

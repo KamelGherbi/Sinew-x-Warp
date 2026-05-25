@@ -11,7 +11,7 @@ pub(super) fn team_agent_system_prompt(base: &str, team_name: &str, agent: &Team
     };
     let base = subagent_system_prompt(base, &config_agent);
     format!(
-        "{base}\n\n<agent_team_profile team=\"{}\" name=\"{}\">\nYou are part of an autonomous agent team.\nYour work is coordinated through the task system and teammate messaging, use SendMessage tool to talk with your team.\nYou may sleep only when your owned task is actually status=blocked in the task board with real blockedBy task IDs. If a task is pending or in_progress, keep working; if it is genuinely blocked, update the task to status=blocked with blockedBy before ending your turn. You will be woken automatically when your owned tasks unlock or when a teammate sends you a direct message.\n</agent_team_profile>",
+        "{base}\n\n<agent_team_profile team=\"{}\" name=\"{}\">\nYou are part of an autonomous agent team.\nYour work is coordinated through the task system and teammate messaging, use send_message tool to talk with your team.\nYou may sleep only when your owned task is actually status=blocked in the task board with real blockedBy task IDs. If a task is pending or in_progress, keep working; if it is genuinely blocked, update the task to status=blocked with blockedBy before ending your turn. You will be woken automatically when your owned tasks unlock or when a teammate sends you a direct message.\n</agent_team_profile>",
         escape_attr(team_name),
         escape_attr(&agent.name)
     )
@@ -66,7 +66,7 @@ pub(super) fn team_kickoff_message(
 
 pub(super) fn team_restart_message(team_name: &str, agent_name: &str) -> String {
     format!(
-        "You are being relaunched in Agent Swarm `{}` as @{}.\n\nReview the current team state in your system context, continue your owned work if it is still relevant, and coordinate with peers through TaskList and SendMessage.",
+        "You are being relaunched in Agent Swarm `{}` as @{}.\n\nReview the current team state in your system context, continue your owned work if it is still relevant, and coordinate with peers through task_list and send_message.",
         team_name.trim(),
         agent_name.trim()
     )
@@ -186,11 +186,11 @@ pub(super) fn render_main_agent_team_system_reminder(session: &TeamSession) -> S
     if !errors.is_empty() {
         lines.push("errors:".to_string());
         lines.extend(errors);
-        lines.push("main-agent guidance: handle only these failures. Relaunch the failed teammate with TeamRun agent=... when useful, or stop that teammate if it is looping. Do not take over normal team work.".to_string());
+        lines.push("main-agent guidance: handle only these failures. Relaunch the failed teammate with team_run agent=... when useful, or stop that teammate if it is looping. Do not take over normal team work.".to_string());
     } else if any_running {
-        lines.push("main-agent guidance: the Agent Swarm runs asynchronously in the background. Do not poll with shell commands, file checks, or TeamStatus just to see whether it is done. End your turn after acknowledging launch/status and wait for a user or system wake.".to_string());
+        lines.push("main-agent guidance: the Agent Swarm runs asynchronously in the background. Do not poll with shell commands, file checks, or team_status just to see whether it is done. End your turn after acknowledging launch/status and wait for a user or system wake.".to_string());
     } else {
-        lines.push("main-agent guidance: the Agent Swarm has no running teammates right now. If the current turn was triggered by an agent_swarm_finished system reminder, tell the user the Agent Swarm finished and summarize the final teammate responses. Do not poll with shell commands, file checks, or TeamStatus just to check completion.".to_string());
+        lines.push("main-agent guidance: the Agent Swarm has no running teammates right now. If the current turn was triggered by an agent_swarm_finished system reminder, tell the user the Agent Swarm finished and summarize the final teammate responses. Do not poll with shell commands, file checks, or team_status just to check completion.".to_string());
     }
     lines.push("</agent_swarm_state>".to_string());
     lines.join("\n")

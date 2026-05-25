@@ -22,6 +22,7 @@ use tokio::{
 };
 use tracing::warn;
 
+use crate::tool_names;
 use crate::tool_run::{ToolRunImage, ToolRunResult};
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -29,7 +30,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const CALL_TIMEOUT: Duration = Duration::from_secs(120);
 const TOOL_OUTPUT_LIMIT: usize = 128 * 1024;
 const TOOL_NAME_LIMIT: usize = 64;
-const LOAD_MCP_TOOL_NAME: &str = "LoadMcpTool";
+const LOAD_MCP_TOOL_NAME: &str = tool_names::LOAD_MCP_TOOL;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -199,7 +200,7 @@ impl McpToolRegistry {
     }
 
     pub async fn run_tool(&self, name: &str, input: Value) -> Option<ToolRunResult> {
-        if name == LOAD_MCP_TOOL_NAME {
+        if tool_names::is_tool_name(name, LOAD_MCP_TOOL_NAME) {
             return Some(self.load_tool(input).await);
         }
 
@@ -306,7 +307,7 @@ fn history_loaded_mcp_tools(history: &[ChatMessage]) -> Vec<McpToolRequest> {
                 continue;
             };
 
-            if name == LOAD_MCP_TOOL_NAME {
+            if tool_names::is_tool_name(name, LOAD_MCP_TOOL_NAME) {
                 if let Ok(request) = mcp_tool_request_from_input(input) {
                     requests.push(request);
                 }
@@ -336,7 +337,7 @@ fn mcp_tool_request_from_input(input: &Value) -> Result<McpToolRequest> {
     let server = input_string(input, &["server", "serverName", "server_name", "mcp"]);
     let tool = input_string(input, &["tool", "toolName", "tool_name", "name"]);
     if server.is_none() || tool.is_none() {
-        bail!("LoadMcpTool needs `server` and `tool` from the MCP catalog");
+        bail!("load_mcp_tool needs `server` and `tool` from the MCP catalog");
     }
 
     Ok(McpToolRequest {
@@ -370,13 +371,13 @@ fn resolve_mcp_tool(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("LoadMcpTool needs `server` from the MCP catalog"))?;
+        .ok_or_else(|| anyhow!("load_mcp_tool needs `server` from the MCP catalog"))?;
     let tool = request
         .tool
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("LoadMcpTool needs `tool` from the MCP catalog"))?;
+        .ok_or_else(|| anyhow!("load_mcp_tool needs `tool` from the MCP catalog"))?;
 
     let matches = bindings
         .iter()

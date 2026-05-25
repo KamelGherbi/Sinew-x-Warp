@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sinew_core::ToolDescriptor;
 
-use crate::{agent::QuestionReply, tool_run::ToolRunResult, TurnCancel};
+use crate::{agent::QuestionReply, tool_names, tool_run::ToolRunResult, TurnCancel};
 
 #[derive(Debug, Clone, Default)]
 pub struct QuestionTool;
@@ -53,7 +53,7 @@ impl QuestionTool {
             "additionalProperties": false
         });
         ToolDescriptor {
-            name: "Question".into(),
+            name: tool_names::QUESTION.into(),
             description: "Ask the user one or more questions in the chat UI. Use this when you need choices, preferences, or clarifications before continuing. You may pass either a single question with question/type/options, or multiple independent questions with questions[]. After calling it, wait for the user's next message.".into(),
             input_schema: json!({
                 "type": "object",
@@ -112,7 +112,7 @@ impl QuestionTool {
         let parsed: QuestionInput = match serde_json::from_value(input) {
             Ok(value) => value,
             Err(err) => {
-                return ToolRunResult::err(format!("invalid Question input: {err}"), Vec::new())
+                return ToolRunResult::err(format!("invalid question input: {err}"), Vec::new())
             }
         };
 

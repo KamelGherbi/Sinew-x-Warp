@@ -11,7 +11,7 @@ impl TeamTool {
         let parsed: SendMessageInput = match serde_json::from_value(input) {
             Ok(value) => value,
             Err(err) => {
-                return ToolRunResult::err(format!("invalid SendMessage input: {err}"), Vec::new())
+                return ToolRunResult::err(format!("invalid send_message input: {err}"), Vec::new())
             }
         };
         let to = parsed.to.trim();
@@ -34,7 +34,7 @@ impl TeamTool {
             .unwrap_or("user");
         if self.current_agent.is_none() {
             return ToolRunResult::err(
-                "SendMessage is peer-only. Start a team with TeamRun.",
+                "send_message is peer-only. Start a team with team_run.",
                 Vec::new(),
             );
         }

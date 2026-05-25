@@ -9,6 +9,7 @@ import {
 import { Icon } from "@iconify/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { FileChange, TodoStatus, ToolResultImage } from "../../types";
+import { canonicalToolName } from "../../lib/tools";
 import { FileChangeBlock } from "./FileChangeBlock";
 
 function extractEditFilePaths(argsPretty?: string): string[] {
@@ -624,7 +625,7 @@ function displayToolInput(
   input: Record<string, unknown>,
 ): Record<string, unknown> {
   const cleaned = omitInternalTeamFields(input);
-  if (name !== "TeamRun") return cleaned;
+  if (canonicalToolName(name) !== "team_run") return cleaned;
   const agent = typeof input.agent === "string" ? input.agent.trim() : "";
   if (!agent) return compactTeamRunInput(cleaned);
   return { agent };
@@ -921,8 +922,9 @@ export function ToolCard({
   activeTeamNames,
   subAgentName,
 }: ToolCardProps) {
-  const isCreateImage = name === "CreateImage";
-  const isTeamRunTool = name === "TeamRun";
+  const canonicalName = canonicalToolName(name);
+  const isCreateImage = canonicalName === "create_image";
+  const isTeamRunTool = canonicalName === "team_run";
   const [open, setOpen] = useState(false);
   const [teamStopState, setTeamStopState] = useState<
     "idle" | "stopping" | "stopped" | "error"
@@ -930,7 +932,7 @@ export function ToolCard({
   const previousTeamRunActiveRef = useRef(false);
 
   const command = useMemo(() => {
-    if ((name !== "bash" && name !== "bash_input") || !argsPretty) return null;
+    if ((canonicalName !== "bash" && canonicalName !== "bash_input") || !argsPretty) return null;
     try {
       const parsed = JSON.parse(argsPretty) as {
         command?: string;
@@ -938,7 +940,7 @@ export function ToolCard({
         session_id?: number;
         kill?: boolean;
       };
-      if (name === "bash") return parsed.command ?? null;
+      if (canonicalName === "bash") return parsed.command ?? null;
       if (parsed.kill && parsed.session_id) return `kill session ${parsed.session_id}`;
       if (typeof parsed.input === "string" && parsed.input.length > 0) {
         return parsed.input;
@@ -947,7 +949,7 @@ export function ToolCard({
     } catch {
       return null;
     }
-  }, [name, argsPretty]);
+  }, [canonicalName, argsPretty]);
   const teamRunInput = useMemo(
     () => (isTeamRunTool ? parseToolInput(argsPretty) : {}),
     [argsPretty, isTeamRunTool],
@@ -984,7 +986,7 @@ export function ToolCard({
     previousTeamRunActiveRef.current = !!teamRunActive;
   }, [isTeamRunSpawn, status, teamRunActive]);
 
-  if (name === "read") {
+  if (canonicalName === "read") {
     return (
       <ReadToolInline
         status={status}
@@ -997,28 +999,28 @@ export function ToolCard({
     );
   }
 
-  const isBash = name === "bash" || name === "bash_input";
-  const isGlob = name === "Glob";
-  const isGrep = name === "Grep";
-  const isEditFile = name === "edit_file";
-  const isWriteFile = name === "write_file";
-  const isCleanContext = name === "clean_context";
-  const isContextCompaction = name === "context_compaction";
-  const isGoalUpdate = name === "update_goal";
-  const isTodo = name === "ToDoList";
-  const isWebSearch = name === "WebSearch";
-  const isWebFetch = name === "WebFetch";
-  const isSkill = name === "skill";
-  const isLoadSkill = name === "LoadSkill";
+  const isBash = canonicalName === "bash" || canonicalName === "bash_input";
+  const isGlob = canonicalName === "glob";
+  const isGrep = canonicalName === "grep";
+  const isEditFile = canonicalName === "edit_file";
+  const isWriteFile = canonicalName === "write_file";
+  const isCleanContext = canonicalName === "clean_context";
+  const isContextCompaction = canonicalName === "context_compaction";
+  const isGoalUpdate = canonicalName === "update_goal";
+  const isTodo = canonicalName === "todo_list";
+  const isWebSearch = canonicalName === "web_search";
+  const isWebFetch = canonicalName === "web_fetch";
+  const isSkill = canonicalName === "skill";
+  const isLoadSkill = isSkill && name !== canonicalName;
   const isMcp = name.startsWith("mcp__");
-  const isLoadMcp = name === "LoadMcpTool";
-  const isTeamMessage = name === "SendMessage";
+  const isLoadMcp = canonicalName === "load_mcp_tool";
+  const isTeamMessage = canonicalName === "send_message";
   const isTeamRun = isTeamRunTool;
-  const isTeamCreate = name === "TeamCreate";
-  const isTeamStatus = name === "TeamStatus";
-  const isTeamStop = name === "TeamStop";
+  const isTeamCreate = canonicalName === "team_create";
+  const isTeamStatus = canonicalName === "team_status";
+  const isTeamStop = canonicalName === "team_stop";
   const isTeam = isTeamRun || isTeamCreate || isTeamStatus || isTeamStop;
-  const isSubAgent = name.startsWith("subagent_") || name === "Agent";
+  const isSubAgent = name.startsWith("subagent_") || canonicalName === "agent";
   const hasImages = !!images && images.length > 0;
   const editingPaths =
     isEditFile && status === "running" ? extractEditFilePaths(argsPretty) : [];
@@ -1122,7 +1124,7 @@ export function ToolCard({
     ? skillTitle(argsPretty, summary)
     : summary && summary.trim().length > 0
       ? summary
-      : name;
+      : canonicalName;
   const hasChanges = !!renderedFileChanges && renderedFileChanges.length > 0;
   const canExpand =
     !(isContextCompaction && status === "running") &&

@@ -135,7 +135,8 @@ struct ParsedWorktree {
 pub(super) async fn git_repository_snapshot_command(
     input: WorkspaceInput,
 ) -> std::result::Result<GitRepositorySnapshot, String> {
-    let workspace_root = normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
     Ok(repository_snapshot(&workspace_root))
 }
 
@@ -144,7 +145,8 @@ pub(super) async fn git_init_command(
     app: AppHandle,
     input: WorkspaceInput,
 ) -> std::result::Result<GitRepositorySnapshot, String> {
-    let workspace_root = normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
     ensure_git_available().map_err(error_to_string)?;
     git_checked(&workspace_root, &["init"]).map_err(error_to_string)?;
     emit_workspace_file_change(&app, &workspace_root, "");
@@ -155,9 +157,11 @@ pub(super) async fn git_init_command(
 pub(super) async fn git_create_worktree_command(
     input: GitCreateWorktreeInput,
 ) -> std::result::Result<GitCreateWorktreeOutput, String> {
-    let workspace_root = normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
     let repo_root = require_repo_root(&workspace_root).map_err(error_to_string)?;
-    let branch = validate_branch_name_input(&repo_root, &input.branch_name).map_err(error_to_string)?;
+    let branch =
+        validate_branch_name_input(&repo_root, &input.branch_name).map_err(error_to_string)?;
     let base_branch = input
         .base_branch
         .as_deref()
@@ -196,10 +200,12 @@ pub(super) async fn git_create_worktree_command(
     if input.push_immediately {
         match git_checked(&worktree_path, &["push", "-u", "origin", &branch]) {
             Ok(_) => pushed = true,
-            Err(err) => warning = Some(format!(
-                "Worktree created, but the branch could not be pushed: {}",
-                err
-            )),
+            Err(err) => {
+                warning = Some(format!(
+                    "Worktree created, but the branch could not be pushed: {}",
+                    err
+                ))
+            }
         }
     }
 
@@ -220,7 +226,8 @@ pub(super) async fn git_create_worktree_command(
 pub(super) async fn git_remove_worktree_command(
     input: GitRemoveWorktreeInput,
 ) -> std::result::Result<GitOperationResult, String> {
-    let workspace_root = normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
     let repo_root = require_repo_root(&workspace_root).map_err(error_to_string)?;
     let target = PathBuf::from(input.target_path.trim());
     if target.as_os_str().is_empty() {
@@ -267,9 +274,11 @@ pub(super) async fn git_remove_worktree_command(
 pub(super) async fn git_create_branch_command(
     input: GitCreateBranchInput,
 ) -> std::result::Result<GitOperationResult, String> {
-    let workspace_root = normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
     let repo_root = require_repo_root(&workspace_root).map_err(error_to_string)?;
-    let branch = validate_branch_name_input(&repo_root, &input.branch_name).map_err(error_to_string)?;
+    let branch =
+        validate_branch_name_input(&repo_root, &input.branch_name).map_err(error_to_string)?;
     if local_branch_exists(&repo_root, &branch).map_err(error_to_string)? {
         return Err(format!("branch '{branch}' already exists"));
     }
@@ -292,7 +301,8 @@ pub(super) async fn git_create_branch_command(
 pub(super) async fn git_commit_command(
     input: GitCommitInput,
 ) -> std::result::Result<GitOperationResult, String> {
-    let workspace_root = normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
     let repo_root = require_repo_root(&workspace_root).map_err(error_to_string)?;
     let message = input.message.trim();
     if message.is_empty() {
@@ -322,7 +332,8 @@ pub(super) async fn git_commit_command(
 pub(super) async fn git_push_command(
     input: WorkspaceInput,
 ) -> std::result::Result<GitOperationResult, String> {
-    let workspace_root = normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
     let repo_root = require_repo_root(&workspace_root).map_err(error_to_string)?;
     let output = git_checked(&repo_root, &["push"]).map_err(error_to_string)?;
     Ok(operation_result("Push completed.", output))
@@ -333,7 +344,8 @@ pub(super) async fn git_pull_command(
     app: AppHandle,
     input: WorkspaceInput,
 ) -> std::result::Result<GitOperationResult, String> {
-    let workspace_root = normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
     let repo_root = require_repo_root(&workspace_root).map_err(error_to_string)?;
     let output = git_checked(&repo_root, &["pull", "--no-edit"]).map_err(error_to_string)?;
     emit_workspace_file_change(&app, &repo_root, "");
@@ -344,9 +356,10 @@ pub(super) async fn git_pull_command(
 pub(super) async fn git_create_pull_request_command(
     input: GitCreatePullRequestInput,
 ) -> std::result::Result<GitPullRequestOutput, String> {
-    let workspace_root = normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
     let repo_root = require_repo_root(&workspace_root).map_err(error_to_string)?;
-    ensure_gh_available().map_err(error_to_string)?;
+    let gh = ensure_gh_available().map_err(error_to_string)?;
 
     let title = input.title.trim();
     if title.is_empty() {
@@ -372,7 +385,8 @@ pub(super) async fn git_create_pull_request_command(
         "--head".to_string(),
         head,
     ];
-    let output = run_checked("gh", Some(&repo_root), &args).map_err(error_to_string)?;
+    let output =
+        run_checked_with_program(&gh, "gh", Some(&repo_root), &args).map_err(error_to_string)?;
     let combined = join_output(&output.stdout, &output.stderr);
     let url = extract_url(&combined)
         .ok_or_else(|| "GitHub CLI did not return a pull request URL".to_string())?;
@@ -457,7 +471,8 @@ fn repository_snapshot_for_repo(
     let dirty_count = status.len();
     let current_branch = current_branch(repo_root)?;
     let branches = list_branches(repo_root, current_branch.as_deref())?;
-    let main_branch = detect_main_branch_from_branches(repo_root, &branches, current_branch.as_deref())?;
+    let main_branch =
+        detect_main_branch_from_branches(repo_root, &branches, current_branch.as_deref())?;
     let worktrees = list_worktrees(repo_root, workspace_root)?;
 
     Ok(GitRepositorySnapshot {
@@ -476,26 +491,71 @@ fn repository_snapshot_for_repo(
     })
 }
 
-fn ensure_git_available() -> Result<()> {
-    if command_available("git") {
-        Ok(())
-    } else {
-        anyhow::bail!("Git is not installed or is not available on PATH.")
-    }
+fn ensure_git_available() -> Result<PathBuf> {
+    resolve_executable("git").ok_or_else(|| {
+        anyhow::anyhow!(
+            "Git is not installed or could not be found. Install Git and restart Sinew."
+        )
+    })
 }
 
-fn ensure_gh_available() -> Result<()> {
-    if command_available("gh") {
-        Ok(())
-    } else {
-        anyhow::bail!(
-            "GitHub CLI (`gh`) is not installed. Install it from https://cli.github.com/ to create pull requests."
+fn ensure_gh_available() -> Result<PathBuf> {
+    resolve_executable("gh").ok_or_else(|| {
+        anyhow::anyhow!(
+            "GitHub CLI (`gh`) is not installed or could not be found. Install it from https://cli.github.com/ to create pull requests."
         )
-    }
+    })
 }
 
 fn command_available(program: &str) -> bool {
-    Command::new(program)
+    resolve_executable(program).is_some()
+}
+
+fn resolve_executable(program: &str) -> Option<PathBuf> {
+    let direct = PathBuf::from(program);
+    if direct.components().count() > 1 && executable_works(&direct) {
+        return Some(direct);
+    }
+
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join(program);
+            if executable_works(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+
+    for dir in fallback_executable_dirs() {
+        let candidate = dir.join(program);
+        if executable_works(&candidate) {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn fallback_executable_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/opt/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+    ];
+    if let Some(home) = home_dir() {
+        dirs.push(home.join(".local/bin"));
+        dirs.push(home.join("bin"));
+    }
+    dirs
+}
+
+fn executable_works(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    Command::new(path)
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -544,7 +604,15 @@ fn detect_main_branch_from_branches(
     branches: &[GitBranch],
     current_branch: Option<&str>,
 ) -> Result<Option<String>> {
-    let origin_head = git_output(repo_root, &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])?;
+    let origin_head = git_output(
+        repo_root,
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+    )?;
     if origin_head.success {
         let trimmed = origin_head.stdout.trim();
         if let Some((_, name)) = trimmed.split_once('/') {
@@ -911,18 +979,40 @@ fn git_output(repo: &Path, args: &[&str]) -> Result<GitCommandOutput> {
 }
 
 fn run_checked(program: &str, cwd: Option<&Path>, args: &[String]) -> Result<GitCommandOutput> {
-    let output = run_output(program, cwd, args)?;
+    let path = resolve_executable(program)
+        .ok_or_else(|| anyhow::anyhow!("unable to find executable '{program}'"))?;
+    run_checked_with_program(&path, program, cwd, args)
+}
+
+fn run_checked_with_program(
+    program_path: &Path,
+    program_label: &str,
+    cwd: Option<&Path>,
+    args: &[String],
+) -> Result<GitCommandOutput> {
+    let output = run_output_with_program(program_path, program_label, cwd, args)?;
     if output.success {
         Ok(output)
     } else {
-        anyhow::bail!(format_command_error(program, args, &output))
+        anyhow::bail!(format_command_error(program_label, args, &output))
     }
 }
 
 fn run_output(program: &str, cwd: Option<&Path>, args: &[String]) -> Result<GitCommandOutput> {
-    let mut command = Command::new(program);
+    let path = resolve_executable(program)
+        .ok_or_else(|| anyhow::anyhow!("unable to find executable '{program}'"))?;
+    run_output_with_program(&path, program, cwd, args)
+}
+
+fn run_output_with_program(
+    program_path: &Path,
+    program_label: &str,
+    cwd: Option<&Path>,
+    args: &[String],
+) -> Result<GitCommandOutput> {
+    let mut command = Command::new(program_path);
     if let Some(cwd) = cwd {
-        if program == "git" {
+        if program_label == "git" {
             command.arg("-C").arg(cwd);
         } else {
             command.current_dir(cwd);
@@ -934,7 +1024,7 @@ fn run_output(program: &str, cwd: Option<&Path>, args: &[String]) -> Result<GitC
     command.stdin(Stdio::null());
     let output = command
         .output()
-        .with_context(|| format!("unable to launch {program}"))?;
+        .with_context(|| format!("unable to launch {program_label}"))?;
     Ok(GitCommandOutput {
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
@@ -968,7 +1058,10 @@ fn extract_url(value: &str) -> Option<String> {
     value
         .split_whitespace()
         .find(|part| part.starts_with("https://") || part.starts_with("http://"))
-        .map(|part| part.trim_matches(|ch: char| matches!(ch, ')' | ']' | ',' | '.')).to_string())
+        .map(|part| {
+            part.trim_matches(|ch: char| matches!(ch, ')' | ']' | ',' | '.'))
+                .to_string()
+        })
 }
 
 fn is_not_git_repository_error(message: &str) -> bool {

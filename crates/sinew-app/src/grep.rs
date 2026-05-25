@@ -20,6 +20,7 @@ use tokio::{
 
 use crate::{
     ripgrep::ripgrep_executable,
+    tool_names,
     tool_run::ToolRunResult,
     workspace::{normalize_workspace_relative_path, resolve_workspace_path},
 };
@@ -48,7 +49,7 @@ impl GrepTool {
 
     pub fn descriptor(&self) -> ToolDescriptor {
         ToolDescriptor {
-            name: "Grep".into(),
+            name: tool_names::GREP.into(),
             description: "Search files for text or regex patterns using ripgrep".into(),
             input_schema: json!({
                 "type": "object",
@@ -163,7 +164,7 @@ impl GrepTool {
 
     async fn search(&self, input: Value) -> Result<String> {
         let parsed: GrepInput = serde_json::from_value(input)
-            .map_err(|err| anyhow::anyhow!("invalid Grep input: {err}"))?;
+            .map_err(|err| anyhow::anyhow!("invalid grep input: {err}"))?;
         let pattern = parsed.pattern.trim().to_string();
         if pattern.is_empty() {
             bail!("pattern is required");
@@ -230,7 +231,7 @@ impl GrepTool {
         let offset = config.offset;
         let result = timeout(self.timeout, self.run_ripgrep(config))
             .await
-            .map_err(|_| anyhow::anyhow!("Grep timed out after {}s", self.timeout.as_secs()))??;
+            .map_err(|_| anyhow::anyhow!("grep timed out after {}s", self.timeout.as_secs()))??;
 
         Ok(format_output(limit, offset, output_mode, result))
     }

@@ -15,6 +15,7 @@ pub mod subagent;
 pub mod team;
 mod text;
 pub mod todo;
+pub mod tool_names;
 pub mod tool_run;
 pub mod web;
 pub mod workspace;
@@ -52,6 +53,7 @@ pub use todo::{
     system_prompt_with_todo, todo_list_from_history, ToDoListTool, TodoListState, TodoStatus,
     TodoTask,
 };
+pub use tool_names::{canonical_tool_name, is_tool_name};
 pub use tool_run::{
     checkpoint_from_snapshots, restore_turn_checkpoints, snapshot_workspace_for_checkpoint,
     DiffLine, DiffLineKind, FileChange, FileChangeKind, ToolRunResult, TurnCheckpoint,

@@ -200,7 +200,7 @@ impl TeamTool {
         let scope = runtime
             .scopes
             .get_mut(&self.scope_id)
-            .ok_or_else(|| "no active team found; start one with TeamRun first".to_string())?;
+            .ok_or_else(|| "no active team found; start one with team_run first".to_string())?;
         let session = scope
             .teams
             .get_mut(team_name)

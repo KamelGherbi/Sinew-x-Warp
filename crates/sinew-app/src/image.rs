@@ -20,6 +20,7 @@ use sinew_openai::{Credential, MODEL_ID as OPENAI_RESPONSES_IMAGE_MODEL};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::store::ImageProvider;
+use crate::tool_names;
 use crate::tool_run::{FileChange, FileChangeKind, ToolRunImage, ToolRunResult};
 
 const OPENAI_IMAGES_URL: &str = "https://api.openai.com/v1/images/generations";
@@ -88,7 +89,7 @@ impl CreateImageTool {
     pub fn descriptor(&self) -> ToolDescriptor {
         match self.image_provider {
             ImageProvider::GptImage2 => ToolDescriptor {
-                name: "CreateImage".into(),
+                name: tool_names::CREATE_IMAGE.into(),
                 description: "Use this when the user asks to generate or create a new image. Returns the generated image visually.".into(),
                 input_schema: json!({
                     "type": "object",
@@ -135,7 +136,7 @@ impl CreateImageTool {
                 }),
             },
             ImageProvider::NanoBanana2 => ToolDescriptor {
-                name: "CreateImage".into(),
+                name: tool_names::CREATE_IMAGE.into(),
                 description: "Create images with Nano Banana 2. Use this when the user asks to generate or create a new image. Returns the generated image visually.".into(),
                 input_schema: json!({
                     "type": "object",
@@ -194,7 +195,7 @@ impl CreateImageTool {
 
     async fn create_gpt_image(&self, input: Value) -> Result<ToolRunResult> {
         let parsed: GptImageInput = serde_json::from_value(input)
-            .map_err(|err| anyhow::anyhow!("invalid CreateImage input: {err}"))?;
+            .map_err(|err| anyhow::anyhow!("invalid create_image input: {err}"))?;
         let prompt = parsed.prompt.trim();
         if prompt.is_empty() {
             bail!("prompt is required");
@@ -531,7 +532,7 @@ impl CreateImageTool {
 
     async fn create_nano_banana(&self, input: Value) -> Result<ToolRunResult> {
         let parsed: NanoBananaInput = serde_json::from_value(input)
-            .map_err(|err| anyhow::anyhow!("invalid CreateImage input: {err}"))?;
+            .map_err(|err| anyhow::anyhow!("invalid create_image input: {err}"))?;
         let prompt = parsed.prompt.trim();
         if prompt.is_empty() {
             bail!("prompt is required");
@@ -809,7 +810,7 @@ fn load_openai_api_key(configured: Option<&str>) -> Result<String> {
         .filter(|key| !key.is_empty())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "OpenAI API key is missing. Add it in Settings > Tools before using CreateImage."
+                "OpenAI API key is missing. Add it in Settings > Tools before using create_image."
             )
         })
 }
@@ -832,7 +833,7 @@ fn load_nano_banana_api_key(configured: Option<&str>) -> Result<String> {
         .filter(|key| !key.is_empty())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "Nano Banana 2 API key is missing. Add it in Settings > Tools before using CreateImage."
+                "Nano Banana 2 API key is missing. Add it in Settings > Tools before using create_image."
             )
         })
 }

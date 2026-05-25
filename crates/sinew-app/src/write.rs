@@ -19,7 +19,8 @@ use crate::{
 
 const MAX_WRITE_FILE_BYTES: usize = 2 * 1024 * 1024;
 
-const WRITE_FILE_DESCRIPTION: &str = r#"Use this tool to write files. Put the path before the content"#;
+const WRITE_FILE_DESCRIPTION: &str =
+    r#"Use this tool to write files. Put the path before the content"#;
 
 #[derive(Debug, Clone)]
 pub struct WriteFileTool {
