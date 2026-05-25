@@ -88,6 +88,7 @@ Code map:
 │   │       │   └── tests.rs
 │   │       ├── text.rs
 │   │       ├── todo.rs
+│   │       ├── tool_names.rs
 │   │       ├── tool_run.rs
 │   │       ├── web.rs
 │   │       ├── write.rs
@@ -221,6 +222,7 @@ Code map:
 │   └── src
 │       ├── context.rs
 │       ├── conversations.rs
+│       ├── git.rs
 │       ├── lib.rs
 │       ├── main.rs
 │       ├── models.rs
@@ -245,10 +247,11 @@ Code map:
     │   ├── ConversationList.tsx
     │   ├── EditorPane.tsx
     │   ├── FileTree.tsx
-│   ├── SearchPane.tsx
-│   ├── SettingsPane.tsx
-│   ├── SessionSwitcher.tsx
-│   ├── SinewMark.tsx
+    │   ├── GitPanel.tsx
+    │   ├── SearchPane.tsx
+    │   ├── SettingsPane.tsx
+    │   ├── SessionSwitcher.tsx
+    │   ├── SinewMark.tsx
     │   ├── Splitter.tsx
     │   ├── TerminalPanel.tsx
     │   ├── UpdateBadge.tsx
@@ -276,4 +279,5 @@ Code map:
     │   ├── ipc.ts
     │   ├── language.ts
     │   ├── models.ts
-    │   └── recents.ts
+    │   ├── recents.ts
+    │   └── tools.ts

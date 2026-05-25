@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sinew_core::{ChatMessage, Part, ToolDescriptor};
 
-use crate::tool_run::ToolRunResult;
+use crate::{tool_names, tool_run::ToolRunResult};
 
 const MAX_CHANGES_BYTES: usize = 32 * 1024;
 
@@ -76,7 +76,7 @@ impl TodoListState {
             return None;
         }
 
-        let mut block = String::from("Current ToDoList:\n");
+        let mut block = String::from("Current todo_list:\n");
         if self.tasks.is_empty() {
             block.push_str("- none\n");
         } else {
@@ -90,7 +90,7 @@ impl TodoListState {
             }
         }
         block.push_str(
-            "\nUse ToDoList to update this list. Keep at most one task in_progress. Call ToDoList with `close` when the list is finished.",
+            "\nUse todo_list to update this list. Keep at most one task in_progress. Call todo_list with `close` when the list is finished.",
         );
         Some(block)
     }
@@ -188,14 +188,14 @@ impl ToDoListTool {
 
     pub fn descriptor(&self) -> ToolDescriptor {
         ToolDescriptor {
-            name: "ToDoList".into(),
+            name: tool_names::TODO_LIST.into(),
             description: "Update the current task list with a small line-based patch. Use one call to add, update, delete, or close tasks instead of rewriting the whole list.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "changes": {
                         "type": "string",
-                        "description": "Line-based ToDoList patch. Examples: `+ Read the code`, `~ 1 in_progress`, `~ 1 done`, `- 2`, `close`. Use `pending`, `in_progress`, or `done` for task status."
+                        "description": "Line-based todo_list patch. Examples: `+ Read the code`, `~ 1 in_progress`, `~ 1 done`, `- 2`, `close`. Use `pending`, `in_progress`, or `done` for task status."
                     }
                 },
                 "required": ["changes"],
@@ -208,7 +208,7 @@ impl ToDoListTool {
         let parsed: ToDoListInput = match serde_json::from_value(input) {
             Ok(value) => value,
             Err(err) => {
-                return ToolRunResult::err(format!("invalid ToDoList input: {err}"), Vec::new())
+                return ToolRunResult::err(format!("invalid todo_list input: {err}"), Vec::new())
             }
         };
 

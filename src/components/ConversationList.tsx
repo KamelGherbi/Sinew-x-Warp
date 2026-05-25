@@ -26,10 +26,11 @@ type Props = {
   onDelete: (id: string, workspacePath?: string) => void;
   onArchive: (id: string, workspacePath?: string) => void;
   onCloseProject?: (workspacePath: string) => void;
-  onOpenProject?: () => void;
-  onOpenSessions?: () => void;
 };
 
+// Renders only the body of the conversations list. The parent owns the
+// `sidebar__section` shell and the head (shared with the Git tab), so this
+// component focuses on the project/conversation rows.
 export function ConversationList({
   conversations,
   activeId,
@@ -42,8 +43,6 @@ export function ConversationList({
   onDelete,
   onArchive,
   onCloseProject,
-  onOpenProject,
-  onOpenSessions,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
@@ -87,226 +86,191 @@ export function ConversationList({
   };
 
   return (
-    <div className="sidebar__section" style={{ flex: "1 1 0" }}>
-      <div className="sidebar__head">
-        <span className="sidebar__head-title">
-          <Icon icon="solar:widget-5-bold-duotone" width={16} height={16} />
-          <span>{hasProjectGroups ? "Projects" : "Conversations"}</span>
-        </span>
-        <span className="sidebar__head-actions">
-          {onOpenSessions && (
-            <button
-              className="sidebar__head-btn"
-              onClick={onOpenSessions}
-              title="Sessions"
-            >
-              <Icon icon="solar:clock-circle-linear" width={15} height={15} />
-            </button>
-          )}
-          {onOpenProject && (
-            <button
-              className="sidebar__head-btn"
-              onClick={onOpenProject}
-              title="Open project"
-            >
-              <Icon icon="solar:add-folder-linear" width={15} height={15} />
-            </button>
-          )}
-          <button
-            className="sidebar__head-btn"
-            onClick={() => onCreate()}
-            title="New conversation"
-          >
-            <Icon icon="solar:add-square-linear" width={15} height={15} />
-          </button>
-        </span>
-      </div>
-      <div className="sidebar__body">
-        <div className="conv-list" data-grouped={hasProjectGroups ? "true" : "false"}>
-          {displayProjects.length === 0 && (
-            <div className="conv-empty">No projects open.</div>
-          )}
-          {displayProjects.map((project) => {
-            const isCollapsed = collapsedProjects.has(project.key);
-            const streamingCount = project.conversations.reduce(
-              (count, conv) => count + (project.streamingIds.has(conv.id) ? 1 : 0),
-              0,
-            );
-            return (
-              <div className="conv-project" key={project.key}>
-                {hasProjectGroups && (
-                  <div className="conv-project__head">
+    <div className="sidebar__body">
+      <div className="conv-list" data-grouped={hasProjectGroups ? "true" : "false"}>
+        {displayProjects.length === 0 && (
+          <div className="conv-empty">No projects open.</div>
+        )}
+        {displayProjects.map((project) => {
+          const isCollapsed = collapsedProjects.has(project.key);
+          const streamingCount = project.conversations.reduce(
+            (count, conv) => count + (project.streamingIds.has(conv.id) ? 1 : 0),
+            0,
+          );
+          return (
+            <div className="conv-project" key={project.key}>
+              {hasProjectGroups && (
+                <div className="conv-project__head">
+                  <button
+                    type="button"
+                    className="conv-project__toggle"
+                    onClick={() => toggleProject(project.key)}
+                    title={project.path}
+                  >
+                    <Icon
+                      icon={
+                        isCollapsed
+                          ? "solar:alt-arrow-right-linear"
+                          : "solar:alt-arrow-down-linear"
+                      }
+                      width={13}
+                      height={13}
+                    />
+                    <span className="conv-project__name">{project.name}</span>
+                  </button>
+                  <span className="conv-project__meta">
+                    {streamingCount > 0 && (
+                      <span className="conv-project__streaming" title="Streaming conversations">
+                        {streamingCount}
+                      </span>
+                    )}
                     <button
                       type="button"
-                      className="conv-project__toggle"
-                      onClick={() => toggleProject(project.key)}
-                      title={project.path}
+                      className="conv-project__action"
+                      title={`New conversation in ${project.name}`}
+                      aria-label={`New conversation in ${project.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onCreate(project.path);
+                      }}
                     >
-                      <Icon
-                        icon={
-                          isCollapsed
-                            ? "solar:alt-arrow-right-linear"
-                            : "solar:alt-arrow-down-linear"
-                        }
-                        width={13}
-                        height={13}
-                      />
-                      <span className="conv-project__name">{project.name}</span>
+                      <Icon icon="solar:add-square-linear" width={14} height={14} />
                     </button>
-                    <span className="conv-project__meta">
-                      {streamingCount > 0 && (
-                        <span className="conv-project__streaming" title="Streaming conversations">
-                          {streamingCount}
-                        </span>
-                      )}
+                    {onCloseProject && (
                       <button
                         type="button"
-                        className="conv-project__action"
-                        title={`New conversation in ${project.name}`}
-                        aria-label={`New conversation in ${project.name}`}
+                        className="conv-project__action conv-project__action--danger"
+                        title={
+                          streamingCount > 0
+                            ? "Stop running conversations before closing this project"
+                            : `Close ${project.name}`
+                        }
+                        aria-label={`Close ${project.name}`}
+                        disabled={streamingCount > 0}
                         onClick={(event) => {
                           event.stopPropagation();
-                          onCreate(project.path);
+                          if (streamingCount === 0) onCloseProject(project.path);
                         }}
                       >
-                        <Icon icon="solar:add-square-linear" width={14} height={14} />
+                        <Icon icon="solar:close-circle-linear" width={14} height={14} />
                       </button>
-                      {onCloseProject && (
-                        <button
-                          type="button"
-                          className="conv-project__action conv-project__action--danger"
-                          title={
-                            streamingCount > 0
-                              ? "Stop running conversations before closing this project"
-                              : `Close ${project.name}`
+                    )}
+                    <span>{project.conversations.length}</span>
+                  </span>
+                </div>
+              )}
+              {!isCollapsed && project.conversations.length === 0 && (
+                <div className="conv-empty">No conversations yet.</div>
+              )}
+              {!isCollapsed &&
+                project.conversations.map((conv) => {
+                  const rowKey = conv.sessionKey ?? `${project.path}::${conv.id}`;
+                  const isEditing = editingId === rowKey;
+                  const isActive = activeSessionKey
+                    ? activeSessionKey === rowKey
+                    : activeId === conv.id;
+                  const isStreaming = project.streamingIds.has(conv.id);
+                  return (
+                    <div
+                      key={rowKey}
+                      className="conv-row"
+                      data-active={isActive ? "true" : "false"}
+                      data-streaming={isStreaming ? "true" : "false"}
+                      data-grouped={hasProjectGroups ? "true" : "false"}
+                      onClick={() =>
+                        !isEditing && onSelect(conv.id, project.path, conv.sessionKey)
+                      }
+                    >
+                      <span className="conv-row__icon">
+                        {isStreaming ? (
+                          <span className="conv-row__spinner" aria-label="Streaming" />
+                        ) : (
+                          <Icon
+                            icon={
+                              isActive
+                                ? "solar:chat-round-dots-bold"
+                                : "solar:chat-round-dots-linear"
+                            }
+                            width={15}
+                            height={15}
+                          />
+                        )}
+                      </span>
+                      <span
+                        ref={isEditing ? editRef : undefined}
+                        className="conv-row__title"
+                        contentEditable={isEditing}
+                        suppressContentEditableWarning
+                        onKeyDown={(event) => {
+                          if (!isEditing) return;
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            commitRename(conv.id, project.path);
+                          } else if (event.key === "Escape") {
+                            setEditingId(null);
                           }
-                          aria-label={`Close ${project.name}`}
-                          disabled={streamingCount > 0}
+                        }}
+                        onBlur={() => {
+                          if (isEditing) commitRename(conv.id, project.path);
+                        }}
+                      >
+                        {conv.title || "Untitled"}
+                      </span>
+                      <span className="conv-row__actions">
+                        <button
+                          className="conv-row__btn"
+                          title="Archive"
                           onClick={(event) => {
                             event.stopPropagation();
-                            if (streamingCount === 0) onCloseProject(project.path);
+                            onArchive(conv.id, project.path);
                           }}
                         >
-                          <Icon icon="solar:close-circle-linear" width={14} height={14} />
+                          <Icon icon="solar:archive-linear" width={13} height={13} />
                         </button>
-                      )}
-                      <span>{project.conversations.length}</span>
-                    </span>
-                  </div>
-                )}
-                {!isCollapsed && project.conversations.length === 0 && (
-                  <div className="conv-empty">No conversations yet.</div>
-                )}
-                {!isCollapsed &&
-                  project.conversations.map((conv) => {
-                    const rowKey = conv.sessionKey ?? `${project.path}::${conv.id}`;
-                    const isEditing = editingId === rowKey;
-                    const isActive = activeSessionKey
-                      ? activeSessionKey === rowKey
-                      : activeId === conv.id;
-                    const isStreaming = project.streamingIds.has(conv.id);
-                    return (
-                      <div
-                        key={rowKey}
-                        className="conv-row"
-                        data-active={isActive ? "true" : "false"}
-                        data-streaming={isStreaming ? "true" : "false"}
-                        data-grouped={hasProjectGroups ? "true" : "false"}
-                        onClick={() =>
-                          !isEditing && onSelect(conv.id, project.path, conv.sessionKey)
-                        }
-                      >
-                        <span className="conv-row__icon">
-                          {isStreaming ? (
-                            <span className="conv-row__spinner" aria-label="Streaming" />
-                          ) : (
-                            <Icon
-                              icon={
-                                isActive
-                                  ? "solar:chat-round-dots-bold"
-                                  : "solar:chat-round-dots-linear"
+                        <button
+                          className="conv-row__btn"
+                          title="Rename"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setEditingId(rowKey);
+                            queueMicrotask(() => {
+                              const node = editRef.current;
+                              if (node) {
+                                node.focus();
+                                const sel = window.getSelection();
+                                const range = document.createRange();
+                                range.selectNodeContents(node);
+                                sel?.removeAllRanges();
+                                sel?.addRange(range);
                               }
-                              width={15}
-                              height={15}
-                            />
-                          )}
-                        </span>
-                        <span
-                          ref={isEditing ? editRef : undefined}
-                          className="conv-row__title"
-                          contentEditable={isEditing}
-                          suppressContentEditableWarning
-                          onKeyDown={(event) => {
-                            if (!isEditing) return;
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              commitRename(conv.id, project.path);
-                            } else if (event.key === "Escape") {
-                              setEditingId(null);
+                            });
+                          }}
+                        >
+                          <Icon icon="solar:pen-linear" width={13} height={13} />
+                        </button>
+                        <button
+                          className="conv-row__btn conv-row__btn--danger"
+                          title="Delete"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (confirm("Delete this conversation?")) {
+                              onDelete(conv.id, project.path);
                             }
                           }}
-                          onBlur={() => {
-                            if (isEditing) commitRename(conv.id, project.path);
-                          }}
                         >
-                          {conv.title || "Untitled"}
-                        </span>
-                        <span className="conv-row__actions">
-                          <button
-                            className="conv-row__btn"
-                            title="Archive"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onArchive(conv.id, project.path);
-                            }}
-                          >
-                            <Icon icon="solar:archive-linear" width={13} height={13} />
-                          </button>
-                          <button
-                            className="conv-row__btn"
-                            title="Rename"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setEditingId(rowKey);
-                              queueMicrotask(() => {
-                                const node = editRef.current;
-                                if (node) {
-                                  node.focus();
-                                  const sel = window.getSelection();
-                                  const range = document.createRange();
-                                  range.selectNodeContents(node);
-                                  sel?.removeAllRanges();
-                                  sel?.addRange(range);
-                                }
-                              });
-                            }}
-                          >
-                            <Icon icon="solar:pen-linear" width={13} height={13} />
-                          </button>
-                          <button
-                            className="conv-row__btn conv-row__btn--danger"
-                            title="Delete"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (confirm("Delete this conversation?")) {
-                                onDelete(conv.id, project.path);
-                              }
-                            }}
-                          >
-                            <Icon
-                              icon="solar:trash-bin-minimalistic-linear"
-                              width={13}
-                              height={13}
-                            />
-                          </button>
-                        </span>
-                      </div>
-                    );
-                  })}
-              </div>
-            );
-          })}
-        </div>
+                          <Icon
+                            icon="solar:trash-bin-minimalistic-linear"
+                            width={13}
+                            height={13}
+                          />
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

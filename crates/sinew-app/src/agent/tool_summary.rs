@@ -1,9 +1,10 @@
 use serde_json::Value;
 
-use crate::bash::active_shell_display_name;
+use crate::{bash::active_shell_display_name, tool_names};
 
 pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
-    if name == "bash" {
+    let name = tool_names::canonical_tool_name(name);
+    if name == tool_names::BASH {
         if let Some(desc) = input
             .get("description")
             .and_then(|v| v.as_str())
@@ -16,7 +17,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
             return command.to_string();
         }
     }
-    if name == "bash_input" {
+    if name == tool_names::BASH_INPUT {
         if let Some(session_id) = input.get("session_id").and_then(|value| value.as_u64()) {
             let shell = active_shell_display_name();
             if input
@@ -38,12 +39,12 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
             return format!("Poll {shell} session {session_id}");
         }
     }
-    if name == "read" {
+    if name == tool_names::READ {
         if let Some(path) = input.get("path").and_then(|value| value.as_str()) {
             return format!("Read {path}");
         }
     }
-    if name == "Grep" {
+    if name == tool_names::GREP {
         let scope = input
             .get("path")
             .and_then(grep_path_scope)
@@ -59,7 +60,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
             .unwrap_or_else(|| "workspace".to_string());
         return format!("Grep in {scope}");
     }
-    if name == "Glob" {
+    if name == tool_names::GLOB {
         let pattern = input
             .get("pattern")
             .and_then(|value| value.as_str())
@@ -74,7 +75,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
             .unwrap_or("workspace");
         return format!("Glob {pattern} in {scope}");
     }
-    if name == "edit_file" {
+    if name == tool_names::EDIT_FILE {
         if let Some(groups) = edit_file_groups(input) {
             let file_count = groups.len();
             let replacement_count = groups
@@ -108,13 +109,13 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
         }
         return "Edit file".to_string();
     }
-    if name == "write_file" {
+    if name == tool_names::WRITE_FILE {
         if let Some(path) = input.get("path").and_then(Value::as_str) {
             return format!("Write {path}");
         }
         return "Write file".to_string();
     }
-    if name == "clean_context" {
+    if name == tool_names::CLEAN_CONTEXT {
         let count = input
             .get("tool_call_ids")
             .or_else(|| input.get("ids"))
@@ -127,10 +128,10 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
             format!("Clean context · {count} results")
         };
     }
-    if name == "update_goal" {
+    if name == tool_names::UPDATE_GOAL {
         return "Goal finished".to_string();
     }
-    if name == "CreateImage" {
+    if name == tool_names::CREATE_IMAGE {
         if let Some(prompt) = input
             .get("prompt")
             .and_then(|value| value.as_str())
@@ -145,7 +146,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
         }
         return "Create image".to_string();
     }
-    if name == "ToDoList" {
+    if name == tool_names::TODO_LIST {
         if let Some(changes) = input
             .get("changes")
             .and_then(|value| value.as_str())
@@ -153,12 +154,12 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
             .filter(|value| !value.is_empty())
         {
             if changes.eq_ignore_ascii_case("close") || changes.eq_ignore_ascii_case("clear") {
-                return "Close ToDoList".to_string();
+                return "Close todo_list".to_string();
             }
         }
-        return "Update ToDoList".to_string();
+        return "Update todo_list".to_string();
     }
-    if name == "Question" {
+    if name == tool_names::QUESTION {
         if let Some(count) = input
             .get("questions")
             .and_then(|value| value.as_array())
@@ -180,7 +181,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
         }
         return "Question".to_string();
     }
-    if name == "LoadMcpTool" {
+    if name == tool_names::LOAD_MCP_TOOL {
         let server = input
             .get("server")
             .or_else(|| input.get("serverName"))
@@ -201,7 +202,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
         }
         return "Load MCP tool".to_string();
     }
-    if name == "skill" {
+    if name == tool_names::SKILL {
         if let Some(skill) = input
             .get("name")
             .and_then(|value| value.as_str())
@@ -223,7 +224,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
         }
         return "Sub-agent".to_string();
     }
-    if name == "TeamRun" {
+    if name == tool_names::TEAM_RUN {
         let team = input
             .get("team_name")
             .and_then(|value| value.as_str())
@@ -248,7 +249,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
             _ => "Agent Swarm".to_string(),
         };
     }
-    if name == "TeamCreate" {
+    if name == tool_names::TEAM_CREATE {
         if let Some(team) = input
             .get("team_name")
             .and_then(|value| value.as_str())
@@ -259,7 +260,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
         }
         return "Create Agent Swarm".to_string();
     }
-    if name == "Agent" {
+    if name == tool_names::AGENT {
         let teammate = input
             .get("name")
             .and_then(|value| value.as_str())
@@ -277,7 +278,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
             _ => "Agent teammate".to_string(),
         };
     }
-    if name == "SendMessage" {
+    if name == tool_names::SEND_MESSAGE {
         if let Some(to) = input
             .get("to")
             .and_then(|value| value.as_str())
@@ -288,7 +289,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
         }
         return "Send Agent Swarm message".to_string();
     }
-    if name == "TaskCreate" {
+    if name == tool_names::TASK_CREATE {
         if let Some(subject) = input
             .get("subject")
             .and_then(|value| value.as_str())
@@ -299,7 +300,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
         }
         return "Create task".to_string();
     }
-    if name == "TaskList" {
+    if name == tool_names::TASK_LIST {
         let action = input
             .get("action")
             .and_then(|value| value.as_str())
@@ -328,7 +329,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
             _ => "Task list".to_string(),
         };
     }
-    if name == "TaskUpdate" {
+    if name == tool_names::TASK_UPDATE {
         let task_id = input
             .get("taskId")
             .or_else(|| input.get("id"))
@@ -349,13 +350,13 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
             _ => "Update task".to_string(),
         };
     }
-    if name == "TeamStatus" {
+    if name == tool_names::TEAM_STATUS {
         return "Agent Swarm status".to_string();
     }
-    if name == "TeamStop" {
+    if name == tool_names::TEAM_STOP {
         return "Stop Agent Swarm".to_string();
     }
-    if name == "WebSearch" {
+    if name == tool_names::WEB_SEARCH {
         if let Some(q) = input
             .get("q")
             .or_else(|| input.get("query"))
@@ -367,7 +368,7 @@ pub(super) fn summarize_tool(name: &str, input: &Value) -> String {
         }
         return "Search web".to_string();
     }
-    if name == "WebFetch" {
+    if name == tool_names::WEB_FETCH {
         if let Some(url) = input
             .get("url")
             .and_then(|value| value.as_str())

@@ -12,6 +12,7 @@ use serde_json::{json, Map, Value};
 use sinew_core::ToolDescriptor;
 
 use crate::store::WebSearchProvider;
+use crate::tool_names;
 use crate::tool_run::ToolRunResult;
 
 const LINKUP_SEARCH_URL: &str = "https://api.linkup.so/v1/search";
@@ -58,7 +59,7 @@ impl WebSearchTool {
     pub fn descriptor(&self) -> ToolDescriptor {
         match self.provider {
             WebSearchProvider::LinkUp => ToolDescriptor {
-                name: "WebSearch".into(),
+                name: tool_names::WEB_SEARCH.into(),
                 description: "Use this for web search, documentation check or fresh information."
                     .into(),
                 input_schema: json!({
@@ -79,7 +80,7 @@ impl WebSearchTool {
                 }),
             },
             WebSearchProvider::Classic => ToolDescriptor {
-                name: "WebSearch".into(),
+                name: tool_names::WEB_SEARCH.into(),
                 description: "Search the web using Exa AI. Use this for current information, docs, recent data, or information beyond the model knowledge cutoff.".into(),
                 input_schema: json!({
                     "type": "object",
@@ -120,7 +121,7 @@ impl WebSearchTool {
 
     async fn search_linkup(&self, input: Value) -> Result<String> {
         let parsed: WebSearchInput = serde_json::from_value(input)
-            .map_err(|err| anyhow::anyhow!("invalid WebSearch input: {err}"))?;
+            .map_err(|err| anyhow::anyhow!("invalid web_search input: {err}"))?;
         let q = parsed.q.trim();
         if q.is_empty() {
             bail!("q is required");
@@ -166,7 +167,7 @@ impl WebSearchTool {
 
     async fn search_classic(&self, input: Value) -> Result<String> {
         let parsed: ExaSearchInput = serde_json::from_value(input)
-            .map_err(|err| anyhow::anyhow!("invalid WebSearch input: {err}"))?;
+            .map_err(|err| anyhow::anyhow!("invalid web_search input: {err}"))?;
         let query = parsed.query.trim();
         if query.is_empty() {
             bail!("query is required");
@@ -181,12 +182,12 @@ impl WebSearchTool {
             .json(&body)
             .send()
             .await
-            .context("Exa WebSearch request failed")?;
+            .context("Exa web_search request failed")?;
         let status = response.status();
         let (body, truncated) = collect_response_text(response, WEBSEARCH_RESPONSE_LIMIT).await?;
         if !status.is_success() {
             bail!(
-                "Exa WebSearch request failed ({status}): {}",
+                "Exa web_search request failed ({status}): {}",
                 clip_chars(&body, 2_000).0
             );
         }
@@ -213,7 +214,7 @@ fn load_linkup_api_key(configured: Option<&str>) -> Result<String> {
         .filter(|key| !key.is_empty())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "LinkUp API key is missing. Add it in Settings > Tools before using WebSearch."
+                "LinkUp API key is missing. Add it in Settings > Tools before using web_search."
             )
         })
 }
@@ -260,8 +261,8 @@ impl WebFetchTool {
 
     pub fn descriptor(&self) -> ToolDescriptor {
         ToolDescriptor {
-            name: "WebFetch".into(),
-            description: "Fetch a specific URL, usually a source returned by WebSearch, and return readable text for closer inspection.".into(),
+            name: tool_names::WEB_FETCH.into(),
+            description: "Fetch a specific URL, usually a source returned by web_search, and return readable text for closer inspection.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -285,7 +286,7 @@ impl WebFetchTool {
 
     async fn fetch(&self, input: Value) -> Result<String> {
         let parsed: WebFetchInput = serde_json::from_value(input)
-            .map_err(|err| anyhow::anyhow!("invalid WebFetch input: {err}"))?;
+            .map_err(|err| anyhow::anyhow!("invalid web_fetch input: {err}"))?;
         let url = parse_http_url(&parsed.url)?;
 
         let response = self
@@ -467,7 +468,7 @@ fn parse_exa_web_search_response(body: &str) -> Result<String> {
         bail!("No search results found. Please try a different query.");
     }
 
-    let value: Value = serde_json::from_str(body).context("invalid Exa WebSearch response")?;
+    let value: Value = serde_json::from_str(body).context("invalid Exa web_search response")?;
     exa_result_text(&value)
         .ok_or_else(|| anyhow::anyhow!("No search results found. Please try a different query."))
 }
@@ -518,7 +519,7 @@ fn parse_sse_json_events(body: &str) -> Result<Vec<Value>> {
     flush_sse_json_event(&mut current, &mut events)?;
 
     if events.is_empty() {
-        bail!("Exa WebSearch returned an empty stream");
+        bail!("Exa web_search returned an empty stream");
     }
     Ok(events)
 }
@@ -528,7 +529,7 @@ fn flush_sse_json_event(current: &mut String, events: &mut Vec<Value>) -> Result
     if !payload.is_empty() {
         events.push(
             serde_json::from_str(payload)
-                .with_context(|| format!("invalid Exa WebSearch stream event: {payload}"))?,
+                .with_context(|| format!("invalid Exa web_search stream event: {payload}"))?,
         );
     }
     current.clear();

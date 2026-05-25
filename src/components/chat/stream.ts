@@ -9,6 +9,7 @@ import type {
   ToolResultImage,
   ToolResultPart,
 } from "../../types";
+import { canonicalToolName, isToolName } from "../../lib/tools";
 
 const MIN_VISIBLE_TURN_DURATION_MS = 90_000;
 const CLEANED_TOOL_OUTPUT =
@@ -385,8 +386,8 @@ function blocksFromHistory(history: ChatMessage[]): ChatBlock[] {
             output: result?.content ?? "Tool call interrupted before a result was saved.",
             isError: result?.is_error ?? true,
             cleaned: isToolResultCleaned(result),
-            answered: tc.name === "Question" ? !!result && !result.is_error : undefined,
-            answer: tc.name === "Question" ? questionAnswerFromResult(result) : undefined,
+            answered: isToolName(tc.name, "question") ? !!result && !result.is_error : undefined,
+            answer: isToolName(tc.name, "question") ? questionAnswerFromResult(result) : undefined,
             fileChanges,
             images: result?.images,
             meta: result?.meta,
@@ -549,9 +550,9 @@ function subAgentFromToolResult(
     meta && typeof meta === "object"
       ? (meta as Record<string, unknown>).subagent
       : null;
-  if (!toolName.startsWith("subagent_") && !raw) return undefined;
+  if (!isSubAgentLikeTool(toolName) && !raw) return undefined;
   if (!raw || typeof raw !== "object") {
-    return { id, name: "Sub-agent" };
+    return { id, name: isToolName(toolName, "agent") ? "Agent" : "Sub-agent" };
   }
   const record = raw as Record<string, unknown>;
   return {
@@ -578,14 +579,15 @@ function summaryFromInput(
   input: unknown,
   meta?: Record<string, unknown> | null,
 ): string | undefined {
+  const canonicalName = canonicalToolName(name);
   if (name.startsWith("mcp__")) {
     return mcpSummaryFromMeta(meta) ?? mcpSummaryFromName(name);
   }
-  if (name === "bash" && input && typeof input === "object") {
+  if (canonicalName === "bash" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     if (typeof record.command === "string") return record.command;
   }
-  if (name === "bash_input" && input && typeof input === "object") {
+  if (canonicalName === "bash_input" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     const session = typeof record.session_id === "number" ? record.session_id : null;
     if (record.kill === true && session !== null) return `Stop shell session ${session}`;
@@ -594,27 +596,27 @@ function summaryFromInput(
     }
     if (session !== null) return `Poll shell session ${session}`;
   }
-  if (name === "read" && input && typeof input === "object") {
+  if (canonicalName === "read" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     if (typeof record.path === "string") return `Read ${record.path}`;
   }
-  if (name === "edit_file") {
+  if (canonicalName === "edit_file") {
     return editFileSummary(input);
   }
-  if (name === "write_file" && input && typeof input === "object") {
+  if (canonicalName === "write_file" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     if (typeof record.path === "string" && record.path.trim()) {
       return `Write ${record.path.trim()}`;
     }
     return "Write file";
   }
-  if (name === "clean_context") {
+  if (canonicalName === "clean_context") {
     return "Clean context";
   }
-  if (name === "context_compaction") {
+  if (canonicalName === "context_compaction") {
     return "Context compacted";
   }
-  if (name === "CreateImage" && input && typeof input === "object") {
+  if (canonicalName === "create_image" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     if (typeof record.prompt === "string" && record.prompt.trim()) {
       const prompt = record.prompt.trim();
@@ -622,19 +624,19 @@ function summaryFromInput(
     }
     return "Create image";
   }
-  if (name === "ToDoList") {
+  if (canonicalName === "todo_list") {
     if (input && typeof input === "object") {
       const record = input as Record<string, unknown>;
       if (
         typeof record.changes === "string" &&
         /^(close|clear|reset)\s*$/i.test(record.changes.trim())
       ) {
-        return "Close ToDoList";
+        return "Close todo_list";
       }
     }
-    return "Update ToDoList";
+    return "Update todo_list";
   }
-  if (name === "Question" && input && typeof input === "object") {
+  if (canonicalName === "question" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     if (Array.isArray(record.questions)) {
       const count = record.questions.length;
@@ -645,7 +647,7 @@ function summaryFromInput(
     }
     return "Question";
   }
-  if (name === "skill" && input && typeof input === "object") {
+  if (canonicalName === "skill" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     if (typeof record.name === "string" && record.name.trim()) {
       return `Skill : ${record.name.trim()}`;
@@ -659,7 +661,7 @@ function summaryFromInput(
     }
     return "Sub-agent";
   }
-  if (name === "TeamRun" && input && typeof input === "object") {
+  if (canonicalName === "team_run" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     const agent = typeof record.agent === "string" ? record.agent.trim() : "";
     const objective = typeof record.objective === "string" ? record.objective.trim() : "";
@@ -667,14 +669,14 @@ function summaryFromInput(
     if (objective) return `Agent Swarm: ${objective}`;
     return "Agent Swarm";
   }
-  if (name === "TeamCreate" && input && typeof input === "object") {
+  if (canonicalName === "team_create" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     if (typeof record.team_name === "string" && record.team_name.trim()) {
       return `Team: ${record.team_name.trim()}`;
     }
     return "Create team";
   }
-  if (name === "Agent" && input && typeof input === "object") {
+  if (canonicalName === "agent" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     const teammate = typeof record.name === "string" ? record.name.trim() : "";
     const task =
@@ -687,22 +689,22 @@ function summaryFromInput(
     if (teammate) return `Agent: @${teammate}`;
     return "Agent teammate";
   }
-  if (name === "SendMessage" && input && typeof input === "object") {
+  if (canonicalName === "send_message" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     if (typeof record.to === "string" && record.to.trim()) {
       return `Message: ${record.to.trim()}`;
     }
     return "Send team message";
   }
-  if (name === "TaskCreate" && input && typeof input === "object") {
+  if (canonicalName === "task_create" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     if (typeof record.subject === "string" && record.subject.trim()) {
       return `Task: ${record.subject.trim()}`;
     }
     return "Create task";
   }
-  if (name === "TaskList") return "Task list";
-  if (name === "TaskUpdate" && input && typeof input === "object") {
+  if (canonicalName === "task_list") return "Task list";
+  if (canonicalName === "task_update" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     const taskId =
       typeof record.taskId === "string" || typeof record.taskId === "number"
@@ -715,9 +717,9 @@ function summaryFromInput(
     if (taskId) return `Task: #${taskId}`;
     return "Update task";
   }
-  if (name === "TeamStatus") return "Team status";
-  if (name === "TeamStop") return "Stop team";
-  if (name === "LoadMcpTool" && input && typeof input === "object") {
+  if (canonicalName === "team_status") return "Team status";
+  if (canonicalName === "team_stop") return "Stop team";
+  if (canonicalName === "load_mcp_tool" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     const server =
       typeof record.server === "string" ? mcpServerLabel(record.server) : "";
@@ -730,13 +732,13 @@ function summaryFromInput(
     if (server && tool) return `Load ${server} · ${tool}`;
     return "Load MCP tool";
   }
-  if (name === "WebSearch" && input && typeof input === "object") {
+  if (canonicalName === "web_search" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     const q = typeof record.q === "string" ? record.q : record.query;
     if (typeof q === "string" && q.trim()) return `Search web: ${q.trim()}`;
     return "Search web";
   }
-  if (name === "WebFetch" && input && typeof input === "object") {
+  if (canonicalName === "web_fetch" && input && typeof input === "object") {
     const record = input as Record<string, unknown>;
     if (typeof record.url === "string" && record.url.trim()) return `Fetch ${record.url.trim()}`;
     return "Fetch URL";
@@ -795,35 +797,36 @@ function genericMcpLabel(value: string): string {
 }
 
 function pendingSummary(name: string): string | undefined {
-  if (name === "bash") return "Running command";
-  if (name === "bash_input") return "Interacting with command";
-  if (name === "edit_file") return "Preparing edit";
-  if (name === "write_file") return "Preparing write";
-  if (name === "clean_context") return "Cleaning context";
-  if (name === "context_compaction") return "Compacting context";
-  if (name === "update_goal") return "Finishing goal";
-  if (name === "ToDoList") return "Updating ToDoList";
-  if (name === "Question") return "Preparing question";
-  if (name === "LoadMcpTool") return "Loading MCP tool";
-  if (name === "skill") return "Loading skill";
-  if (name === "WebSearch") return "Preparing web search";
-  if (name === "WebFetch") return "Preparing web fetch";
-  if (name === "CreateImage") return "Creating image";
+  const canonicalName = canonicalToolName(name);
+  if (canonicalName === "bash") return "Running command";
+  if (canonicalName === "bash_input") return "Interacting with command";
+  if (canonicalName === "edit_file") return "Preparing edit";
+  if (canonicalName === "write_file") return "Preparing write";
+  if (canonicalName === "clean_context") return "Cleaning context";
+  if (canonicalName === "context_compaction") return "Compacting context";
+  if (canonicalName === "update_goal") return "Finishing goal";
+  if (canonicalName === "todo_list") return "Updating todo_list";
+  if (canonicalName === "question") return "Preparing question";
+  if (canonicalName === "load_mcp_tool") return "Loading MCP tool";
+  if (canonicalName === "skill") return "Loading skill";
+  if (canonicalName === "web_search") return "Preparing web search";
+  if (canonicalName === "web_fetch") return "Preparing web fetch";
+  if (canonicalName === "create_image") return "Creating image";
   if (name.startsWith("subagent_")) return "Starting sub-agent";
-  if (name === "TeamRun") return "Starting Agent Swarm";
-  if (name === "TeamCreate") return "Creating team";
-  if (name === "Agent") return "Starting teammate";
-  if (name === "SendMessage") return "Sending team message";
-  if (name === "TaskCreate") return "Creating task";
-  if (name === "TaskList") return "Checking tasks";
-  if (name === "TaskUpdate") return "Updating task";
-  if (name === "TeamStatus") return "Checking team";
-  if (name === "TeamStop") return "Stopping team";
+  if (canonicalName === "team_run") return "Starting Agent Swarm";
+  if (canonicalName === "team_create") return "Creating team";
+  if (canonicalName === "agent") return "Starting teammate";
+  if (canonicalName === "send_message") return "Sending team message";
+  if (canonicalName === "task_create") return "Creating task";
+  if (canonicalName === "task_list") return "Checking tasks";
+  if (canonicalName === "task_update") return "Updating task";
+  if (canonicalName === "team_status") return "Checking team";
+  if (canonicalName === "team_stop") return "Stopping team";
   return undefined;
 }
 
 function isSubAgentLikeTool(name: string): boolean {
-  return name.startsWith("subagent_") || name === "Agent";
+  return name.startsWith("subagent_") || isToolName(name, "agent");
 }
 
 function subAgentNameFromSummary(summary: string): string | null {
@@ -859,7 +862,7 @@ function displayToolInput(name: string, input: unknown): unknown {
   }
   const record = input as Record<string, unknown>;
   const cleaned = omitInternalTeamFields(record);
-  if (name !== "TeamRun") return cleaned;
+  if (!isToolName(name, "team_run")) return cleaned;
   const agent = typeof record.agent === "string" ? record.agent.trim() : "";
   if (!agent) return compactTeamRunInput(cleaned);
   return { agent };
@@ -1210,9 +1213,9 @@ export function applyEvent(
         status: "running",
         hidden: event.name === "bash_input" ? true : undefined,
         summary: pendingSummary(event.name),
-        answered: event.name === "Question" ? false : undefined,
+        answered: isToolName(event.name, "question") ? false : undefined,
         subAgent: isSubAgentLikeTool(event.name)
-          ? { id: event.id, name: event.name === "Agent" ? "Agent" : "Sub-agent" }
+          ? { id: event.id, name: isToolName(event.name, "agent") ? "Agent" : "Sub-agent" }
           : undefined,
       });
       return withStreamPhase(state, "tooling", { blocks: next });
@@ -1437,7 +1440,7 @@ export function applyEvent(
             !event.is_error &&
             bashSessionIdFromOutput(event.output) !== null;
           const questionAnswered =
-            block.name === "Question" ? !event.is_error : block.answered;
+            isToolName(block.name, "question") ? !event.is_error : block.answered;
           return {
             ...block,
             hidden: false,
@@ -1451,7 +1454,7 @@ export function applyEvent(
             isError: event.is_error,
             answered: questionAnswered,
             answer:
-              block.name === "Question"
+              isToolName(block.name, "question")
                 ? questionAnswerFromMeta(event.meta)
                 : block.answer,
             fileChanges: hasFileChanges ? event.file_changes : block.fileChanges,

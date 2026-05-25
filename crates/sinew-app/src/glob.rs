@@ -16,6 +16,7 @@ use tokio::{
 
 use crate::{
     ripgrep::ripgrep_executable,
+    tool_names,
     tool_run::ToolRunResult,
     workspace::{normalize_workspace_relative_path, resolve_workspace_path},
 };
@@ -42,7 +43,7 @@ impl GlobTool {
 
     pub fn descriptor(&self) -> ToolDescriptor {
         ToolDescriptor {
-            name: "Glob".into(),
+            name: tool_names::GLOB.into(),
             description: "Find workspace files by glob pattern.".into(),
             input_schema: json!({
                 "type": "object",
@@ -77,7 +78,7 @@ impl GlobTool {
 
     async fn find(&self, input: Value) -> Result<String> {
         let parsed: GlobInput = serde_json::from_value(input)
-            .map_err(|err| anyhow::anyhow!("invalid Glob input: {err}"))?;
+            .map_err(|err| anyhow::anyhow!("invalid glob input: {err}"))?;
         let pattern = parsed.pattern.trim();
         if pattern.is_empty() {
             bail!("pattern is required");
@@ -97,7 +98,13 @@ impl GlobTool {
             self.run_ripgrep_files(pattern, &target.arg, limit),
         )
         .await
-        .map_err(|_| anyhow::anyhow!("Glob timed out after {}s", self.timeout.as_secs()))??;
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "{} timed out after {}s",
+                tool_names::GLOB,
+                self.timeout.as_secs()
+            )
+        })??;
 
         Ok(format_output(result))
     }

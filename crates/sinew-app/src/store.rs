@@ -18,6 +18,7 @@ use crate::mcp::{with_default_mcp_servers, McpSettings};
 use crate::skill::SkillSettings;
 use crate::subagent::{with_default_sub_agents, SubAgentSettings};
 use crate::todo::TodoListState;
+use crate::tool_names;
 use crate::tool_run::TurnCheckpoint;
 use crate::workspace::{workspace_info, WorkspaceInfo};
 
@@ -336,7 +337,7 @@ impl ToolSettings {
             .tools
             .into_iter()
             .filter_map(|mut tool| {
-                tool.name = tool.name.trim().to_string();
+                tool.name = tool_names::canonical_tool_name(tool.name.trim()).to_string();
                 if tool.name.is_empty()
                     || HIDDEN_TOOL_SETTING_NAMES.contains(&tool.name.as_str())
                     || !seen.insert(tool.name.clone())
@@ -360,10 +361,14 @@ impl ToolSettings {
             .collect::<HashMap<_, _>>();
 
         for tool in &mut self.tools {
-            let name = tool.name.trim();
-            if let Some(default_description) = defaults.get(name).copied().or_else(|| {
-                (!tool.default_description.is_empty()).then_some(tool.default_description.as_str())
-            }) {
+            let canonical_name = tool_names::canonical_tool_name(tool.name.trim()).to_string();
+            tool.name = canonical_name.clone();
+            if let Some(default_description) =
+                defaults.get(canonical_name.as_str()).copied().or_else(|| {
+                    (!tool.default_description.is_empty())
+                        .then_some(tool.default_description.as_str())
+                })
+            {
                 tool.description_override = tool.description != default_description;
             }
         }
@@ -408,9 +413,9 @@ impl ToolSettings {
     pub fn is_enabled(&self, name: &str) -> bool {
         self.tools
             .iter()
-            .find(|tool| tool.name == name)
+            .find(|tool| tool.name == tool_names::canonical_tool_name(name))
             .map(|tool| tool.enabled)
-            .unwrap_or_else(|| default_tool_enabled(name))
+            .unwrap_or_else(|| default_tool_enabled(tool_names::canonical_tool_name(name)))
     }
 
     pub fn openai_image_api_key(&self) -> Option<String> {
@@ -504,19 +509,19 @@ fn default_tool_display_name(name: &str) -> String {
         "read" => "Read".to_string(),
         "edit_file" => "Edit file".to_string(),
         "write_file" => "Write file".to_string(),
-        "Glob" => "Glob".to_string(),
-        "Grep" => "Grep".to_string(),
-        "WebSearch" => "Web search".to_string(),
-        "WebFetch" => "Web fetch".to_string(),
-        "CreateImage" => "Create image".to_string(),
-        "Question" => "Question".to_string(),
-        "ToDoList" => "To-do list".to_string(),
-        "LoadMcpTool" => "Load MCP tool".to_string(),
-        "LoadSkill" => "Load skill".to_string(),
-        "TeamRun" => "Team run".to_string(),
-        "TeamStatus" => "Team status".to_string(),
-        "TeamStop" => "Team stop".to_string(),
-        "SendMessage" => "Send message".to_string(),
+        "glob" => "Glob".to_string(),
+        "grep" => "Grep".to_string(),
+        "web_search" => "Web search".to_string(),
+        "web_fetch" => "Web fetch".to_string(),
+        "create_image" => "Create image".to_string(),
+        "question" => "Question".to_string(),
+        "todo_list" => "To-do list".to_string(),
+        "load_mcp_tool" => "Load MCP tool".to_string(),
+        "skill" => "Load skill".to_string(),
+        "team_run" => "Team run".to_string(),
+        "team_status" => "Team status".to_string(),
+        "team_stop" => "Team stop".to_string(),
+        "send_message" => "Send message".to_string(),
         "clean_context" => "Clean context".to_string(),
         "update_goal" => "Update goal".to_string(),
         "context_compaction" => "Compact context".to_string(),
@@ -1592,7 +1597,7 @@ fn is_false(value: &bool) -> bool {
 }
 
 fn default_tool_enabled(name: &str) -> bool {
-    !matches!(name, "CreateImage" | "WebSearch")
+    !matches!(name, tool_names::CREATE_IMAGE | tool_names::WEB_SEARCH)
 }
 
 fn normalize_openrouter_models(models: Vec<OpenRouterModelRecord>) -> Vec<OpenRouterModelRecord> {

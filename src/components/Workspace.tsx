@@ -12,12 +12,14 @@ import { Icon } from "@iconify/react";
 import { api } from "../lib/ipc";
 import { modelRefWithThinking, thinkingFromRef } from "../lib/models";
 import { workspaceSessionKey } from "../lib/sessions";
+import { recordRecent } from "../lib/recents";
 import { Splitter } from "./Splitter";
 import { FileTree, type FileTreeHandle } from "./FileTree";
 import {
   ConversationList,
   type ConversationListProject,
 } from "./ConversationList";
+import { GitPanel, GitMark } from "./GitPanel";
 import { EditorPane } from "./EditorPane";
 import { SettingsPane } from "./SettingsPane";
 import { SessionSwitcher } from "./SessionSwitcher";
@@ -153,6 +155,12 @@ export function Workspace({
   const [viewMode, setViewMode] = useState<ViewMode>(() => loadLayoutViewMode());
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [sessionsRefreshToken, setSessionsRefreshToken] = useState(0);
+  // Bottom-sidebar tab — "conversations" preserves the existing default.
+  // Both panels stay mounted (display:none on the inactive one) so users
+  // can flip between them without losing in-progress form input.
+  const [bottomTab, setBottomTab] = useState<"conversations" | "git">(
+    "conversations",
+  );
 
   useEffect(() => {
     saveLayoutViewMode(viewMode);
@@ -1677,6 +1685,46 @@ export function Workspace({
     }
   }, [workspacePath, activeConv.id]);
 
+  // Switch this window to another workspace path. Used by the Git
+  // panel when the user clicks a worktree row or creates a new one.
+  // We refuse the switch while any conversation in the current window
+  // is still streaming so the in-flight turn isn't orphaned mid-tool.
+  // Throwing here lets the caller surface a contextual error notice
+  // instead of swallowing the failure silently.
+  const switchWorkspace = useCallback(
+    async (targetPath: string): Promise<void> => {
+      if (streamingConversationIds.size > 0) {
+        throw new Error(
+          "A conversation is still streaming. Stop active turns before switching workspace.",
+        );
+      }
+      const nextBootstrap = await api.openWorkspace(targetPath);
+      recordRecent(
+        nextBootstrap.workspace.path,
+        nextBootstrap.workspace.name,
+      );
+      // Drop editor / settings / search state that belongs to the
+      // outgoing workspace so the incoming one boots cleanly. The
+      // bootstrap-replace effect refreshes conversations, file tree,
+      // etc. on its own.
+      setTabs([]);
+      setActiveTabIndex(-1);
+      setSettingsOpen(false);
+      setSettingsActive(false);
+      setFileSearchOpen(false);
+      setPendingRootCreate(null);
+      setEditorRevealTarget(null);
+      setImportError(null);
+      onBootstrapReplace(nextBootstrap);
+      refreshFileTree();
+    },
+    [
+      onBootstrapReplace,
+      refreshFileTree,
+      streamingConversationIds,
+    ],
+  );
+
   // ---------------- Layout state ----------------
   const [leftWidth, setLeftWidth] = useState(INITIAL_LEFT);
   const [rightWidth, setRightWidth] = useState(INITIAL_RIGHT);
@@ -2226,21 +2274,118 @@ export function Workspace({
             )}
           </div>
           <Splitter orientation="horizontal" onDelta={applyTopDelta} />
-          <ConversationList
-            conversations={conversations}
-            activeId={activeConv.id}
-            streamingIds={streamingConversationIds}
-            projects={conversationProjects}
-            activeSessionKey={effectiveActiveSessionKey}
-            onSelect={selectConversationFromList}
-            onCreate={createConversation}
-            onRename={renameConversationFromList}
-            onDelete={deleteConversationFromList}
-            onArchive={archiveConversationFromList}
-            onCloseProject={onCloseProjectSession}
-            onOpenProject={onOpenProject || onOpenWorkspace ? openProjectPicker : undefined}
-            onOpenSessions={openSessionSwitcher}
-          />
+          <div
+            className="sidebar__section sidebar__section--bottom"
+            style={{ flex: "1 1 0" }}
+          >
+            <div className="sidebar__head sidebar__head--tabs">
+              <div className="sidebar-tabs" role="tablist">
+                <button
+                  type="button"
+                  role="tab"
+                  className="sidebar-tab"
+                  data-active={bottomTab === "conversations" ? "true" : "false"}
+                  aria-selected={bottomTab === "conversations"}
+                  onClick={() => setBottomTab("conversations")}
+                >
+                  <Icon
+                    icon="solar:chat-round-dots-linear"
+                    width={13}
+                    height={13}
+                  />
+                  <span>{conversationProjects ? "Projects" : "Conversations"}</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  className="sidebar-tab"
+                  data-active={bottomTab === "git" ? "true" : "false"}
+                  aria-selected={bottomTab === "git"}
+                  onClick={() => setBottomTab("git")}
+                >
+                  <GitMark size={13} />
+                  <span>Git</span>
+                </button>
+              </div>
+              {bottomTab === "conversations" && (
+                <div className="sidebar__head-actions">
+                  <button
+                    type="button"
+                    className="sidebar__head-btn"
+                    onClick={openSessionSwitcher}
+                    title="Sessions"
+                  >
+                    <Icon icon="solar:clock-circle-linear" width={15} height={15} />
+                  </button>
+                  {(onOpenProject || onOpenWorkspace) && (
+                    <button
+                      type="button"
+                      className="sidebar__head-btn"
+                      onClick={openProjectPicker}
+                      title="Open project"
+                    >
+                      <Icon icon="solar:add-folder-linear" width={15} height={15} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="sidebar__head-btn"
+                    onClick={() => createConversation()}
+                    title="New conversation"
+                  >
+                    <Icon
+                      icon="solar:add-square-linear"
+                      width={15}
+                      height={15}
+                    />
+                  </button>
+                </div>
+              )}
+            </div>
+            {/*
+              Both panels stay mounted so swapping tabs preserves any
+              transient state (a half-typed commit message, an open
+              "New worktree" form, etc). We toggle visibility with
+              display:none to avoid double-mounting their effects.
+            */}
+            <div
+              className="sidebar-tab-pane"
+              role="tabpanel"
+              aria-hidden={bottomTab !== "conversations"}
+              style={{
+                display: bottomTab === "conversations" ? "flex" : "none",
+              }}
+            >
+              <ConversationList
+                conversations={conversations}
+                activeId={activeConv.id}
+                streamingIds={streamingConversationIds}
+                projects={conversationProjects}
+                activeSessionKey={effectiveActiveSessionKey}
+                onSelect={selectConversationFromList}
+                onCreate={createConversation}
+                onRename={renameConversationFromList}
+                onDelete={deleteConversationFromList}
+                onArchive={archiveConversationFromList}
+                onCloseProject={onCloseProjectSession}
+              />
+            </div>
+            <div
+              className="sidebar-tab-pane"
+              role="tabpanel"
+              aria-hidden={bottomTab !== "git"}
+              style={{
+                display: bottomTab === "git" ? "flex" : "none",
+              }}
+            >
+              <GitPanel
+                workspacePath={workspacePath}
+                active={bottomTab === "git"}
+                hasStreamingConversation={hasStreamingConversation}
+                onSwitchWorkspace={switchWorkspace}
+              />
+            </div>
+          </div>
         </div>
         {effectiveCenterVisible && (
           <Splitter
@@ -2296,6 +2441,7 @@ export function Workspace({
           >
             {!detachedTerminal && terminalAvailable && (
               <TerminalPanel
+                key={workspacePath}
                 active={terminalVisible}
                 fullHeight={terminalFullHeight}
                 workspacePath={workspacePath}

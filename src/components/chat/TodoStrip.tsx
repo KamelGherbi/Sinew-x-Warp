@@ -10,6 +10,7 @@ import {
 import { Icon } from "@iconify/react";
 import type { ChatBlock } from "./stream";
 import { Markdown } from "./Markdown";
+import { canonicalToolName, isToolName } from "../../lib/tools";
 import type { AttachmentInput, TodoListState, TodoStatus } from "../../types";
 
 type ParsedTask = {
@@ -260,7 +261,7 @@ function latestActiveTodo(blocks: ChatBlock[]): {
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i];
     if (b.kind !== "tool") continue;
-    if (b.name !== "ToDoList") continue;
+    if (!isToolName(b.name, "todo_list")) continue;
     if (b.status === "error") continue;
     const parsed = parseTodoFromMeta(b.meta) ?? parseTodoOutput(b.output);
     if (!parsed) continue;
@@ -335,12 +336,8 @@ function shouldReplaceTeamTask(
 }
 
 function isTeamTaskTool(name: string): boolean {
-  return (
-    name === "TeamRun" ||
-    name === "TeamStatus" ||
-    name === "TaskCreate" ||
-    name === "TaskList" ||
-    name === "TaskUpdate"
+  return ["team_run", "team_status", "task_create", "task_list", "task_update"].includes(
+    canonicalToolName(name),
   );
 }
 
