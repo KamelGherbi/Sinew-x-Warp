@@ -15,7 +15,7 @@ import { recordRecent } from "../lib/recents";
 import { Splitter } from "./Splitter";
 import { FileTree, type FileTreeHandle } from "./FileTree";
 import { ConversationList } from "./ConversationList";
-import { GitPanel } from "./GitPanel";
+import { GitPanel, GitMark } from "./GitPanel";
 import { EditorPane } from "./EditorPane";
 import { SettingsPane } from "./SettingsPane";
 import { TerminalPanel } from "./TerminalPanel";
@@ -1827,11 +1827,7 @@ export function Workspace({
                   aria-selected={bottomTab === "git"}
                   onClick={() => setBottomTab("git")}
                 >
-                  <Icon
-                    icon="solar:branching-paths-down-linear"
-                    width={13}
-                    height={13}
-                  />
+                  <GitMark size={13} />
                   <span>Git</span>
                 </button>
               </div>

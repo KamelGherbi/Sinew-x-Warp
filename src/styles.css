@@ -142,6 +142,11 @@ button {
   background: transparent;
   padding: 0;
   color: inherit;
+  outline: none;
+}
+button::-moz-focus-inner {
+  border: 0;
+  padding: 0;
 }
 
 input,
@@ -1746,8 +1751,6 @@ textarea {
   padding-left: 6px;
   padding-right: 6px;
   gap: 6px;
-  border-top: 1px solid var(--line-soft);
-  border-bottom: 1px solid var(--line-soft);
 }
 
 .sidebar-tabs {
@@ -1788,11 +1791,10 @@ textarea {
 }
 .sidebar-tab:hover {
   color: var(--text-1);
-  background: var(--bg-2);
 }
 .sidebar-tab[data-active="true"] {
   color: var(--text-0);
-  background: var(--bg-3);
+  background: transparent;
 }
 .sidebar-tab[data-active="true"] svg {
   opacity: 1;
@@ -1844,20 +1846,8 @@ textarea {
   flex: 0 0 11px;
 }
 
-/* 6px lavender dot used for "dirty" and "current" markers, same idea
-   as tab__dirty so every state cue across the panel reads identically. */
-.git-panel__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--signal);
-  flex: 0 0 6px;
-}
-.git-panel__dot--current {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 7px;
-}
+/* (No coloured dot indicators — counts are shown as a small mono
+   number in --text-2, the same way the count chip works in Settings.) */
 
 /* --------------------------------------------------------------------
    Empty / unavailable states
@@ -1889,15 +1879,15 @@ textarea {
   max-width: 32ch;
 }
 .git-panel__state-text code {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
   color: var(--text-1);
 }
 .git-panel__state-error {
   margin-top: 4px;
   color: var(--danger);
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
   word-break: break-word;
   max-width: 32ch;
 }
@@ -1954,8 +1944,8 @@ textarea {
   flex: 0 0 auto;
 }
 .git-panel__head-branch-name {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
   color: var(--text-0);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1963,10 +1953,7 @@ textarea {
   min-width: 0;
 }
 .git-panel__head-dirty {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--fs-xs);
   color: var(--text-2);
   flex: 0 0 auto;
@@ -1980,9 +1967,9 @@ textarea {
   flex: 0 0 auto;
 }
 
-/* Labelled action button (Pull / Push). Same shape as titlebar__btn so
-   the user gets a real word, not a cryptic arrow icon, while keeping
-   the existing design language: 22px height, fs-xs, weight 500. */
+/* Labelled action button (Pull / Push). Ghost by default — no
+   background — so it doesn't read as a framed card. Picks up a
+   bg-3 only on hover, matching the sidebar__head-btn rhythm. */
 .git-panel__head-action {
   display: inline-flex;
   align-items: center;
@@ -1990,8 +1977,8 @@ textarea {
   height: 22px;
   padding: 0 8px;
   border-radius: var(--r-med);
-  color: var(--text-1);
-  background: var(--bg-3);
+  color: var(--text-2);
+  background: transparent;
   font-family: var(--font-ui);
   font-size: var(--fs-xs);
   font-weight: 500;
@@ -2002,8 +1989,8 @@ textarea {
   white-space: nowrap;
 }
 .git-panel__head-action:hover:not(:disabled) {
-  color: var(--hover-shift);
-  background: var(--bg-4);
+  color: var(--text-0);
+  background: var(--bg-3);
 }
 .git-panel__head-action:disabled {
   opacity: 0.45;
@@ -2134,10 +2121,10 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-family: var(--font-display);
-  font-size: var(--fs-sm);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
   font-weight: 500;
-  color: var(--text-0);
+  color: var(--text-3);
   letter-spacing: -0.005em;
   min-width: 0;
 }
@@ -2178,7 +2165,7 @@ textarea {
   border-radius: var(--r-pill);
   background: var(--bg-3);
   color: var(--text-3);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--fs-xs);
   font-weight: 500;
 }
@@ -2190,8 +2177,8 @@ textarea {
   line-height: 1.5;
 }
 .git-panel__empty code {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
   color: var(--text-1);
 }
 
@@ -2200,14 +2187,16 @@ textarea {
   background: transparent;
   color: var(--text-1);
   cursor: pointer;
-  border-bottom: 1px solid var(--line-strong);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
   font: inherit;
   padding: 0;
-  transition: color 140ms ease, border-color 140ms ease;
+  transition: color 140ms ease, text-decoration-color 140ms ease;
 }
 .git-panel__link:hover {
   color: var(--text-0);
-  border-bottom-color: var(--text-0);
+  text-decoration-color: var(--text-0);
 }
 
 /* Hint row — same neutral whisper as git-panel__empty so it doesn't
@@ -2308,8 +2297,8 @@ textarea {
   grid-template-columns: 14px 1fr;
 }
 .git-panel__row-status {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
   font-weight: 600;
   text-align: center;
   color: var(--text-3);
@@ -2322,8 +2311,8 @@ textarea {
 .git-panel__row-status[data-kind="conflicted"] { color: var(--danger); }
 
 .git-panel__row-path {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2388,10 +2377,7 @@ textarea {
   color: var(--text-0);
 }
 .git-panel__row-dirty {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--fs-xs);
   color: var(--text-2);
   flex: 0 0 auto;
@@ -2401,7 +2387,7 @@ textarea {
   align-items: center;
   gap: 5px;
   min-width: 0;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--fs-xs);
   color: var(--text-3);
   overflow: hidden;
@@ -2446,8 +2432,8 @@ textarea {
   cursor: default;
 }
 .git-panel__row-branch-name {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
   color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2459,7 +2445,7 @@ textarea {
   font-weight: 500;
 }
 .git-panel__row-upstream {
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--fs-xs);
   color: var(--text-3);
   white-space: nowrap;
@@ -2575,8 +2561,8 @@ textarea {
   letter-spacing: -0.005em;
 }
 .git-panel__pr-url {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2650,8 +2636,8 @@ textarea {
 }
 .git-panel__dialog-desc code,
 .git-panel__dialog-code {
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
   color: var(--text-1);
   word-break: break-all;
 }
@@ -2731,8 +2717,8 @@ textarea {
     calc(100% - 8px) 13px;
   background-size: 4px 4px, 4px 4px;
   background-repeat: no-repeat;
-  font-family: var(--font-mono);
-  font-size: var(--fs-mono-sm);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
 }
 .git-panel__dialog-textarea {
   min-height: 76px;

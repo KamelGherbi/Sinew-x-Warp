@@ -18,6 +18,28 @@ import type {
   GitWorktree,
 } from "../types";
 
+// Official Git logo, traced from the SVG distributed on git-scm.com:
+// a 45°-rotated diamond with a small Y-shaped branch fork inside.
+// Used as a monochrome icon next to the Git tab label and next to
+// each worktree row.
+export function GitMark({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        fill="currentColor"
+        d="M23.546 10.93 13.067.452a1.55 1.55 0 0 0-2.188 0L8.708 2.627l2.76 2.76a1.838 1.838 0 0 1 2.327 2.341l2.658 2.66a1.838 1.838 0 0 1 1.9 3.039 1.837 1.837 0 0 1-2.6 0 1.846 1.846 0 0 1-.404-2.008L12.86 8.99v6.59a1.847 1.847 0 1 1-1.51-.048V8.876a1.835 1.835 0 0 1-.997-2.41L7.638 3.748.452 10.934a1.55 1.55 0 0 0 0 2.19L10.93 23.547a1.55 1.55 0 0 0 2.188 0l10.428-10.43a1.55 1.55 0 0 0 0-2.188"
+      />
+    </svg>
+  );
+}
+
 type Props = {
   workspacePath: string;
   // When false (tab inactive), polling is suspended. Inputs and local UI
@@ -559,7 +581,7 @@ export function GitPanel({
   if (!snapshot.isRepository) {
     return (
       <div className="git-panel git-panel--state">
-        <Icon icon="solar:branching-paths-down-linear" width={18} height={18} />
+        <GitMark size={18} />
         <span className="git-panel__state-title">Not a Git repository</span>
         <span className="git-panel__state-text">
           This workspace isn't tracked yet. Initialize a new repository to
@@ -600,11 +622,6 @@ export function GitPanel({
           className="git-panel__head-branch"
           title={snapshot.currentBranch ?? "detached HEAD"}
         >
-          <Icon
-            icon="solar:branching-paths-down-linear"
-            width={14}
-            height={14}
-          />
           <span className="git-panel__head-branch-name">
             {snapshot.currentBranch ?? "(detached)"}
           </span>
@@ -615,7 +632,6 @@ export function GitPanel({
                 snapshot.dirtyCount === 1 ? "" : "s"
               }`}
             >
-              <span className="git-panel__dot" />
               {snapshot.dirtyCount}
             </span>
           )}
@@ -1212,18 +1228,7 @@ function WorktreeRow({
       data-current={wt.isCurrent ? "true" : "false"}
     >
       <span className="git-panel__row-mark">
-        {wt.isCurrent ? (
-          <span
-            className="git-panel__dot git-panel__dot--current"
-            aria-hidden="true"
-          />
-        ) : (
-          <Icon
-            icon="solar:folder-with-files-linear"
-            width={14}
-            height={14}
-          />
-        )}
+        <GitMark size={13} />
       </span>
       <span className="git-panel__row-body">
         <span className="git-panel__row-title">
@@ -1235,7 +1240,6 @@ function WorktreeRow({
                 wt.dirtyCount === 1 ? "" : "s"
               }`}
             >
-              <span className="git-panel__dot" />
               {wt.dirtyCount}
             </span>
           )}
@@ -1300,11 +1304,7 @@ function BranchRow({ branch }: { branch: GitBranch }) {
       className="git-panel__row git-panel__row--branch"
       data-current={branch.current ? "true" : "false"}
     >
-      <span className="git-panel__row-mark" aria-hidden="true">
-        {branch.current ? (
-          <span className="git-panel__dot git-panel__dot--current" />
-        ) : null}
-      </span>
+      <span className="git-panel__row-mark" aria-hidden="true" />
       <span className="git-panel__row-branch-name" title={branch.name}>
         {branch.name}
       </span>
