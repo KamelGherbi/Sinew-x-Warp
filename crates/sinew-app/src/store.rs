@@ -22,6 +22,7 @@ use crate::tool_names;
 use crate::tool_run::TurnCheckpoint;
 use crate::workspace::{workspace_info, WorkspaceInfo};
 
+const DEFAULT_CONVERSATION_TITLE: &str = "New conversation";
 const MODE_MODEL_SETTINGS_KEY: &str = "mode_model_settings";
 const MCP_SETTINGS_KEY: &str = "mcp_settings";
 const SUB_AGENT_SETTINGS_KEY: &str = "sub_agent_settings";
@@ -620,7 +621,7 @@ impl AppStore {
     ) -> Result<SavedConversation> {
         let id = Uuid::new_v4().to_string();
         let now = now_ms();
-        let title = "New conversation".to_string();
+        let title = DEFAULT_CONVERSATION_TITLE.to_string();
         let todo_list = TodoListState::default();
         let todo_list_json = serde_json::to_string(&todo_list)?;
         let plan_workflow = PlanWorkflowState::default();
@@ -632,8 +633,8 @@ impl AppStore {
         let mode_model_settings_json = serde_json::to_string(&mode_model_settings)?;
         let conn = self.connection()?;
         conn.execute(
-            "insert into conversations (id, workspace_id, title, model_json, mode_model_settings_json, system_prompt, todo_list_json, plan_workflow_json, goal_workflow_json, created_at_ms, updated_at_ms, archived_at_ms)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, null)",
+            "insert into conversations (id, workspace_id, title, title_initialized, model_json, mode_model_settings_json, system_prompt, todo_list_json, plan_workflow_json, goal_workflow_json, created_at_ms, updated_at_ms, archived_at_ms)
+             values (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, null)",
             params![
                 &id,
                 workspace_id,
@@ -843,8 +844,6 @@ impl AppStore {
 
     pub fn save_conversation(&self, conversation: &SavedConversation) -> Result<()> {
         let now = now_ms();
-        let title =
-            title_from_history(&conversation.history).unwrap_or_else(|| conversation.title.clone());
         let mut todo_list = conversation.todo_list.clone();
         todo_list.normalize();
         let todo_list_json = serde_json::to_string(&todo_list)?;
@@ -855,14 +854,21 @@ impl AppStore {
         let tx = conn
             .transaction()
             .context("unable to open sqlite transaction")?;
+        let current_title_state =
+            load_conversation_title_state(&tx, &conversation.workspace_id, &conversation.id)?;
+        let title_state = resolve_title_for_save(
+            current_title_state.as_ref(),
+            &conversation.title,
+            &conversation.history,
+        );
 
         tx.execute(
             "update conversations
-             set title = ?2, model_json = ?3, system_prompt = ?4, updated_at_ms = ?5, todo_list_json = ?6, plan_workflow_json = ?7, mode_model_settings_json = ?8, goal_workflow_json = ?9
-             where id = ?1 and workspace_id = ?10",
+             set title = ?2, model_json = ?3, system_prompt = ?4, updated_at_ms = ?5, todo_list_json = ?6, plan_workflow_json = ?7, mode_model_settings_json = ?8, goal_workflow_json = ?9, title_initialized = ?10
+             where id = ?1 and workspace_id = ?11",
             params![
                 &conversation.id,
-                &title,
+                &title_state.title,
                 serde_json::to_string(&conversation.model)?,
                 &conversation.system_prompt,
                 now,
@@ -870,6 +876,7 @@ impl AppStore {
                 plan_workflow_json,
                 mode_model_settings_json,
                 goal_workflow_json,
+                title_state.initialized as i64,
                 &conversation.workspace_id,
             ],
         )
@@ -904,8 +911,6 @@ impl AppStore {
         settings: &ModeModelSettings,
     ) -> Result<()> {
         let now = now_ms();
-        let title =
-            title_from_history(&conversation.history).unwrap_or_else(|| conversation.title.clone());
         let mut todo_list = conversation.todo_list.clone();
         todo_list.normalize();
         let todo_list_json = serde_json::to_string(&todo_list)?;
@@ -917,14 +922,21 @@ impl AppStore {
         let tx = conn
             .transaction()
             .context("unable to open sqlite transaction")?;
+        let current_title_state =
+            load_conversation_title_state(&tx, &conversation.workspace_id, &conversation.id)?;
+        let title_state = resolve_title_for_save(
+            current_title_state.as_ref(),
+            &conversation.title,
+            &conversation.history,
+        );
 
         tx.execute(
             "update conversations
-             set title = ?2, model_json = ?3, system_prompt = ?4, updated_at_ms = ?5, todo_list_json = ?6, plan_workflow_json = ?7, mode_model_settings_json = ?8, goal_workflow_json = ?9
-             where id = ?1 and workspace_id = ?10",
+             set title = ?2, model_json = ?3, system_prompt = ?4, updated_at_ms = ?5, todo_list_json = ?6, plan_workflow_json = ?7, mode_model_settings_json = ?8, goal_workflow_json = ?9, title_initialized = ?10
+             where id = ?1 and workspace_id = ?11",
             params![
                 &conversation.id,
-                &title,
+                &title_state.title,
                 serde_json::to_string(&conversation.model)?,
                 &conversation.system_prompt,
                 now,
@@ -932,6 +944,7 @@ impl AppStore {
                 plan_workflow_json,
                 mode_model_settings_json,
                 goal_workflow_json,
+                title_state.initialized as i64,
                 &conversation.workspace_id,
             ],
         )
@@ -1342,7 +1355,7 @@ impl AppStore {
     pub fn rename_conversation(&self, workspace_id: &str, id: &str, title: &str) -> Result<()> {
         let conn = self.connection()?;
         conn.execute(
-            "update conversations set title = ?3, updated_at_ms = ?4 where workspace_id = ?1 and id = ?2",
+            "update conversations set title = ?3, title_initialized = 1, updated_at_ms = ?4 where workspace_id = ?1 and id = ?2",
             params![workspace_id, id, title.trim(), now_ms()],
         )
         .context("unable to rename conversation")?;
@@ -1410,7 +1423,7 @@ impl AppStore {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap_or(0);
 
-        if version >= 8 {
+        if version >= 9 {
             return Ok(());
         }
 
@@ -1421,6 +1434,7 @@ impl AppStore {
                 id text primary key,
                 workspace_id text not null,
                 title text not null,
+                title_initialized integer not null default 0,
                 model_json text not null,
                 mode_model_settings_json text,
                 system_prompt text not null,
@@ -1457,13 +1471,14 @@ impl AppStore {
         ensure_conversations_goal_workflow_column(&conn)?;
         ensure_conversations_mode_model_settings_column(&conn)?;
         ensure_conversations_archived_column(&conn)?;
+        ensure_conversations_title_initialized_column(&conn)?;
         ensure_app_settings_table(&conn)?;
         ensure_turn_checkpoints_table(&conn)?;
         if version < 8 {
             conn.execute("delete from turn_checkpoints", [])
                 .context("unable to clear legacy turn checkpoints")?;
         }
-        conn.pragma_update(None, "user_version", 8)
+        conn.pragma_update(None, "user_version", 9)
             .context("unable to set sqlite schema version")?;
         Ok(())
     }
@@ -1546,6 +1561,25 @@ fn ensure_conversations_archived_column(conn: &Connection) -> Result<()> {
         "#,
     )
     .context("unable to add conversation archive column")?;
+    Ok(())
+}
+
+fn ensure_conversations_title_initialized_column(conn: &Connection) -> Result<()> {
+    if conversation_has_column(conn, "title_initialized")? {
+        return Ok(());
+    }
+    conn.execute_batch(
+        r#"
+        alter table conversations
+            add column title_initialized integer not null default 1;
+        update conversations
+            set title_initialized = case
+                when trim(title) = 'New conversation' then 0
+                else 1
+            end;
+        "#,
+    )
+    .context("unable to add conversation title initialization column")?;
     Ok(())
 }
 
@@ -1665,6 +1699,60 @@ fn conversation_has_column(conn: &Connection, name: &str) -> Result<bool> {
     Ok(false)
 }
 
+struct ConversationTitleState {
+    title: String,
+    initialized: bool,
+}
+
+fn load_conversation_title_state(
+    conn: &Connection,
+    workspace_id: &str,
+    id: &str,
+) -> Result<Option<ConversationTitleState>> {
+    conn.query_row(
+        "select title, title_initialized from conversations where workspace_id = ?1 and id = ?2",
+        params![workspace_id, id],
+        |row| {
+            let initialized: i64 = row.get(1)?;
+            Ok(ConversationTitleState {
+                title: row.get(0)?,
+                initialized: initialized != 0,
+            })
+        },
+    )
+    .optional()
+    .context("unable to load conversation title state")
+}
+
+fn resolve_title_for_save(
+    current_state: Option<&ConversationTitleState>,
+    incoming_title: &str,
+    history: &[ChatMessage],
+) -> ConversationTitleState {
+    if let Some(state) = current_state {
+        if state.initialized && state.title.trim() != DEFAULT_CONVERSATION_TITLE {
+            return ConversationTitleState {
+                title: state.title.clone(),
+                initialized: true,
+            };
+        }
+    }
+
+    let fallback_title = current_state
+        .map(|state| state.title.as_str())
+        .unwrap_or(incoming_title);
+    match title_from_history(history) {
+        Some(title) => ConversationTitleState {
+            title,
+            initialized: true,
+        },
+        None => ConversationTitleState {
+            title: fallback_title.to_string(),
+            initialized: false,
+        },
+    }
+}
+
 fn title_from_history(history: &[ChatMessage]) -> Option<String> {
     history
         .iter()
@@ -1716,6 +1804,7 @@ fn now_ms() -> i64 {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
 
     fn message(role: Role, text: &str, meta: Option<Value>) -> ChatMessage {
         ChatMessage {
@@ -1725,6 +1814,123 @@ mod tests {
                 meta,
             }],
         }
+    }
+
+    #[test]
+    fn resolve_title_for_save_initializes_uninitialized_title_from_first_visible_user_text() {
+        let history = vec![message(Role::User, "First request", None)];
+        let current = ConversationTitleState {
+            title: DEFAULT_CONVERSATION_TITLE.to_string(),
+            initialized: false,
+        };
+
+        let resolved = resolve_title_for_save(Some(&current), DEFAULT_CONVERSATION_TITLE, &history);
+
+        assert_eq!(resolved.title, "First request");
+        assert!(resolved.initialized);
+    }
+
+    #[test]
+    fn resolve_title_for_save_recovers_new_conversation_marked_initialized_by_migration_bug() {
+        let history = vec![message(Role::User, "First request", None)];
+        let current = ConversationTitleState {
+            title: DEFAULT_CONVERSATION_TITLE.to_string(),
+            initialized: true,
+        };
+
+        let resolved = resolve_title_for_save(Some(&current), DEFAULT_CONVERSATION_TITLE, &history);
+
+        assert_eq!(resolved.title, "First request");
+        assert!(resolved.initialized);
+    }
+
+    #[test]
+    fn resolve_title_for_save_preserves_initialized_title() {
+        let history = vec![message(Role::User, "A later request", None)];
+        let current = ConversationTitleState {
+            title: "Original request".to_string(),
+            initialized: true,
+        };
+
+        let resolved = resolve_title_for_save(Some(&current), "Stale incoming title", &history);
+
+        assert_eq!(resolved.title, "Original request");
+        assert!(resolved.initialized);
+    }
+
+    #[test]
+    fn resolve_title_for_save_preserves_initialized_title_after_compaction() {
+        let history = vec![
+            message(
+                Role::User,
+                "Retained compacted request",
+                Some(json!({ "compaction_retained_user": true })),
+            ),
+            message(
+                Role::User,
+                "Compaction summary",
+                Some(json!({ "compaction_summary": true })),
+            ),
+            message(Role::User, "New post-compaction request", None),
+        ];
+        let current = ConversationTitleState {
+            title: "Original request".to_string(),
+            initialized: true,
+        };
+
+        let resolved = resolve_title_for_save(Some(&current), "Original request", &history);
+
+        assert_eq!(resolved.title, "Original request");
+        assert!(resolved.initialized);
+    }
+
+    #[test]
+    fn save_conversation_initializes_title_from_first_user_message_and_preserves_it() -> Result<()>
+    {
+        let path =
+            std::env::temp_dir().join(format!("sinew-store-title-test-{}.sqlite3", Uuid::new_v4()));
+        let store = AppStore { path: path.clone() };
+        let result = (|| -> Result<()> {
+            store.migrate()?;
+            let model = ModelRef::new("test", "model");
+            let mut conversation = store.create_conversation("workspace", &model, "system")?;
+            conversation
+                .history
+                .push(message(Role::User, "First request", None));
+
+            store.save_conversation(&conversation)?;
+            let loaded = store
+                .load_conversation("workspace", &conversation.id)?
+                .expect("conversation should exist");
+            assert_eq!(loaded.title, "First request");
+            assert_eq!(
+                store.list_conversations("workspace")?[0].title,
+                "First request"
+            );
+
+            let mut compacted = loaded;
+            compacted.history = vec![
+                message(
+                    Role::User,
+                    "Retained compacted request",
+                    Some(json!({ "compaction_retained_user": true })),
+                ),
+                message(
+                    Role::User,
+                    "Compaction summary",
+                    Some(json!({ "compaction_summary": true })),
+                ),
+                message(Role::User, "New post-compaction request", None),
+            ];
+            store.save_conversation(&compacted)?;
+            let reloaded = store
+                .load_conversation("workspace", &conversation.id)?
+                .expect("conversation should exist");
+            assert_eq!(reloaded.title, "First request");
+            Ok(())
+        })();
+        let _ = fs::remove_file(path);
+        result
     }
 
     #[test]

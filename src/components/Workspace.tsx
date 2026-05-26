@@ -98,7 +98,11 @@ const INITIAL_SPLIT_TOP = 0.55;
 const INITIAL_TERMINAL_HEIGHT = 240;
 const MIN_TERMINAL_HEIGHT = 140;
 const MAX_TERMINAL_RATIO = 0.92;
+const APP_ZOOM_MIN = 1;
+const APP_ZOOM_MAX = 2;
+const APP_ZOOM_STEP = 0.1;
 const TERMINAL_OPEN_EVENT = "terminal-open-requested";
+const CLOSE_ACTIVE_TAB_EVENT = "editor-close-active-tab-requested";
 const SEND_BUSY_RETRY_DELAYS_MS = [160, 320, 640, 1000, 1400];
 const EMPTY_STREAMING_IDS: ReadonlySet<string> = new Set<string>();
 const LAYOUT_VIEW_MODE_KEY = "sinew.layout.viewMode";
@@ -460,6 +464,8 @@ export function Workspace({
   const [editorRevealTarget, setEditorRevealTarget] =
     useState<EditorRevealTarget | null>(null);
   const tabsRef = useRef(tabs);
+  const appZoomRef = useRef(1);
+  const toggleTerminalRef = useRef<() => void>(() => {});
   const fileTreeRefreshTimerRef = useRef<number | null>(null);
   const revealSeqRef = useRef(0);
   tabsRef.current = tabs;
@@ -824,6 +830,14 @@ export function Workspace({
     });
   }, []);
 
+  const closeActiveEditorTab = useCallback(() => {
+    if (settingsActive) {
+      closeSettings();
+      return;
+    }
+    if (activeTabIndex >= 0) closeTab(activeTabIndex);
+  }, [activeTabIndex, closeSettings, closeTab, settingsActive]);
+
   const handleTreeEntryRenamed = useCallback(
     (oldRelativePath: string, entry: WorkspaceEntry) => {
       setTabs((prev) =>
@@ -924,16 +938,79 @@ export function Workspace({
     [workspacePath, tabs],
   );
 
+  const applyAppZoom = useCallback((nextZoom: number) => {
+    const zoom = Math.max(
+      APP_ZOOM_MIN,
+      Math.min(APP_ZOOM_MAX, Math.round(nextZoom * 100) / 100),
+    );
+    appZoomRef.current = zoom;
+    void getCurrentWebview()
+      .setZoom(zoom)
+      .catch((err) => console.warn("Unable to set app zoom", err));
+  }, []);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+      const hasPrimaryModifier = event.metaKey || event.ctrlKey;
+
+      if (
+        IS_WINDOWS &&
+        hasPrimaryModifier &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "w"
+      ) {
+        event.preventDefault();
+        closeActiveEditorTab();
+        return;
+      }
+      if (
+        hasPrimaryModifier &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "j"
+      ) {
+        event.preventDefault();
+        toggleTerminalRef.current();
+        return;
+      }
+      if (hasPrimaryModifier && !event.altKey) {
+        if (
+          event.key === "+" ||
+          event.key === "=" ||
+          event.code === "NumpadAdd"
+        ) {
+          event.preventDefault();
+          applyAppZoom(appZoomRef.current + APP_ZOOM_STEP);
+          return;
+        }
+        if (
+          event.key === "-" ||
+          event.code === "Minus" ||
+          event.code === "NumpadSubtract"
+        ) {
+          event.preventDefault();
+          applyAppZoom(appZoomRef.current - APP_ZOOM_STEP);
+          return;
+        }
+        if (
+          event.key === "0" ||
+          event.code === "Digit0" ||
+          event.code === "Numpad0"
+        ) {
+          event.preventDefault();
+          applyAppZoom(1);
+          return;
+        }
+      }
+      if (hasPrimaryModifier && event.key.toLowerCase() === "s") {
         event.preventDefault();
         if (settingsActive) return;
         if (activeTabIndex >= 0) void saveTab(activeTabIndex);
         return;
       }
       if (
-        (event.metaKey || event.ctrlKey) &&
+        hasPrimaryModifier &&
         event.shiftKey &&
         event.key.toLowerCase() === "f"
       ) {
@@ -941,9 +1018,29 @@ export function Workspace({
         setFileSearchOpen(true);
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [activeTabIndex, saveTab, settingsActive]);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [activeTabIndex, applyAppZoom, closeActiveEditorTab, saveTab, settingsActive]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | null = null;
+
+    void listen(CLOSE_ACTIVE_TAB_EVENT, () => {
+      closeActiveEditorTab();
+    }).then((nextUnlisten) => {
+      if (disposed) {
+        nextUnlisten();
+      } else {
+        unlisten = nextUnlisten;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      if (unlisten) unlisten();
+    };
+  }, [closeActiveEditorTab]);
 
   // ---------------- Event subscriptions ----------------
 
@@ -1770,6 +1867,7 @@ export function Workspace({
       showTerminal();
     }
   }, [hideTerminal, showTerminal, terminalOpen]);
+  toggleTerminalRef.current = toggleTerminal;
 
   const toggleTerminalFullHeight = useCallback(() => {
     setTerminalFullHeight((value) => !value);

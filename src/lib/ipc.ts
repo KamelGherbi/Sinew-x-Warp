@@ -90,6 +90,26 @@ export const api = {
       input: { workspacePath, branchName, baseBranch },
     });
   },
+  gitDeleteBranch(
+    workspacePath: string,
+    branchName: string,
+    force: boolean,
+    deleteRemote: boolean,
+  ) {
+    return invoke<GitOperationResult>("git_delete_branch_command", {
+      input: { workspacePath, branchName, force, deleteRemote },
+    });
+  },
+  gitRenameBranch(
+    workspacePath: string,
+    oldName: string,
+    newName: string,
+    syncRemote: boolean,
+  ) {
+    return invoke<GitOperationResult>("git_rename_branch_command", {
+      input: { workspacePath, oldName, newName, syncRemote },
+    });
+  },
   gitCommit(workspacePath: string, message: string, paths: string[]) {
     return invoke<GitOperationResult>("git_commit_command", {
       input: { workspacePath, message, paths },

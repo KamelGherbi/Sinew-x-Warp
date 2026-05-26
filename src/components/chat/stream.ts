@@ -1513,8 +1513,13 @@ export function applyEvent(
 
     case "turn_finished": {
       const blocks = finalizeStreamingThinking(state.blocks);
+      const eventDurationMs =
+        typeof event.duration_ms === "number" && Number.isFinite(event.duration_ms)
+          ? event.duration_ms
+          : null;
       const durationMs =
-        state.turnStartedAtMs !== null ? Date.now() - state.turnStartedAtMs : 0;
+        eventDurationMs ??
+        (state.turnStartedAtMs !== null ? Date.now() - state.turnStartedAtMs : 0);
       if (durationMs > MIN_VISIBLE_TURN_DURATION_MS) {
         blocks.push({
           kind: "turn-duration",

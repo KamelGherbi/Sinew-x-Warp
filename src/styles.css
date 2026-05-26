@@ -2909,10 +2909,14 @@ textarea {
   opacity: 1;
 }
 
-/* Branch row variant: [mark] [name] [upstream] */
+/* Branch row variant: [mark] [name] [upstream] [actions] */
 .git-panel__row--branch {
-  grid-template-columns: 14px 1fr auto;
+  grid-template-columns: 14px minmax(0, 1fr) auto auto;
   cursor: default;
+}
+.git-panel__row--branch:hover .git-panel__row-actions,
+.git-panel__row--branch:focus-within .git-panel__row-actions {
+  opacity: 1;
 }
 .git-panel__row-branch-name {
   font-family: var(--font-ui);
@@ -3228,6 +3232,27 @@ textarea {
 }
 .git-panel__dialog-check:hover {
   color: var(--text-0);
+}
+.git-panel__dialog-check[data-disabled="true"],
+.git-panel__dialog-check:has(input:disabled) {
+  color: var(--text-3);
+  cursor: default;
+}
+.git-panel__dialog-check[data-disabled="true"]:hover {
+  color: var(--text-3);
+}
+.git-panel__dialog-check[data-disabled="true"] input[type="checkbox"] {
+  cursor: default;
+}
+
+/* Inline error block inside a dialog body — surfaces the last failure
+   without dismissing the modal (used by the delete-branch retry flow). */
+.git-panel__dialog-error {
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  color: var(--danger);
+  line-height: 1.45;
+  word-break: break-word;
 }
 
 .git-panel__dialog-foot {
@@ -3731,6 +3756,18 @@ textarea {
 .settings-pane__body--mcp {
   grid-template-columns: minmax(220px, 280px) minmax(360px, 1fr);
   grid-template-rows: minmax(0, 1fr);
+}
+
+.settings-pane__mcp-overview {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.settings-pane__server-grid {
+  display: grid;
+  gap: 8px;
+  align-content: start;
 }
 
 .settings-pane__body--skills {
@@ -4306,6 +4343,20 @@ textarea {
   background: var(--bg-0);
 }
 
+.settings-pane__switch--mini {
+  width: 22px;
+  height: 12px;
+}
+.settings-pane__switch--mini .settings-pane__switch-thumb {
+  top: 2px;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+}
+.settings-pane__switch--mini[data-on="true"] .settings-pane__switch-thumb {
+  transform: translateX(10px);
+}
+
 /* ----- Status chips ----- */
 
 .settings-pane__chip {
@@ -4506,6 +4557,46 @@ textarea {
 .settings-pane__nav-list-item-dot[data-tone="off"]     { background: var(--text-3); opacity: 0.4; }
 .settings-pane__nav-list-item-dot[data-tone="pending"] { background: var(--text-2); }
 .settings-pane__nav-list-item-dot[data-tone="dirty"]   { background: var(--text-0); }
+.settings-pane__nav-list-item-main {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--r-med);
+}
+.settings-pane__nav-list-item-main:focus-visible {
+  outline: none;
+}
+.settings-pane__nav-list-item-count {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  padding: 1px 5px;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+.settings-pane__nav-list-item-count[data-on="false"] {
+  color: var(--text-3);
+  opacity: 0.5;
+}
 .settings-pane__nav-list-divider {
   height: 1px;
   background: var(--bg-3);

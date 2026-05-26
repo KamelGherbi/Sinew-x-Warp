@@ -618,7 +618,7 @@ export type AgentEvent =
       event: AgentEvent;
     }
   | { type: "agent_slept" }
-  | { type: "turn_finished" };
+  | { type: "turn_finished"; duration_ms?: number | null };
 
 export type StreamTokenUsage = {
   input_tokens: number;

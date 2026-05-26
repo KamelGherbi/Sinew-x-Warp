@@ -250,7 +250,7 @@ pub(super) async fn send_message(
                 event = event_rx.recv(), if !events_done => {
                     match event {
                         Some(event) => {
-                            if matches!(event, AgentEvent::TurnFinished) {
+                            if matches!(event, AgentEvent::TurnFinished { .. }) {
                                 continue;
                             }
                             schedule_main_wake_for_swarm_event(
@@ -315,6 +315,7 @@ pub(super) async fn send_message(
                                     }
                                 }
                             }
+                            let turn_duration_ms = goal_workflow_duration_ms(&goal_workflow);
                             let saved = SavedConversation {
                                 id: conversation_id.clone(),
                                 workspace_id: workspace_id.clone(),
@@ -381,11 +382,14 @@ pub(super) async fn send_message(
                                     }
                                 }
                             }
+                            let turn_finished_event = AgentEvent::TurnFinished {
+                                duration_ms: turn_duration_ms,
+                            };
                             let _ = emit_agent_event(
                                 &app,
                                 &workspace_id,
                                 &conversation_id,
-                                &AgentEvent::TurnFinished,
+                                &turn_finished_event,
                             );
                             active_turns.lock().await.remove(&conversation_id);
                             active_turn_details
@@ -407,7 +411,7 @@ pub(super) async fn send_message(
                                 &app,
                                 &workspace_id,
                                 &conversation_id,
-                                &AgentEvent::TurnFinished,
+                                &AgentEvent::TurnFinished { duration_ms: None },
                             );
                             active_turns.lock().await.remove(&conversation_id);
                             active_turn_details
@@ -670,7 +674,9 @@ pub(super) async fn compact_conversation(
         &app,
         &workspace_id,
         &conversation_id,
-        &AgentEvent::TurnFinished,
+        &AgentEvent::TurnFinished {
+            duration_ms: goal_workflow_duration_ms(&conversation.goal_workflow),
+        },
     );
     state.active_turns.lock().await.remove(&conversation_id);
     state
@@ -793,12 +799,16 @@ pub(super) async fn replay_active_turn_events(
         conversation_id: record.conversation_id.clone(),
         started_at_ms: Some(record.started_at_ms),
         latest_sequence: record.latest_sequence(),
-        events: record
-            .events
-            .iter()
-            .filter(|entry| entry.sequence > after_sequence)
-            .cloned()
-            .collect(),
+        events: if after_sequence == 0 {
+            record.replay_events.clone()
+        } else {
+            record
+                .events
+                .iter()
+                .filter(|entry| entry.sequence > after_sequence)
+                .cloned()
+                .collect()
+        },
     })
 }
 
@@ -870,6 +880,7 @@ pub(super) async fn register_active_turn(
                 conversation_id: conversation_id.to_string(),
                 started_at_ms: now_ms(),
                 events: Vec::new(),
+                replay_events: Vec::new(),
                 next_sequence: 1,
             },
         );
@@ -927,7 +938,11 @@ fn remember_active_turn_event(
         let record = active.get_mut(conversation_id)?;
         let sequence = record.next_sequence;
         record.next_sequence = record.next_sequence.saturating_add(1);
-        record.events.push(SequencedAgentEvent { sequence, event });
+        record.events.push(SequencedAgentEvent {
+            sequence,
+            event: event.clone(),
+        });
+        remember_active_turn_replay_event(record, sequence, event);
         let overflow = record
             .events
             .len()
@@ -936,6 +951,58 @@ fn remember_active_turn_event(
             record.events.drain(0..overflow);
         }
         Some(sequence)
+    }
+}
+
+fn remember_active_turn_replay_event(
+    record: &mut ActiveTurnRecord,
+    sequence: u64,
+    event: AgentEvent,
+) {
+    if let Some(previous) = record.replay_events.last_mut() {
+        if merge_replay_event(&mut previous.event, &event) {
+            previous.sequence = sequence;
+            return;
+        }
+    }
+    record
+        .replay_events
+        .push(SequencedAgentEvent { sequence, event });
+}
+
+fn merge_replay_event(existing: &mut AgentEvent, incoming: &AgentEvent) -> bool {
+    match (existing, incoming) {
+        (AgentEvent::TextChunk { delta: existing }, AgentEvent::TextChunk { delta })
+        | (AgentEvent::ThinkingChunk { delta: existing }, AgentEvent::ThinkingChunk { delta }) => {
+            existing.push_str(delta);
+            true
+        }
+        (
+            AgentEvent::ToolArgsDelta {
+                id: existing_id,
+                delta: existing,
+            },
+            AgentEvent::ToolArgsDelta { id, delta },
+        )
+        | (
+            AgentEvent::ToolOutputDelta {
+                id: existing_id,
+                delta: existing,
+            },
+            AgentEvent::ToolOutputDelta { id, delta },
+        ) if existing_id == id => {
+            existing.push_str(delta);
+            true
+        }
+        (
+            AgentEvent::SubAgentEvent {
+                id: existing_id,
+                event: existing_event,
+                ..
+            },
+            AgentEvent::SubAgentEvent { id, event, .. },
+        ) if existing_id == id => merge_replay_event(existing_event.as_mut(), event.as_ref()),
+        _ => false,
     }
 }
 

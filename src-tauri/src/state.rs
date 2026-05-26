@@ -10,7 +10,9 @@ pub(super) const TERMINAL_EXIT_EVENT_NAME: &str = "terminal-exit";
 pub(super) const TERMINAL_OPEN_EVENT_NAME: &str = "terminal-open-requested";
 pub(super) const ACTIVE_TURNS_EVENT_NAME: &str = "active-turns-changed";
 pub(super) const TERMINAL_OPEN_MENU_ID: &str = "terminal-open";
+pub(super) const CLOSE_ACTIVE_TAB_MENU_ID: &str = "close-active-tab";
 pub(super) const NEW_WINDOW_MENU_ID: &str = "new-window";
+pub(super) const CLOSE_ACTIVE_TAB_EVENT_NAME: &str = "editor-close-active-tab-requested";
 pub(super) const NEW_WINDOW_LABEL_PREFIX: &str = "sinew-window";
 pub(super) const NEW_WINDOW_URL: &str = "index.html?newWindow=1";
 pub(super) const MAX_ATTACHMENT_BYTES: usize = 128 * 1024;
@@ -54,6 +56,7 @@ pub(super) struct ActiveTurnRecord {
     pub(super) conversation_id: String,
     pub(super) started_at_ms: i64,
     pub(super) events: Vec<SequencedAgentEvent>,
+    pub(super) replay_events: Vec<SequencedAgentEvent>,
     pub(super) next_sequence: u64,
 }
 

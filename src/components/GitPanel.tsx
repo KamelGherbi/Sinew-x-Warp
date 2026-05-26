@@ -63,6 +63,24 @@ type RemoveTarget = {
   wt: GitWorktree;
 };
 
+// Confirmation state for deleting a local branch. We track `force` so a
+// first attempt that fails with the classic "not fully merged" error can
+// be retried in-place by escalating the button. `lastError` is rendered
+// inline inside the dialog so the user keeps context across retries.
+type DeleteBranchTarget = {
+  branch: GitBranch;
+  force: boolean;
+  deleteUpstream: boolean;
+  lastError: string | null;
+};
+
+// Composer state for renaming a local branch.
+type RenameBranchTarget = {
+  branch: GitBranch;
+  newName: string;
+  syncRemote: boolean;
+};
+
 const POLL_INTERVAL_MS = 6000;
 const NOTICE_AUTO_DISMISS_MS = 4500;
 
@@ -94,6 +112,12 @@ export function GitPanel({
 
   // Remove worktree confirmation (modal)
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null);
+
+  // Delete / rename branch composers (modals)
+  const [deleteBranchTarget, setDeleteBranchTarget] =
+    useState<DeleteBranchTarget | null>(null);
+  const [renameBranchTarget, setRenameBranchTarget] =
+    useState<RenameBranchTarget | null>(null);
 
   // Branch composer + ghost tab filter
   const [branchTab, setBranchTab] = useState<"local" | "remote">("local");
@@ -134,6 +158,8 @@ export function GitPanel({
     setWtBaseBranch("");
     setWtPushImmediately(false);
     setRemoveTarget(null);
+    setDeleteBranchTarget(null);
+    setRenameBranchTarget(null);
     setCreateBranchOpen(false);
     setNewBranchName("");
     setNewBranchBase("");
@@ -485,6 +511,85 @@ export function GitPanel({
     );
   }, [newBranchBase, newBranchName, runAction, showNotice, workspacePath]);
 
+  // -- Local branch: delete --------------------------------------------
+
+  const requestDeleteBranch = useCallback((branch: GitBranch) => {
+    setDeleteBranchTarget({
+      branch,
+      force: false,
+      // Default to NOT deleting the upstream — destructive and shared.
+      // We only surface the toggle when an upstream actually exists.
+      deleteUpstream: false,
+      lastError: null,
+    });
+  }, []);
+
+  // Inline lifecycle (instead of `runAction`) so we can inspect the
+  // error: a "not fully merged" failure flips the modal into a force
+  // retry rather than dumping a sticky notice and closing.
+  const handleConfirmDeleteBranch = useCallback(async () => {
+    const target = deleteBranchTarget;
+    if (!target || busyKey) return;
+    const key = `delete-branch:${target.branch.name}`;
+    setBusyKey(key);
+    try {
+      const result = await api.gitDeleteBranch(
+        workspacePath,
+        target.branch.name,
+        target.force,
+        target.deleteUpstream,
+      );
+      setDeleteBranchTarget(null);
+      showNotice({ kind: "success", text: result.message });
+    } catch (err) {
+      const text = stringifyError(err);
+      const unmerged = /not\s+(?:fully\s+)?merged/i.test(text);
+      // Keep the modal open so the user has context for the retry /
+      // upstream toggle. We deliberately don't pop the global sticky
+      // notice here — the inline error inside the dialog is enough.
+      setDeleteBranchTarget({
+        ...target,
+        force: target.force || unmerged,
+        lastError: text,
+      });
+    } finally {
+      setBusyKey(null);
+      void refresh(false);
+    }
+  }, [busyKey, deleteBranchTarget, refresh, showNotice, workspacePath]);
+
+  // -- Local branch: rename --------------------------------------------
+
+  const requestRenameBranch = useCallback((branch: GitBranch) => {
+    setRenameBranchTarget({
+      branch,
+      newName: branch.name,
+      // Pre-check sync only when there is actually an upstream to push.
+      syncRemote: Boolean(branch.upstream),
+    });
+  }, []);
+
+  const handleConfirmRenameBranch = useCallback(() => {
+    const target = renameBranchTarget;
+    if (!target) return;
+    const newName = target.newName.trim();
+    if (!newName || newName === target.branch.name) return;
+    void runAction(
+      `rename-branch:${target.branch.name}`,
+      () =>
+        api.gitRenameBranch(
+          workspacePath,
+          target.branch.name,
+          newName,
+          target.syncRemote,
+        ),
+      (result) => {
+        setRenameBranchTarget(null);
+        return { kind: "success", text: result.message };
+      },
+    );
+  }, [renameBranchTarget, runAction, workspacePath]);
+
   const handleCreatePr = useCallback(() => {
     const title = prTitle.trim();
     const target = prTarget.trim();
@@ -536,6 +641,18 @@ export function GitPanel({
 
   // ---- Derived data ----------------------------------------------------
 
+  // Lookup: which worktree (if any) currently has each local branch
+  // checked out. Detached worktrees (no `branch`) are skipped — they
+  // can't conflict with a named branch by definition.
+  const worktreeByBranch = useMemo<Map<string, GitWorktree>>(() => {
+    const map = new Map<string, GitWorktree>();
+    if (!snapshot) return map;
+    for (const wt of snapshot.worktrees) {
+      if (wt.branch) map.set(wt.branch, wt);
+    }
+    return map;
+  }, [snapshot]);
+
   const localBranches = useMemo<GitBranch[]>(
     () => (snapshot ? snapshot.branches.filter((b) => b.kind === "local") : []),
     [snapshot],
@@ -568,8 +685,8 @@ export function GitPanel({
         <span className="git-panel__state-title">Git isn't available</span>
         <span className="git-panel__state-text">
           Sinew couldn't find a working <code>git</code> binary on your{" "}
-          <code>PATH</code>. Install Git, restart Sinew, and this panel will
-          come back online.
+          <code>PATH</code> or in standard install locations. Install Git,
+          restart Sinew if needed, and this panel will come back online.
         </span>
         {snapshot.error && (
           <span className="git-panel__state-error">{snapshot.error}</span>
@@ -911,7 +1028,16 @@ export function GitPanel({
           ) : (
             <div className="git-panel__rows">
               {branchesForActiveTab.map((b) => (
-                <BranchRow key={`${b.kind}:${b.name}`} branch={b} />
+                <BranchRow
+                  key={`${b.kind}:${b.name}`}
+                  branch={b}
+                  worktree={worktreeByBranch.get(b.name)}
+                  busy={anyBusy}
+                  deleteBusy={busyKey === `delete-branch:${b.name}`}
+                  renameBusy={busyKey === `rename-branch:${b.name}`}
+                  onDelete={() => requestDeleteBranch(b)}
+                  onRename={() => requestRenameBranch(b)}
+                />
               ))}
             </div>
           )}
@@ -1147,6 +1273,137 @@ export function GitPanel({
         )}
         onPrimary={handleConfirmRemoveWorktree}
       />
+
+      <GitDialog
+        open={deleteBranchTarget !== null}
+        onClose={() => {
+          if (busyKey?.startsWith("delete-branch:")) return;
+          setDeleteBranchTarget(null);
+        }}
+        title={
+          deleteBranchTarget?.force
+            ? "Force delete branch?"
+            : "Delete branch?"
+        }
+        description={
+          deleteBranchTarget ? (
+            <DeleteBranchDescription target={deleteBranchTarget} />
+          ) : null
+        }
+        primaryLabel={
+          deleteBranchTarget?.force ? "Force delete" : "Delete"
+        }
+        primaryDanger
+        primaryBusy={Boolean(
+          deleteBranchTarget &&
+            busyKey === `delete-branch:${deleteBranchTarget.branch.name}`,
+        )}
+        onPrimary={() => void handleConfirmDeleteBranch()}
+      >
+        {deleteBranchTarget?.branch.upstream && (
+          <label className="git-panel__dialog-check">
+            <input
+              type="checkbox"
+              checked={deleteBranchTarget.deleteUpstream}
+              onChange={(e) =>
+                setDeleteBranchTarget((prev) =>
+                  prev ? { ...prev, deleteUpstream: e.target.checked } : prev,
+                )
+              }
+            />
+            <span>
+              Also delete the upstream branch{" "}
+              <code className="git-panel__dialog-code">
+                {deleteBranchTarget.branch.upstream}
+              </code>
+            </span>
+          </label>
+        )}
+        {deleteBranchTarget?.lastError && (
+          <div className="git-panel__dialog-error" role="alert">
+            {deleteBranchTarget.lastError}
+          </div>
+        )}
+      </GitDialog>
+
+      <GitDialog
+        open={renameBranchTarget !== null}
+        onClose={() => {
+          if (busyKey?.startsWith("rename-branch:")) return;
+          setRenameBranchTarget(null);
+        }}
+        title="Rename branch"
+        description={
+          renameBranchTarget ? (
+            <span>
+              Rename{" "}
+              <strong className="git-panel__dialog-strong">
+                {renameBranchTarget.branch.name}
+              </strong>
+              . Local refs move atomically; remote sync is a separate
+              push/delete step you can opt out of below.
+            </span>
+          ) : null
+        }
+        primaryLabel="Rename"
+        primaryDisabled={
+          !renameBranchTarget ||
+          !renameBranchTarget.newName.trim() ||
+          renameBranchTarget.newName.trim() === renameBranchTarget.branch.name
+        }
+        primaryBusy={Boolean(
+          renameBranchTarget &&
+            busyKey === `rename-branch:${renameBranchTarget.branch.name}`,
+        )}
+        onPrimary={handleConfirmRenameBranch}
+      >
+        <DialogField label="New name" htmlFor="git-panel-rename-branch">
+          <input
+            id="git-panel-rename-branch"
+            type="text"
+            className="git-panel__dialog-input"
+            placeholder={renameBranchTarget?.branch.name ?? "new-name"}
+            value={renameBranchTarget?.newName ?? ""}
+            onChange={(e) =>
+              setRenameBranchTarget((prev) =>
+                prev ? { ...prev, newName: e.target.value } : prev,
+              )
+            }
+            autoFocus
+          />
+        </DialogField>
+        <label
+          className="git-panel__dialog-check"
+          data-disabled={
+            renameBranchTarget && !renameBranchTarget.branch.upstream
+              ? "true"
+              : "false"
+          }
+        >
+          <input
+            type="checkbox"
+            checked={renameBranchTarget?.syncRemote ?? false}
+            disabled={!renameBranchTarget?.branch.upstream}
+            onChange={(e) =>
+              setRenameBranchTarget((prev) =>
+                prev ? { ...prev, syncRemote: e.target.checked } : prev,
+              )
+            }
+          />
+          <span>
+            {renameBranchTarget?.branch.upstream ? (
+              <>
+                Also rename the upstream branch{" "}
+                <code className="git-panel__dialog-code">
+                  {renameBranchTarget.branch.upstream}
+                </code>
+              </>
+            ) : (
+              <>No upstream is tracked — remote sync is unavailable.</>
+            )}
+          </span>
+        </label>
+      </GitDialog>
     </div>
   );
 }
@@ -1298,7 +1555,45 @@ function WorktreeRow({
   );
 }
 
-function BranchRow({ branch }: { branch: GitBranch }) {
+function BranchRow({
+  branch,
+  worktree,
+  busy,
+  deleteBusy,
+  renameBusy,
+  onDelete,
+  onRename,
+}: {
+  branch: GitBranch;
+  worktree: GitWorktree | undefined;
+  busy: boolean;
+  deleteBusy: boolean;
+  renameBusy: boolean;
+  onDelete: () => void;
+  onRename: () => void;
+}) {
+  const isLocal = branch.kind === "local";
+  // `branch.current` already flags the branch of the current worktree,
+  // but we cross-check the worktree map so we can describe *which*
+  // worktree blocks the action when it's a sibling worktree.
+  const checkedOutHere = worktree?.isCurrent === true || branch.current;
+  const checkedOutElsewhere = Boolean(worktree && !worktree.isCurrent);
+
+  const deleteDisabled =
+    busy || checkedOutHere || checkedOutElsewhere;
+  const deleteTooltip = checkedOutHere
+    ? "This is the branch of the current worktree \u2014 switch first to delete it."
+    : checkedOutElsewhere
+      ? `Checked out in worktree \u201c${worktree?.name}\u201d \u2014 remove that worktree first.`
+      : "Delete this local branch";
+
+  // Renaming the branch you're standing on is supported by git (it
+  // updates HEAD), so we only block when another worktree has it.
+  const renameDisabled = busy || checkedOutElsewhere;
+  const renameTooltip = checkedOutElsewhere
+    ? `Checked out in worktree \u201c${worktree?.name}\u201d \u2014 rename from there or remove that worktree first.`
+    : "Rename this branch";
+
   return (
     <div
       className="git-panel__row git-panel__row--branch"
@@ -1316,7 +1611,71 @@ function BranchRow({ branch }: { branch: GitBranch }) {
           {branch.upstream}
         </span>
       )}
+      {isLocal && (
+        <span className="git-panel__row-actions">
+          <button
+            type="button"
+            className="git-panel__head-btn"
+            onClick={onRename}
+            disabled={renameDisabled}
+            title={renameTooltip}
+            aria-label={`Rename branch ${branch.name}`}
+          >
+            {renameBusy ? (
+              <span className="git-panel__spinner git-panel__spinner--inline" />
+            ) : (
+              <Icon icon="solar:pen-linear" width={13} height={13} />
+            )}
+          </button>
+          <button
+            type="button"
+            className="git-panel__head-btn git-panel__head-btn--danger"
+            onClick={onDelete}
+            disabled={deleteDisabled}
+            title={deleteTooltip}
+            aria-label={`Delete branch ${branch.name}`}
+          >
+            {deleteBusy ? (
+              <span className="git-panel__spinner git-panel__spinner--inline" />
+            ) : (
+              <Icon
+                icon="solar:trash-bin-minimalistic-linear"
+                width={13}
+                height={13}
+              />
+            )}
+          </button>
+        </span>
+      )}
     </div>
+  );
+}
+
+function DeleteBranchDescription({
+  target,
+}: {
+  target: DeleteBranchTarget;
+}) {
+  const { branch, force } = target;
+  if (force) {
+    return (
+      <span>
+        <strong className="git-panel__dialog-strong">{branch.name}</strong>{" "}
+        has commits that aren't merged into the current branch. Force
+        deleting will{" "}
+        <strong className="git-panel__dialog-strong">drop those commits</strong>
+        {" "}from this repository — there is no undo.
+      </span>
+    );
+  }
+  return (
+    <span>
+      Delete the local branch{" "}
+      <strong className="git-panel__dialog-strong">{branch.name}</strong>?
+      {branch.upstream
+        ? " The remote-tracking branch stays in place unless you opt in below."
+        : " No upstream is tracked for this branch."}
+    </span>
   );
 }
 

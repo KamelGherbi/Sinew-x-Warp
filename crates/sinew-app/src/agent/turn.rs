@@ -834,7 +834,11 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
     if cancelled {
         send_event(&event_tx, event_scope.as_ref(), AgentEvent::Interrupted);
     }
-    send_event(&event_tx, event_scope.as_ref(), AgentEvent::TurnFinished);
+    send_event(
+        &event_tx,
+        event_scope.as_ref(),
+        AgentEvent::TurnFinished { duration_ms: None },
+    );
     todo_list.normalize();
     TurnOutput {
         history,

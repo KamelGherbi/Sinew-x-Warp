@@ -177,3 +177,18 @@ pub(super) fn pause_goal_workflow(workflow: GoalWorkflowState) -> GoalWorkflowSt
         current => current,
     }
 }
+
+pub(super) fn goal_workflow_duration_ms(workflow: &GoalWorkflowState) -> Option<i64> {
+    match workflow {
+        GoalWorkflowState::Active { started_at_ms, .. }
+        | GoalWorkflowState::Paused { started_at_ms, .. } => {
+            Some(now_ms().saturating_sub(*started_at_ms))
+        }
+        GoalWorkflowState::Complete {
+            started_at_ms,
+            completed_at_ms,
+            ..
+        } => Some(completed_at_ms.saturating_sub(*started_at_ms)),
+        GoalWorkflowState::Idle => None,
+    }
+}

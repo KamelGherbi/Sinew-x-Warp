@@ -1,7 +1,113 @@
 use crate::*;
 
+use tauri::{
+    menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder},
+    Runtime,
+};
+
 pub(super) fn error_to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(super) fn install_desktop_menu(app: &AppHandle) -> Result<()> {
+    let menu = build_desktop_menu(app)?;
+    app.set_menu(menu)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_desktop_menu<R: Runtime>(app: &AppHandle<R>) -> Result<Menu<R>> {
+    let pkg_info = app.package_info();
+    let config = app.config();
+    let about_metadata = AboutMetadata {
+        name: Some(pkg_info.name.clone()),
+        version: Some(pkg_info.version.to_string()),
+        copyright: config.bundle.copyright.clone(),
+        authors: config
+            .bundle
+            .publisher
+            .clone()
+            .map(|publisher| vec![publisher]),
+        ..Default::default()
+    };
+
+    let close_tab_item = MenuItemBuilder::with_id(CLOSE_ACTIVE_TAB_MENU_ID, "Close Tab")
+        .accelerator("CmdOrCtrl+W")
+        .build(app)?;
+    let new_window_item = MenuItemBuilder::with_id(NEW_WINDOW_MENU_ID, "New Window")
+        .accelerator("CmdOrCtrl+Shift+N")
+        .build(app)?;
+
+    let file_menu = SubmenuBuilder::new(app, "File")
+        .item(&close_tab_item)
+        .item(&new_window_item)
+        .build()?;
+    let edit_menu = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+    let terminal_menu = SubmenuBuilder::new(app, "Terminal")
+        .text(TERMINAL_OPEN_MENU_ID, "Open Terminal")
+        .build()?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let app_menu = Submenu::with_items(
+            app,
+            pkg_info.name.clone(),
+            true,
+            &[
+                &PredefinedMenuItem::about(app, None, Some(about_metadata))?,
+                &PredefinedMenuItem::separator(app)?,
+                &PredefinedMenuItem::services(app, None)?,
+                &PredefinedMenuItem::separator(app)?,
+                &PredefinedMenuItem::hide(app, None)?,
+                &PredefinedMenuItem::hide_others(app, None)?,
+                &PredefinedMenuItem::separator(app)?,
+                &PredefinedMenuItem::quit(app, None)?,
+            ],
+        )?;
+        let view_menu = SubmenuBuilder::new(app, "View").fullscreen().build()?;
+        let window_menu = Submenu::with_id_and_items(
+            app,
+            tauri::menu::WINDOW_SUBMENU_ID,
+            "Window",
+            true,
+            &[
+                &PredefinedMenuItem::minimize(app, None)?,
+                &PredefinedMenuItem::maximize(app, None)?,
+                &PredefinedMenuItem::separator(app)?,
+            ],
+        )?;
+        let help_menu =
+            Submenu::with_id_and_items(app, tauri::menu::HELP_SUBMENU_ID, "Help", true, &[])?;
+        return Menu::with_items(
+            app,
+            &[
+                &app_menu,
+                &file_menu,
+                &edit_menu,
+                &view_menu,
+                &window_menu,
+                &terminal_menu,
+                &help_menu,
+            ],
+        )
+        .map_err(Into::into);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = about_metadata;
+        return Menu::with_items(app, &[&file_menu, &edit_menu, &terminal_menu])
+            .map_err(Into::into);
+    }
 }
 
 pub(super) fn create_new_window(app: &AppHandle) -> Result<()> {

@@ -72,7 +72,7 @@ impl EditFileTool {
                                         "properties": {
                                             "oldContent": {
                                                 "type": "string",
-                                                "description": "Target text to replace at this step. ALWAYS use the shortest oldContent that is unique in the current content. Do not include surrounding context beyond what is strictly needed for an unambiguous match."
+                                                "description": "Exact text to replace. It must be copied verbatim from the current file content and occur exactly once. Use the shortest substring that is still unique; include surrounding context only if required for uniqueness."
                                             },
                                             "newContent": {
                                                 "type": "string",

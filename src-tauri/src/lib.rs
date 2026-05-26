@@ -223,26 +223,21 @@ pub fn run() {
 
             #[cfg(not(target_os = "windows"))]
             {
-                let handle = app.handle();
-                let menu = tauri::menu::Menu::default(handle)?;
-                let new_window_item =
-                    tauri::menu::MenuItemBuilder::with_id(NEW_WINDOW_MENU_ID, "New Window")
-                        .accelerator("CmdOrCtrl+Shift+N")
-                        .build(handle)?;
-                let file_menu = tauri::menu::SubmenuBuilder::new(handle, "File")
-                    .item(&new_window_item)
-                    .build()?;
-                let terminal_menu = tauri::menu::SubmenuBuilder::new(handle, "Terminal")
-                    .text(TERMINAL_OPEN_MENU_ID, "Open Terminal")
-                    .build()?;
-                menu.append(&file_menu)?;
-                menu.append(&terminal_menu)?;
-                app.set_menu(menu)?;
+                install_desktop_menu(app.handle())?;
             }
             Ok(())
         })
         .on_menu_event(|app, event| {
-            if event.id() == NEW_WINDOW_MENU_ID {
+            if event.id() == CLOSE_ACTIVE_TAB_MENU_ID {
+                let windows = app.webview_windows();
+                let target = windows
+                    .values()
+                    .find(|window| window.is_focused().unwrap_or(false))
+                    .or_else(|| windows.values().next());
+                if let Some(window) = target {
+                    let _ = window.emit(CLOSE_ACTIVE_TAB_EVENT_NAME, ());
+                }
+            } else if event.id() == NEW_WINDOW_MENU_ID {
                 create_new_window_detached(app);
             } else if event.id() == TERMINAL_OPEN_MENU_ID {
                 let focused = app
@@ -352,6 +347,8 @@ pub fn run() {
             git::git_create_worktree_command,
             git::git_remove_worktree_command,
             git::git_create_branch_command,
+            git::git_delete_branch_command,
+            git::git_rename_branch_command,
             git::git_commit_command,
             git::git_push_command,
             git::git_pull_command,

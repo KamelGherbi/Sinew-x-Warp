@@ -425,7 +425,7 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
                 event = event_rx.recv(), if !events_done => {
                     match event {
                         Some(event) => {
-                            if matches!(event, AgentEvent::TurnFinished) {
+                            if matches!(event, AgentEvent::TurnFinished { .. }) {
                                 continue;
                             }
                             schedule_main_wake_for_swarm_event(
@@ -522,7 +522,7 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
                                 &app,
                                 &workspace_id,
                                 &conversation_id_for_events,
-                                &AgentEvent::TurnFinished,
+                                &AgentEvent::TurnFinished { duration_ms: None },
                             );
                             active_turns.lock().await.remove(&conversation_id_for_events);
                             active_turn_details
@@ -544,7 +544,7 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
                                 &app,
                                 &workspace_id,
                                 &conversation_id_for_events,
-                                &AgentEvent::TurnFinished,
+                                &AgentEvent::TurnFinished { duration_ms: None },
                             );
                             active_turns.lock().await.remove(&conversation_id_for_events);
                             active_turn_details

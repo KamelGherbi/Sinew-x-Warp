@@ -81,7 +81,10 @@ pub enum AgentEvent {
         event: Box<AgentEvent>,
     },
     AgentSlept,
-    TurnFinished,
+    TurnFinished {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<i64>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
