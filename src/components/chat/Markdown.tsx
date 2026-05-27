@@ -21,6 +21,47 @@ type LinkifyOptions = {
   onOpenFile: (path: string) => void;
 };
 
+type ColorName =
+  | "red"
+  | "orange"
+  | "yellow"
+  | "green"
+  | "blue"
+  | "purple"
+  | "pink"
+  | "gray"
+  | "danger"
+  | "warning"
+  | "success"
+  | "info"
+  | "accent"
+  | "muted";
+
+const COLOR_ALIASES: Record<string, ColorName> = {
+  accent: "accent",
+  amber: "orange",
+  blue: "blue",
+  danger: "danger",
+  error: "danger",
+  gray: "gray",
+  green: "green",
+  grey: "gray",
+  important: "danger",
+  info: "info",
+  muted: "muted",
+  ok: "success",
+  orange: "orange",
+  pink: "pink",
+  purple: "purple",
+  red: "red",
+  rose: "red",
+  success: "success",
+  violet: "purple",
+  warn: "warning",
+  warning: "warning",
+  yellow: "yellow",
+};
+
 const FILE_TOKEN =
   /((?:\.{1,2}\/)?(?:[A-Za-z0-9_.+-]+\/)+[A-Za-z0-9_.+-]+\.[A-Za-z0-9]+(?::\d+(?::\d+)?)?|[A-Za-z0-9_.+-]+\.(?:tsx?|jsx?|rs|toml|json|md|css|scss|html|ya?ml|lock|sh|zsh|bash|py|go|java|kt|swift|sql|env|mjs|cjs|config)(?::\d+(?::\d+)?)?)/g;
 
@@ -64,7 +105,11 @@ function FileLink({
   );
 }
 
-function linkifyText(text: string, { onOpenFile }: LinkifyOptions): ReactNode[] {
+function linkifyText(
+  text: string,
+  { onOpenFile }: LinkifyOptions,
+  keyPrefix = "file",
+): ReactNode[] {
   const nodes: ReactNode[] = [];
   let lastIndex = 0;
 
@@ -76,7 +121,11 @@ function linkifyText(text: string, { onOpenFile }: LinkifyOptions): ReactNode[] 
       nodes.push(text.slice(lastIndex, index));
     }
     nodes.push(
-      <FileLink key={`${value}-${index}`} path={value} onOpenFile={onOpenFile}>
+      <FileLink
+        key={`${keyPrefix}-${value}-${index}`}
+        path={value}
+        onOpenFile={onOpenFile}
+      >
         {value}
       </FileLink>,
     );
@@ -85,6 +134,113 @@ function linkifyText(text: string, { onOpenFile }: LinkifyOptions): ReactNode[] 
 
   if (lastIndex < text.length) {
     nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
+}
+
+function normalizeColorName(value: string): ColorName | null {
+  return COLOR_ALIASES[value.toLowerCase()] ?? null;
+}
+
+function readColorStart(
+  text: string,
+  index: number,
+): { color: ColorName; contentStart: number } | null {
+  if (text[index] !== ":" || text[index + 1] !== ":" || text[index - 1] === "\\") {
+    return null;
+  }
+
+  let cursor = index + 2;
+  const colorStart = cursor;
+  while (cursor < text.length && /[A-Za-z-]/.test(text[cursor])) {
+    cursor += 1;
+  }
+
+  if (cursor === colorStart || text[cursor] !== "[") return null;
+  const color = normalizeColorName(text.slice(colorStart, cursor));
+  if (!color) return null;
+
+  return { color, contentStart: cursor + 1 };
+}
+
+function findClosingColorBracket(text: string, openBracketIndex: number): number {
+  let depth = 1;
+  for (let cursor = openBracketIndex + 1; cursor < text.length; cursor += 1) {
+    const char = text[cursor];
+    if (char === "\\" && cursor + 1 < text.length) {
+      cursor += 1;
+      continue;
+    }
+    if (char === "[") {
+      depth += 1;
+    } else if (char === "]") {
+      depth -= 1;
+      if (depth === 0) return cursor;
+    }
+  }
+  return -1;
+}
+
+function renderInlineText(
+  text: string,
+  options: LinkifyOptions,
+  keyPrefix = "text",
+): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  let plainStart = 0;
+
+  while (cursor < text.length) {
+    const colorStart = readColorStart(text, cursor);
+    if (!colorStart) {
+      cursor += 1;
+      continue;
+    }
+
+    const openBracketIndex = colorStart.contentStart - 1;
+    const closeBracketIndex = findClosingColorBracket(text, openBracketIndex);
+    if (closeBracketIndex < 0) {
+      cursor += 1;
+      continue;
+    }
+
+    if (plainStart < cursor) {
+      nodes.push(
+        ...linkifyText(
+          text.slice(plainStart, cursor),
+          options,
+          `${keyPrefix}-plain-${plainStart}`,
+        ),
+      );
+    }
+
+    nodes.push(
+      <span
+        key={`${keyPrefix}-color-${cursor}`}
+        className="md-color"
+        data-color={colorStart.color}
+      >
+        {renderInlineText(
+          text.slice(colorStart.contentStart, closeBracketIndex),
+          options,
+          `${keyPrefix}-color-${cursor}`,
+        )}
+      </span>,
+    );
+
+    cursor = closeBracketIndex + 1;
+    plainStart = cursor;
+  }
+
+  if (plainStart < text.length) {
+    nodes.push(
+      ...linkifyText(
+        text.slice(plainStart),
+        options,
+        `${keyPrefix}-plain-${plainStart}`,
+      ),
+    );
   }
 
   return nodes;
@@ -102,27 +258,180 @@ function childrenToString(children: ReactNode): string {
     .join("");
 }
 
-function linkifyChildren(children: ReactNode, options: LinkifyOptions): ReactNode {
-  return Children.map(children, (child) => {
-    if (typeof child === "string") return linkifyText(child, options);
-    if (!isValidElement(child)) return child;
-    if (child.type === "a" || child.type === "code" || child.type === "pre") {
-      return child;
+function childText(child: ReactNode): string | null {
+  if (typeof child === "string") return child;
+  if (typeof child === "number") return String(child);
+  return null;
+}
+
+function renderInlineNode(
+  child: ReactNode,
+  options: LinkifyOptions,
+  keyPrefix: string,
+): ReactNode {
+  const text = childText(child);
+  if (text !== null) {
+    return renderInlineText(text, options, keyPrefix);
+  }
+  if (!isValidElement(child)) return child;
+  if (child.type === "a" || child.type === "code" || child.type === "pre") {
+    return child;
+  }
+
+  const props = child.props as { children?: ReactNode };
+  if (props.children === undefined) return child;
+
+  return cloneElement(
+    child as ReactElement<{ children?: ReactNode }>,
+    undefined,
+    renderInlineChildren(props.children, options, keyPrefix),
+  );
+}
+
+type ColorStart = { index: number; color: ColorName; contentStart: number };
+
+function findNextColorStart(text: string, from: number): ColorStart | null {
+  for (let index = from; index < text.length; index += 1) {
+    const start = readColorStart(text, index);
+    if (start) return { index, ...start };
+  }
+  return null;
+}
+
+function collectColorContent(
+  children: ReactNode[],
+  startChildIndex: number,
+  startOffset: number,
+): { endChildIndex: number; endOffset: number; content: ReactNode[] } | null {
+  const content: ReactNode[] = [];
+  let depth = 1;
+
+  for (let index = startChildIndex; index < children.length; index += 1) {
+    const child = children[index];
+    const text = childText(child);
+    if (text === null) {
+      content.push(child);
+      continue;
     }
 
-    const props = child.props as { children?: ReactNode };
-    if (props.children === undefined) return child;
+    const segmentStart = index === startChildIndex ? startOffset : 0;
+    let pendingStart = segmentStart;
+    for (let cursor = segmentStart; cursor < text.length; cursor += 1) {
+      const char = text[cursor];
+      if (char === "\\" && cursor + 1 < text.length) {
+        cursor += 1;
+        continue;
+      }
+      if (char === "[") {
+        depth += 1;
+      } else if (char === "]") {
+        depth -= 1;
+        if (depth === 0) {
+          if (pendingStart < cursor) {
+            content.push(text.slice(pendingStart, cursor));
+          }
+          return { endChildIndex: index, endOffset: cursor, content };
+        }
+      }
+    }
 
-    return cloneElement(
-      child as ReactElement<{ children?: ReactNode }>,
-      undefined,
-      linkifyChildren(props.children, options),
+    if (pendingStart < text.length) {
+      content.push(text.slice(pendingStart));
+    }
+  }
+
+  return null;
+}
+
+function renderInlineChildren(
+  children: ReactNode,
+  options: LinkifyOptions,
+  keyPrefix = "child",
+): ReactNode {
+  const childArray = Children.toArray(children);
+  const nodes: ReactNode[] = [];
+  let childIndex = 0;
+  let textOffset = 0;
+
+  while (childIndex < childArray.length) {
+    const child = childArray[childIndex];
+    const text = childText(child);
+    if (text === null) {
+      nodes.push(renderInlineNode(child, options, `${keyPrefix}-${childIndex}`));
+      childIndex += 1;
+      textOffset = 0;
+      continue;
+    }
+
+    const colorStart = findNextColorStart(text, textOffset);
+    if (!colorStart) {
+      nodes.push(
+        ...linkifyText(
+          text.slice(textOffset),
+          options,
+          `${keyPrefix}-${childIndex}-plain-${textOffset}`,
+        ),
+      );
+      childIndex += 1;
+      textOffset = 0;
+      continue;
+    }
+
+    if (textOffset < colorStart.index) {
+      nodes.push(
+        ...linkifyText(
+          text.slice(textOffset, colorStart.index),
+          options,
+          `${keyPrefix}-${childIndex}-plain-${textOffset}`,
+        ),
+      );
+    }
+
+    const collected = collectColorContent(
+      childArray,
+      childIndex,
+      colorStart.contentStart,
     );
-  });
+    if (!collected) {
+      nodes.push(
+        ...linkifyText(
+          text.slice(colorStart.index, colorStart.contentStart),
+          options,
+          `${keyPrefix}-${childIndex}-plain-${colorStart.index}`,
+        ),
+      );
+      textOffset = colorStart.contentStart;
+      continue;
+    }
+
+    nodes.push(
+      <span
+        key={`${keyPrefix}-${childIndex}-color-${colorStart.index}`}
+        className="md-color"
+        data-color={colorStart.color}
+      >
+        {renderInlineChildren(
+          collected.content,
+          options,
+          `${keyPrefix}-${childIndex}-color-${colorStart.index}`,
+        )}
+      </span>,
+    );
+
+    childIndex = collected.endChildIndex;
+    textOffset = collected.endOffset + 1;
+    const endText = childText(childArray[childIndex]) ?? "";
+    if (textOffset >= endText.length) {
+      childIndex += 1;
+      textOffset = 0;
+    }
+  }
+
+  return nodes;
 }
 
 export function FileLinkedText({ text, onOpenFile }: Props) {
-  return <>{linkifyText(text, { onOpenFile })}</>;
+  return <>{renderInlineText(text, { onOpenFile }, "file-linked")}</>;
 }
 
 /**
@@ -158,22 +467,22 @@ export const Markdown = memo(function Markdown({ text, onOpenFile }: Props) {
             return <pre>{children}</pre>;
           },
           p({ children }) {
-            return <p>{linkifyChildren(children, { onOpenFile })}</p>;
+            return <p>{renderInlineChildren(children, { onOpenFile })}</p>;
           },
           li({ children }) {
-            return <li>{linkifyChildren(children, { onOpenFile })}</li>;
+            return <li>{renderInlineChildren(children, { onOpenFile })}</li>;
           },
           h1({ children }) {
-            return <h1>{linkifyChildren(children, { onOpenFile })}</h1>;
+            return <h1>{renderInlineChildren(children, { onOpenFile })}</h1>;
           },
           h2({ children }) {
-            return <h2>{linkifyChildren(children, { onOpenFile })}</h2>;
+            return <h2>{renderInlineChildren(children, { onOpenFile })}</h2>;
           },
           h3({ children }) {
-            return <h3>{linkifyChildren(children, { onOpenFile })}</h3>;
+            return <h3>{renderInlineChildren(children, { onOpenFile })}</h3>;
           },
           h4({ children }) {
-            return <h4>{linkifyChildren(children, { onOpenFile })}</h4>;
+            return <h4>{renderInlineChildren(children, { onOpenFile })}</h4>;
           },
           code({ children, className }) {
             const value = childrenToString(children);

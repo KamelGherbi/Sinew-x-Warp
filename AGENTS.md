@@ -2,25 +2,6 @@ Code map:
 - L'agent doit garder à jour cette carte simple des fichiers à chaque création, suppression, renommage, déplacement ou modification.
 
 .
-├── .gitignore
-├── AGENTS.md
-├── Cargo.lock
-├── Cargo.toml
-├── EDIT_FILE_HARNESS_COMPARISON.md
-├── FEATURES.md
-├── GLOB_HARNESS_COMPARISON.md
-├── GREP_HARNESS_COMPARISON.md
-├── index.html
-├── LICENSE
-├── package-lock.json
-├── package.json
-├── README.md
-├── test-stop.md
-├── scripts
-│   └── prepare-sidecars.mjs
-├── tsconfig.json
-├── tsconfig.node.json
-├── vite.config.ts
 ├── .github
 │   ├── assets
 │   │   ├── architecture.png
@@ -34,121 +15,181 @@ Code map:
 │       └── security.yml
 ├── crates
 │   ├── sinew-anthropic
-│   │   ├── Cargo.toml
-│   │   └── src
-│   │       ├── auth.rs
-│   │       ├── client.rs
-│   │       ├── lib.rs
-│   │       ├── model_info.rs
-│   │       ├── stream.rs
-│   │       └── wire.rs
+│   │   ├── src
+│   │   │   ├── auth.rs
+│   │   │   ├── client.rs
+│   │   │   ├── lib.rs
+│   │   │   ├── model_info.rs
+│   │   │   ├── stream.rs
+│   │   │   └── wire.rs
+│   │   └── Cargo.toml
 │   ├── sinew-app
-│   │   ├── Cargo.toml
-│   │   └── src
-│   │       ├── agent.rs
-│   │       ├── agent
-│   │       │   ├── assistant_message.rs
-│   │       │   ├── cancel.rs
-│   │       │   ├── clean_context.rs
-│   │       │   ├── compaction.rs
-│   │       │   ├── context.rs
-│   │       │   ├── events.rs
-│   │       │   ├── history.rs
-│   │       │   ├── mode.rs
-│   │       │   ├── tests.rs
-│   │       │   ├── tool_dispatch.rs
-│   │       │   ├── tool_summary.rs
-│   │       │   └── turn.rs
-│   │       ├── bash.rs
-│   │       ├── compact.rs
-│   │       ├── edit.rs
-│   │       ├── glob.rs
-│   │       ├── grep.rs
-│   │       ├── image.rs
-│   │       ├── lib.rs
-│   │       ├── mcp.rs
-│   │       ├── question.rs
-│   │       ├── read.rs
-│   │       ├── skill.rs
-│   │       ├── store.rs
-│   │       ├── subagent.rs
-│   │       ├── team.rs
-│   │       ├── team
-│   │       │   ├── agent_turns.rs
-│   │       │   ├── context.rs
-│   │       │   ├── descriptors.rs
-│   │       │   ├── launch.rs
-│   │       │   ├── live.rs
-│   │       │   ├── messaging.rs
-│   │       │   ├── model.rs
-│   │       │   ├── render.rs
-│   │       │   ├── session.rs
-│   │       │   ├── status_stop.rs
-│   │       │   ├── task_board.rs
-│   │       │   └── tests.rs
-│   │       ├── text.rs
-│   │       ├── todo.rs
-│   │       ├── tool_names.rs
-│   │       ├── tool_run.rs
-│   │       ├── web.rs
-│   │       ├── write.rs
-│   │       └── workspace.rs
+│   │   ├── src
+│   │   │   ├── agent
+│   │   │   │   ├── assistant_message.rs
+│   │   │   │   ├── cancel.rs
+│   │   │   │   ├── clean_context.rs
+│   │   │   │   ├── compaction.rs
+│   │   │   │   ├── context.rs
+│   │   │   │   ├── events.rs
+│   │   │   │   ├── history.rs
+│   │   │   │   ├── mode.rs
+│   │   │   │   ├── tests.rs
+│   │   │   │   ├── tool_dispatch.rs
+│   │   │   │   ├── tool_summary.rs
+│   │   │   │   └── turn.rs
+│   │   │   ├── team
+│   │   │   │   ├── agent_turns.rs
+│   │   │   │   ├── context.rs
+│   │   │   │   ├── descriptors.rs
+│   │   │   │   ├── launch.rs
+│   │   │   │   ├── live.rs
+│   │   │   │   ├── messaging.rs
+│   │   │   │   ├── model.rs
+│   │   │   │   ├── render.rs
+│   │   │   │   ├── session.rs
+│   │   │   │   ├── status_stop.rs
+│   │   │   │   ├── task_board.rs
+│   │   │   │   └── tests.rs
+│   │   │   ├── agent.rs
+│   │   │   ├── bash.rs
+│   │   │   ├── compact.rs
+│   │   │   ├── edit.rs
+│   │   │   ├── glob.rs
+│   │   │   ├── grep.rs
+│   │   │   ├── image.rs
+│   │   │   ├── lib.rs
+│   │   │   ├── mcp.rs
+│   │   │   ├── question.rs
+│   │   │   ├── read.rs
+│   │   │   ├── ripgrep.rs
+│   │   │   ├── skill.rs
+│   │   │   ├── store.rs
+│   │   │   ├── subagent.rs
+│   │   │   ├── team.rs
+│   │   │   ├── text.rs
+│   │   │   ├── todo.rs
+│   │   │   ├── tool_names.rs
+│   │   │   ├── tool_run.rs
+│   │   │   ├── web.rs
+│   │   │   ├── workspace.rs
+│   │   │   └── write.rs
+│   │   └── Cargo.toml
 │   ├── sinew-core
-│   │   ├── Cargo.toml
-│   │   └── src
-│   │       ├── error.rs
-│   │       ├── lib.rs
-│   │       ├── message.rs
-│   │       ├── model.rs
-│   │       ├── provider.rs
-│   │       ├── stream.rs
-│   │       └── tool.rs
+│   │   ├── src
+│   │   │   ├── error.rs
+│   │   │   ├── lib.rs
+│   │   │   ├── message.rs
+│   │   │   ├── model.rs
+│   │   │   ├── provider.rs
+│   │   │   ├── stream.rs
+│   │   │   └── tool.rs
+│   │   └── Cargo.toml
 │   ├── sinew-google
-│   │   ├── Cargo.toml
-│   │   └── src
-│   │       ├── auth.rs
-│   │       ├── client.rs
-│   │       ├── lib.rs
-│   │       ├── model_info.rs
-│   │       ├── stream.rs
-│   │       └── wire.rs
+│   │   ├── src
+│   │   │   ├── auth.rs
+│   │   │   ├── client.rs
+│   │   │   ├── lib.rs
+│   │   │   ├── model_info.rs
+│   │   │   ├── stream.rs
+│   │   │   └── wire.rs
+│   │   └── Cargo.toml
 │   ├── sinew-kimi
-│   │   ├── Cargo.toml
-│   │   └── src
-│   │       ├── auth.rs
-│   │       ├── client.rs
-│   │       ├── lib.rs
-│   │       ├── model_info.rs
-│   │       ├── stream.rs
-│   │       └── wire.rs
+│   │   ├── src
+│   │   │   ├── auth.rs
+│   │   │   ├── client.rs
+│   │   │   ├── lib.rs
+│   │   │   ├── model_info.rs
+│   │   │   ├── stream.rs
+│   │   │   └── wire.rs
+│   │   └── Cargo.toml
 │   ├── sinew-openai
-│   │   ├── Cargo.toml
-│   │   └── src
-│   │       ├── auth.rs
-│   │       ├── client.rs
-│   │       ├── lib.rs
-│   │       ├── model_info.rs
-│   │       ├── responses_stream.rs
-│   │       ├── stream.rs
-│   │       ├── websocket.rs
-│   │       └── wire.rs
+│   │   ├── src
+│   │   │   ├── auth.rs
+│   │   │   ├── client.rs
+│   │   │   ├── lib.rs
+│   │   │   ├── model_info.rs
+│   │   │   ├── responses_stream.rs
+│   │   │   ├── stream.rs
+│   │   │   ├── websocket.rs
+│   │   │   └── wire.rs
+│   │   └── Cargo.toml
 │   └── sinew-openrouter
-│       ├── Cargo.toml
-│       └── src
-│           ├── auth.rs
-│           ├── client.rs
-│           ├── lib.rs
-│           ├── model_info.rs
-│           ├── stream.rs
-│           └── wire.rs
+│       ├── src
+│       │   ├── auth.rs
+│       │   ├── client.rs
+│       │   ├── lib.rs
+│       │   ├── model_info.rs
+│       │   ├── stream.rs
+│       │   └── wire.rs
+│       └── Cargo.toml
+├── resources
+│   └── skills
+│       ├── apex
+│       │   └── SKILL.md
+│       ├── prompt-creator
+│       │   └── SKILL.md
+│       ├── skill-creator
+│       │   └── SKILL.md
+│       └── subagent-creator
+│           └── SKILL.md
+├── scripts
+│   ├── prepare-sidecars.mjs
+│   └── tauri-cli.mjs
+├── src
+│   ├── components
+│   │   ├── chat
+│   │   │   ├── AIThinkingBlock.tsx
+│   │   │   ├── ChatPane.tsx
+│   │   │   ├── dotmatrix-core.tsx
+│   │   │   ├── dotmatrix-hooks.ts
+│   │   │   ├── DotmSquare2.tsx
+│   │   │   ├── DotmSquare5.tsx
+│   │   │   ├── FileChangeBlock.tsx
+│   │   │   ├── Markdown.tsx
+│   │   │   ├── MermaidDiagram.tsx
+│   │   │   ├── PlanningNextMoveBlock.tsx
+│   │   │   ├── Questionnaire.tsx
+│   │   │   ├── stream.ts
+│   │   │   ├── TodoStrip.tsx
+│   │   │   └── ToolCard.tsx
+│   │   ├── ConversationList.tsx
+│   │   ├── EditorPane.tsx
+│   │   ├── FileTree.tsx
+│   │   ├── GitPanel.tsx
+│   │   ├── ImageContextMenu.tsx
+│   │   ├── SearchPane.tsx
+│   │   ├── SessionSwitcher.tsx
+│   │   ├── SettingsPane.tsx
+│   │   ├── SinewMark.tsx
+│   │   ├── Splitter.tsx
+│   │   ├── TerminalPanel.tsx
+│   │   ├── UpdateBadge.tsx
+│   │   ├── UpdaterLockScreen.tsx
+│   │   ├── Welcome.tsx
+│   │   ├── WindowControls.tsx
+│   │   └── Workspace.tsx
+│   ├── lib
+│   │   ├── appearance.ts
+│   │   ├── customIcons.ts
+│   │   ├── fileIcon.ts
+│   │   ├── ipc.ts
+│   │   ├── language.ts
+│   │   ├── models.ts
+│   │   ├── recents.ts
+│   │   ├── sessions.ts
+│   │   └── tools.ts
+│   ├── App.tsx
+│   ├── main.tsx
+│   ├── styles.css
+│   ├── types.ts
+│   └── vite-env.d.ts
 ├── src-tauri
-│   ├── Cargo.toml
 │   ├── binaries
-│   │   └── .gitkeep
-│   ├── build.rs
-│   ├── tauri.sidecars.conf.json
-│   ├── tauri.conf.json
-│   ├── tauri.windows.conf.json
+│   │   ├── .gitkeep
+│   │   ├── rg-aarch64-apple-darwin
+│   │   ├── rg-universal-apple-darwin
+│   │   └── rg-x86_64-apple-darwin
 │   ├── capabilities
 │   │   └── default.json
 │   ├── gen
@@ -158,25 +199,6 @@ Code map:
 │   │       ├── desktop-schema.json
 │   │       └── macOS-schema.json
 │   ├── icons
-│   │   ├── 128x128.png
-│   │   ├── 128x128@2x.png
-│   │   ├── 32x32.png
-│   │   ├── 64x64.png
-│   │   ├── Square107x107Logo.png
-│   │   ├── Square142x142Logo.png
-│   │   ├── Square150x150Logo.png
-│   │   ├── Square284x284Logo.png
-│   │   ├── Square30x30Logo.png
-│   │   ├── Square310x310Logo.png
-│   │   ├── Square44x44Logo.png
-│   │   ├── Square71x71Logo.png
-│   │   ├── Square89x89Logo.png
-│   │   ├── StoreLogo.png
-│   │   ├── icon.icns
-│   │   ├── icon.ico
-│   │   ├── icon.png
-│   │   ├── nsis-sidebar.bmp
-│   │   ├── source.svg
 │   │   ├── android
 │   │   │   ├── mipmap-anydpi-v26
 │   │   │   │   └── ic_launcher.xml
@@ -202,84 +224,79 @@ Code map:
 │   │   │   │   └── ic_launcher_round.png
 │   │   │   └── values
 │   │   │       └── ic_launcher_background.xml
-│   │   └── ios
-│   │       ├── AppIcon-20x20@1x.png
-│   │       ├── AppIcon-20x20@2x-1.png
-│   │       ├── AppIcon-20x20@2x.png
-│   │       ├── AppIcon-20x20@3x.png
-│   │       ├── AppIcon-29x29@1x.png
-│   │       ├── AppIcon-29x29@2x-1.png
-│   │       ├── AppIcon-29x29@2x.png
-│   │       ├── AppIcon-29x29@3x.png
-│   │       ├── AppIcon-40x40@1x.png
-│   │       ├── AppIcon-40x40@2x-1.png
-│   │       ├── AppIcon-40x40@2x.png
-│   │       ├── AppIcon-40x40@3x.png
-│   │       ├── AppIcon-512@2x.png
-│   │       ├── AppIcon-60x60@2x.png
-│   │       ├── AppIcon-60x60@3x.png
-│   │       ├── AppIcon-76x76@1x.png
-│   │       ├── AppIcon-76x76@2x.png
-│   │       └── AppIcon-83.5x83.5@2x.png
-│   └── src
-│       ├── context.rs
-│       ├── conversations.rs
-│       ├── git.rs
-│       ├── lib.rs
-│       ├── main.rs
-│       ├── models.rs
-│       ├── platform.rs
-│       ├── providers.rs
-│       ├── state.rs
-│       ├── swarm.rs
-│       ├── terminal.rs
-│       ├── tests.rs
-│       ├── turns.rs
-│       ├── updater.rs
-│       ├── vibe_island.rs
-│       ├── workflow.rs
-│       └── workspace.rs
-└── src
-    ├── App.tsx
-    ├── main.tsx
-    ├── styles.css
-    ├── types.ts
-    ├── vite-env.d.ts
-    ├── components
-    │   ├── ConversationList.tsx
-    │   ├── EditorPane.tsx
-    │   ├── FileTree.tsx
-    │   ├── GitPanel.tsx
-    │   ├── SearchPane.tsx
-    │   ├── SettingsPane.tsx
-    │   ├── SessionSwitcher.tsx
-    │   ├── SinewMark.tsx
-    │   ├── Splitter.tsx
-    │   ├── TerminalPanel.tsx
-    │   ├── UpdateBadge.tsx
-    │   ├── UpdaterLockScreen.tsx
-    │   ├── Welcome.tsx
-    │   ├── WindowControls.tsx
-    │   ├── Workspace.tsx
-    │   └── chat
-    │       ├── AIThinkingBlock.tsx
-    │       ├── ChatPane.tsx
-    │       ├── DotmSquare2.tsx
-    │       ├── DotmSquare5.tsx
-    │       ├── FileChangeBlock.tsx
-    │       ├── Markdown.tsx
-    │       ├── MermaidDiagram.tsx
-    │       ├── PlanningNextMoveBlock.tsx
-    │       ├── Questionnaire.tsx
-    │       ├── TodoStrip.tsx
-    │       ├── ToolCard.tsx
-    │       ├── dotmatrix-core.tsx
-    │       ├── dotmatrix-hooks.ts
-    │       └── stream.ts
-    ├── lib
-    │   ├── fileIcon.ts
-    │   ├── ipc.ts
-    │   ├── language.ts
-    │   ├── models.ts
-    │   ├── recents.ts
-    │   └── tools.ts
+│   │   ├── ios
+│   │   │   ├── AppIcon-20x20@1x.png
+│   │   │   ├── AppIcon-20x20@2x-1.png
+│   │   │   ├── AppIcon-20x20@2x.png
+│   │   │   ├── AppIcon-20x20@3x.png
+│   │   │   ├── AppIcon-29x29@1x.png
+│   │   │   ├── AppIcon-29x29@2x-1.png
+│   │   │   ├── AppIcon-29x29@2x.png
+│   │   │   ├── AppIcon-29x29@3x.png
+│   │   │   ├── AppIcon-40x40@1x.png
+│   │   │   ├── AppIcon-40x40@2x-1.png
+│   │   │   ├── AppIcon-40x40@2x.png
+│   │   │   ├── AppIcon-40x40@3x.png
+│   │   │   ├── AppIcon-512@2x.png
+│   │   │   ├── AppIcon-60x60@2x.png
+│   │   │   ├── AppIcon-60x60@3x.png
+│   │   │   ├── AppIcon-76x76@1x.png
+│   │   │   ├── AppIcon-76x76@2x.png
+│   │   │   └── AppIcon-83.5x83.5@2x.png
+│   │   ├── 128x128.png
+│   │   ├── 128x128@2x.png
+│   │   ├── 32x32.png
+│   │   ├── 64x64.png
+│   │   ├── icon.icns
+│   │   ├── icon.ico
+│   │   ├── icon.png
+│   │   ├── nsis-sidebar.bmp
+│   │   ├── source.svg
+│   │   ├── Square107x107Logo.png
+│   │   ├── Square142x142Logo.png
+│   │   ├── Square150x150Logo.png
+│   │   ├── Square284x284Logo.png
+│   │   ├── Square30x30Logo.png
+│   │   ├── Square310x310Logo.png
+│   │   ├── Square44x44Logo.png
+│   │   ├── Square71x71Logo.png
+│   │   ├── Square89x89Logo.png
+│   │   └── StoreLogo.png
+│   ├── src
+│   │   ├── context.rs
+│   │   ├── conversations.rs
+│   │   ├── git.rs
+│   │   ├── lib.rs
+│   │   ├── main.rs
+│   │   ├── models.rs
+│   │   ├── platform.rs
+│   │   ├── providers.rs
+│   │   ├── state.rs
+│   │   ├── swarm.rs
+│   │   ├── terminal.rs
+│   │   ├── tests.rs
+│   │   ├── turns.rs
+│   │   ├── updater.rs
+│   │   ├── vibe_island.rs
+│   │   ├── workflow.rs
+│   │   └── workspace.rs
+│   ├── build.rs
+│   ├── Cargo.toml
+│   ├── tauri.conf.json
+│   ├── tauri.sidecars.conf.json
+│   └── tauri.windows.conf.json
+├── .DS_Store
+├── .gitignore
+├── AGENTS.md
+├── Cargo.lock
+├── Cargo.toml
+├── index.html
+├── LICENSE
+├── package-lock.json
+├── package.json
+├── README.md
+├── settings.json
+├── test-stop.md
+├── tsconfig.json
+├── tsconfig.node.json
+└── vite.config.ts

@@ -7,6 +7,32 @@ import { canonicalToolName } from "../lib/tools";
 import { Markdown } from "./chat/Markdown";
 import { SinewMark } from "./SinewMark";
 import {
+  APPEARANCE_CHANGED_EVENT,
+  DEFAULT_APPEARANCE_SETTINGS,
+  MAX_CODE_FONT_SIZE,
+  MAX_MESSAGE_FONT_SIZE,
+  MAX_UI_SCALE,
+  MIN_CODE_FONT_SIZE,
+  MIN_MESSAGE_FONT_SIZE,
+  MIN_UI_SCALE,
+  applyAppearanceSettings,
+  loadAppearanceSettings,
+  normalizeAppearanceSettings,
+  saveAppearanceSettings,
+  type AccentColor,
+  type AppearanceSettings,
+  type ChatDensity,
+  type CodeFontFamily,
+  type CornerRadius,
+  type LinkUnderline,
+  type MarkdownDensity,
+  type MessageBubbleStyle,
+  type MessageLineHeight,
+  type MessageMeta,
+  type MessageWidth,
+  type ThemeMode,
+} from "../lib/appearance";
+import {
   MODELS,
   PROVIDERS,
   THINKING_LEVELS,
@@ -56,11 +82,6 @@ const FALLBACK_TOOL_SETTINGS: ToolSettings = {
 };
 const PROVIDERS_CHANGED_EVENT = "sinew:providers-changed";
 const TOOL_SETTINGS_CHANGED_EVENT = "sinew:tool-settings-changed";
-const MESSAGE_FONT_SIZE_STORAGE_KEY = "sinew.appearance.messageFontSize";
-const MESSAGE_FONT_SIZE_CHANGED_EVENT = "sinew:message-font-size-changed";
-const DEFAULT_MESSAGE_FONT_SIZE = 12;
-const MIN_MESSAGE_FONT_SIZE = 11;
-const MAX_MESSAGE_FONT_SIZE = 18;
 
 type Props = {
   workspacePath: string;
@@ -128,13 +149,21 @@ export function SettingsPane({ workspacePath }: Props) {
   const [providersBusy, setProvidersBusy] = useState(false);
   const [providersMessage, setProvidersMessage] = useState<string | null>(null);
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([]);
-  const [messageFontSize, setMessageFontSize] = useState(loadMessageFontSize);
+  const [appearance, setAppearance] = useState(loadAppearanceSettings);
 
   useEffect(() => {
-    applyMessageFontSize(messageFontSize);
-    saveMessageFontSize(messageFontSize);
-    window.dispatchEvent(new Event(MESSAGE_FONT_SIZE_CHANGED_EVENT));
-  }, [messageFontSize]);
+    applyAppearanceSettings(appearance);
+    saveAppearanceSettings(appearance);
+    window.dispatchEvent(new Event(APPEARANCE_CHANGED_EVENT));
+  }, [appearance]);
+
+  const updateAppearance = useCallback((patch: Partial<AppearanceSettings>) => {
+    setAppearance((current) => normalizeAppearanceSettings({ ...current, ...patch }));
+  }, []);
+
+  const resetAppearance = useCallback(() => {
+    setAppearance(DEFAULT_APPEARANCE_SETTINGS);
+  }, []);
 
   useEffect(() => {
     setToolSettings(null);
@@ -1125,8 +1154,10 @@ export function SettingsPane({ workspacePath }: Props) {
             height={15}
             className="settings-pane__nav-icon"
           />
-          <span className="settings-pane__nav-label">Appearance</span>
-          <span className="settings-pane__nav-count">{messageFontSize}px</span>
+          <span className="settings-pane__nav-label">Apparence</span>
+          <span className="settings-pane__nav-count">
+            {appearance.messageFontSize}px
+          </span>
         </button>
         <button
           type="button"
@@ -1211,8 +1242,9 @@ export function SettingsPane({ workspacePath }: Props) {
           <AboutSection />
         ) : section === "appearance" ? (
           <AppearanceSection
-            messageFontSize={messageFontSize}
-            onMessageFontSizeChange={setMessageFontSize}
+            settings={appearance}
+            onChange={updateAppearance}
+            onReset={resetAppearance}
           />
         ) : section === "providers" ? (
           <ProvidersSection
@@ -1387,73 +1419,510 @@ function AboutSection() {
 // ---- Appearance section ------------------------------------------------
 
 type AppearanceSectionProps = {
-  messageFontSize: number;
-  onMessageFontSizeChange: (value: number) => void;
+  settings: AppearanceSettings;
+  onChange: (patch: Partial<AppearanceSettings>) => void;
+  onReset: () => void;
 };
 
 function AppearanceSection({
-  messageFontSize,
-  onMessageFontSizeChange,
+  settings,
+  onChange,
+  onReset,
 }: AppearanceSectionProps) {
+  const isDefault = appearanceFingerprint(settings) === appearanceFingerprint(DEFAULT_APPEARANCE_SETTINGS);
+
   return (
     <>
       <header className="settings-pane__header">
         <div className="settings-pane__header-text">
-          <h1 className="settings-pane__title">Appearance</h1>
+          <h1 className="settings-pane__title">Apparence</h1>
           <p className="settings-pane__subtitle">
-            Tune how conversation messages are displayed.
+            Personnalise le chat, les blocs de code, le thème et le confort de lecture.
           </p>
+        </div>
+        <div className="settings-pane__actions">
+          <button
+            type="button"
+            className="settings-pane__btn"
+            onClick={onReset}
+            disabled={isDefault}
+          >
+            <Icon icon="solar:restart-linear" width={13} height={13} />
+            <span>Tout réinitialiser</span>
+          </button>
         </div>
       </header>
 
       <div className="settings-pane__body settings-pane__body--appearance">
-        <section className="settings-pane__appearance-card">
-          <div className="settings-pane__appearance-card-head">
-            <div>
-              <h2>Message font size</h2>
-              <p>Changes user and assistant message text immediately.</p>
-            </div>
-            <span>{messageFontSize}px</span>
-          </div>
+        <div className="settings-pane__appearance-grid">
+          <section className="settings-pane__appearance-card">
+            <AppearanceCardHeader
+              icon="solar:chat-round-dots-linear"
+              title="Mise en page du chat"
+              description="Ajuste la taille, l’espacement, la largeur et le style des bulles."
+              value={`${settings.messageFontSize}px`}
+            />
 
-          <label className="settings-pane__range-row">
-            <span className="settings-pane__range-value">Small</span>
-            <input
-              type="range"
+            <RangeControl
+              label="Taille du texte des messages"
+              value={settings.messageFontSize}
               min={MIN_MESSAGE_FONT_SIZE}
               max={MAX_MESSAGE_FONT_SIZE}
-              step={1}
-              value={messageFontSize}
-              aria-label="Message font size"
-              onChange={(event) =>
-                onMessageFontSizeChange(normalizeMessageFontSize(event.target.value))
-              }
+              minLabel="Petit"
+              maxLabel="Grand"
+              suffix="px"
+              onChange={(messageFontSize) => onChange({ messageFontSize })}
             />
-            <span className="settings-pane__range-value">Large</span>
-          </label>
 
-          <div className="settings-pane__message-preview" aria-label="Message preview">
-            <div className="settings-pane__message-preview-bubble">
-              <Markdown
-                text="This is how messages will look in the chat. You can make them larger when dense replies feel too small."
-                onOpenFile={() => undefined}
-              />
-            </div>
-          </div>
+            <SegmentedControl<MessageLineHeight>
+              label="Interligne"
+              value={settings.lineHeight}
+              options={LINE_HEIGHT_OPTIONS}
+              onChange={(lineHeight) => onChange({ lineHeight })}
+            />
 
-          <button
-            type="button"
-            className="settings-pane__btn"
-            onClick={() => onMessageFontSizeChange(DEFAULT_MESSAGE_FONT_SIZE)}
-            disabled={messageFontSize === DEFAULT_MESSAGE_FONT_SIZE}
-          >
-            <Icon icon="solar:restart-linear" width={13} height={13} />
-            <span>Reset to default</span>
-          </button>
+            <SegmentedControl<ChatDensity>
+              label="Espacement des messages"
+              value={settings.chatDensity}
+              options={CHAT_DENSITY_OPTIONS}
+              onChange={(chatDensity) => onChange({ chatDensity })}
+            />
+
+            <SegmentedControl<MessageWidth>
+              label="Largeur des messages"
+              value={settings.messageWidth}
+              options={MESSAGE_WIDTH_OPTIONS}
+              onChange={(messageWidth) => onChange({ messageWidth })}
+            />
+
+            <SegmentedControl<MessageBubbleStyle>
+              label="Style des bulles"
+              value={settings.bubbleStyle}
+              options={BUBBLE_STYLE_OPTIONS}
+              onChange={(bubbleStyle) => onChange({ bubbleStyle })}
+            />
+
+            <SegmentedControl<MessageMeta>
+              label="Libellés des messages"
+              value={settings.messageMeta}
+              options={MESSAGE_META_OPTIONS}
+              onChange={(messageMeta) => onChange({ messageMeta })}
+            />
+          </section>
+
+          <section className="settings-pane__appearance-card">
+            <AppearanceCardHeader
+              icon="solar:code-square-linear"
+              title="Markdown et code"
+              description="Ajuste les réponses longues, les listes, les citations et la lisibilité du code."
+              value={`${settings.codeFontSize}px pour le code`}
+            />
+
+            <SegmentedControl<MarkdownDensity>
+              label="Densité du Markdown"
+              value={settings.markdownDensity}
+              options={MARKDOWN_DENSITY_OPTIONS}
+              onChange={(markdownDensity) => onChange({ markdownDensity })}
+            />
+
+            <RangeControl
+              label="Taille du texte du code"
+              value={settings.codeFontSize}
+              min={MIN_CODE_FONT_SIZE}
+              max={MAX_CODE_FONT_SIZE}
+              minLabel="Petit"
+              maxLabel="Grand"
+              suffix="px"
+              onChange={(codeFontSize) => onChange({ codeFontSize })}
+            />
+
+            <SegmentedControl<CodeFontFamily>
+              label="Police du code"
+              value={settings.codeFontFamily}
+              options={CODE_FONT_OPTIONS}
+              onChange={(codeFontFamily) => onChange({ codeFontFamily })}
+            />
+
+            <SwitchControl
+              label="Retour à la ligne du code"
+              description="Évite le défilement horizontal dans les extraits générés et les sorties d’outils."
+              checked={settings.codeWrap}
+              onChange={(codeWrap) => onChange({ codeWrap })}
+            />
+
+            <SegmentedControl<LinkUnderline>
+              label="Soulignement des liens"
+              value={settings.linkUnderline}
+              options={LINK_UNDERLINE_OPTIONS}
+              onChange={(linkUnderline) => onChange({ linkUnderline })}
+            />
+          </section>
+
+          <section className="settings-pane__appearance-card">
+            <AppearanceCardHeader
+              icon="solar:palette-linear"
+              title="Thème"
+              description="Choisis le thème de l’interface, la couleur d’accent et la forme visuelle."
+              value={themeModeLabel(settings.themeMode)}
+            />
+
+            <SegmentedControl<ThemeMode>
+              label="Mode du thème"
+              value={settings.themeMode}
+              options={THEME_MODE_OPTIONS}
+              onChange={(themeMode) => onChange({ themeMode })}
+            />
+
+            <AccentControl
+              value={settings.accentColor}
+              onChange={(accentColor) => onChange({ accentColor })}
+            />
+
+            <RangeControl
+              label="Échelle de l’interface"
+              value={settings.uiScale}
+              min={MIN_UI_SCALE}
+              max={MAX_UI_SCALE}
+              minLabel="Petite"
+              maxLabel="Grande"
+              suffix="px"
+              onChange={(uiScale) => onChange({ uiScale })}
+            />
+
+            <SegmentedControl<CornerRadius>
+              label="Arrondi des angles"
+              value={settings.cornerRadius}
+              options={CORNER_RADIUS_OPTIONS}
+              onChange={(cornerRadius) => onChange({ cornerRadius })}
+            />
+          </section>
+
+          <section className="settings-pane__appearance-card">
+            <AppearanceCardHeader
+              icon="solar:accessibility-linear"
+              title="Accessibilité"
+              description="Rends l’interface plus stable et plus facile à distinguer."
+              value={settings.highContrast ? "Contraste élevé" : "Standard"}
+            />
+
+            <SwitchControl
+              label="Contraste élevé"
+              description="Renforce les bordures, le texte, les contrôles et les surfaces de code."
+              checked={settings.highContrast}
+              onChange={(highContrast) => onChange({ highContrast })}
+            />
+
+            <SwitchControl
+              label="Réduire les animations"
+              description="Désactive les animations décoratives et les longues transitions."
+              checked={settings.reduceMotion}
+              onChange={(reduceMotion) => onChange({ reduceMotion })}
+            />
+          </section>
+        </div>
+
+        <section className="settings-pane__appearance-preview-card">
+          <AppearanceCardHeader
+            icon="solar:eye-linear"
+            title="Aperçu en direct"
+            description="Un exemple réaliste avec message utilisateur, Markdown, code et carte d’outil."
+            value="Immédiat"
+          />
+          <AppearancePreview />
         </section>
       </div>
     </>
   );
+}
+
+type Option<T extends string> = { value: T; label: string };
+
+const LINE_HEIGHT_OPTIONS: Option<MessageLineHeight>[] = [
+  { value: "compact", label: "Compact" },
+  { value: "normal", label: "Normal" },
+  { value: "comfortable", label: "Confort" },
+];
+
+const CHAT_DENSITY_OPTIONS: Option<ChatDensity>[] = [
+  { value: "compact", label: "Compact" },
+  { value: "standard", label: "Standard" },
+  { value: "comfortable", label: "Aéré" },
+];
+
+const MESSAGE_WIDTH_OPTIONS: Option<MessageWidth>[] = [
+  { value: "narrow", label: "Étroite" },
+  { value: "standard", label: "Standard" },
+  { value: "wide", label: "Large" },
+  { value: "full", label: "Complète" },
+];
+
+const BUBBLE_STYLE_OPTIONS: Option<MessageBubbleStyle>[] = [
+  { value: "minimal", label: "Minimaliste" },
+  { value: "soft", label: "Doux" },
+  { value: "solid", label: "Plein" },
+];
+
+const MESSAGE_META_OPTIONS: Option<MessageMeta>[] = [
+  { value: "hidden", label: "Masqués" },
+  { value: "roles", label: "Rôles" },
+];
+
+const MARKDOWN_DENSITY_OPTIONS: Option<MarkdownDensity>[] = [
+  { value: "compact", label: "Compact" },
+  { value: "normal", label: "Normal" },
+  { value: "comfortable", label: "Lecture" },
+];
+
+const CODE_FONT_OPTIONS: Option<CodeFontFamily>[] = [
+  { value: "geist", label: "Geist" },
+  { value: "system", label: "Système" },
+  { value: "jetbrains", label: "JetBrains" },
+  { value: "fira", label: "Fira" },
+];
+
+const LINK_UNDERLINE_OPTIONS: Option<LinkUnderline>[] = [
+  { value: "subtle", label: "Subtil" },
+  { value: "hover", label: "Au survol" },
+  { value: "always", label: "Toujours" },
+];
+
+const THEME_MODE_OPTIONS: Option<ThemeMode>[] = [
+  { value: "system", label: "Système" },
+  { value: "dark", label: "Sombre" },
+  { value: "light", label: "Clair" },
+];
+
+const CORNER_RADIUS_OPTIONS: Option<CornerRadius>[] = [
+  { value: "compact", label: "Serré" },
+  { value: "default", label: "Défaut" },
+  { value: "round", label: "Arrondi" },
+];
+
+const ACCENT_OPTIONS: (Option<AccentColor> & { hex: string })[] = [
+  { value: "blue", label: "Bleu", hex: "#3b82f6" },
+  { value: "violet", label: "Violet", hex: "#8b5cf6" },
+  { value: "green", label: "Vert", hex: "#22c55e" },
+  { value: "orange", label: "Orange", hex: "#f59e0b" },
+  { value: "rose", label: "Rose", hex: "#f43f5e" },
+];
+
+function AppearanceCardHeader({
+  icon,
+  title,
+  description,
+  value,
+}: {
+  icon: string;
+  title: string;
+  description: string;
+  value?: string;
+}) {
+  return (
+    <div className="settings-pane__appearance-card-head">
+      <span className="settings-pane__appearance-card-icon" aria-hidden>
+        <Icon icon={icon} width={15} height={15} />
+      </span>
+      <div>
+        <h2>{title}</h2>
+        <p>{description}</p>
+      </div>
+      {value ? <span>{value}</span> : null}
+    </div>
+  );
+}
+
+function RangeControl({
+  label,
+  value,
+  min,
+  max,
+  minLabel,
+  maxLabel,
+  suffix,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  minLabel: string;
+  maxLabel: string;
+  suffix: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="settings-pane__appearance-control">
+      <div className="settings-pane__appearance-control-head">
+        <span>{label}</span>
+        <code>{value}{suffix}</code>
+      </div>
+      <label className="settings-pane__range-row">
+        <span className="settings-pane__range-value">{minLabel}</span>
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={1}
+          value={value}
+          aria-label={label}
+          onChange={(event) => onChange(Number.parseInt(event.target.value, 10))}
+        />
+        <span className="settings-pane__range-value">{maxLabel}</span>
+      </label>
+    </div>
+  );
+}
+
+function SegmentedControl<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: Option<T>[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="settings-pane__appearance-control">
+      <div className="settings-pane__appearance-control-head">
+        <span>{label}</span>
+      </div>
+      <div className="settings-pane__segmented" role="group" aria-label={label}>
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className="settings-pane__segment"
+            data-active={option.value === value ? "true" : "false"}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SwitchControl({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="settings-pane__switch-row">
+      <div>
+        <span>{label}</span>
+        <p>{description}</p>
+      </div>
+      <button
+        type="button"
+        className="settings-pane__switch"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        data-on={checked ? "true" : "false"}
+        onClick={() => onChange(!checked)}
+      >
+        <span className="settings-pane__switch-thumb" />
+      </button>
+    </div>
+  );
+}
+
+function AccentControl({
+  value,
+  onChange,
+}: {
+  value: AccentColor;
+  onChange: (value: AccentColor) => void;
+}) {
+  return (
+    <div className="settings-pane__appearance-control">
+      <div className="settings-pane__appearance-control-head">
+        <span>Couleur d’accent</span>
+      </div>
+      <div className="settings-pane__accent-list" role="radiogroup" aria-label="Couleur d’accent">
+        {ACCENT_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className="settings-pane__accent"
+            role="radio"
+            aria-checked={option.value === value}
+            data-active={option.value === value ? "true" : "false"}
+            onClick={() => onChange(option.value)}
+          >
+            <span style={{ background: option.hex }} />
+            <em>{option.label}</em>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AppearancePreview() {
+  return (
+    <div className="settings-pane__message-preview" aria-label="Aperçu des messages">
+      <div className="msg" data-role="user">
+        <div className="msg__body user-text">
+          Peux-tu rendre les réponses denses plus faciles à lire et garder les blocs de code propres ?
+        </div>
+      </div>
+      <div className="msg" data-role="assistant">
+        <div className="msg__body">
+          <Markdown
+            text={APPEARANCE_PREVIEW_MARKDOWN}
+            onOpenFile={() => undefined}
+          />
+        </div>
+      </div>
+      <div className="msg" data-role="assistant">
+        <div className="tool-card settings-pane__preview-tool">
+          <div className="tool-card__head" data-clickable="false">
+            <span className="tool-card__glyph">
+              <Icon icon="solar:document-text-linear" width={13} height={13} />
+            </span>
+            <span className="tool-card__title">Lecture de src/components/SettingsPane.tsx</span>
+            <span className="tool-card__title-meta">aperçu</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const APPEARANCE_PREVIEW_MARKDOWN = `Bien sûr — voici une mise en page plus claire :
+
+1. Un texte de message plus grand avec un interligne réglable.
+2. Un espacement Markdown compact ou confortable.
+3. Des blocs de code avec une taille indépendante et un retour à la ligne optionnel.
+
+Le \`code inline\` reste lisible, les liens conservent le style de l’app, et les citations respirent mieux.
+
+> Le contraste élevé renforce les surfaces discrètes quand le thème par défaut paraît trop léger.
+
+\`\`\`ts
+const apparence = normalizeAppearanceSettings(saved);
+applyAppearanceSettings(apparence);
+\`\`\``;
+
+function appearanceFingerprint(settings: AppearanceSettings): string {
+  return JSON.stringify(normalizeAppearanceSettings(settings));
+}
+
+function themeModeLabel(mode: ThemeMode): string {
+  if (mode === "system") return "Système";
+  return mode === "light" ? "Clair" : "Sombre";
 }
 
 // ---- Providers section -------------------------------------------------
@@ -3709,47 +4178,6 @@ function WrenchIcon({
       className={className}
       aria-hidden
     />
-  );
-}
-
-function loadMessageFontSize(): number {
-  try {
-    if (typeof window === "undefined") return DEFAULT_MESSAGE_FONT_SIZE;
-    return normalizeMessageFontSize(
-      window.localStorage.getItem(MESSAGE_FONT_SIZE_STORAGE_KEY),
-    );
-  } catch {
-    return DEFAULT_MESSAGE_FONT_SIZE;
-  }
-}
-
-function saveMessageFontSize(value: number): void {
-  try {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(
-      MESSAGE_FONT_SIZE_STORAGE_KEY,
-      String(normalizeMessageFontSize(value)),
-    );
-  } catch {
-    // Ignore storage errors; the live CSS variable still applies for this session.
-  }
-}
-
-function applyMessageFontSize(value: number): void {
-  if (typeof document === "undefined") return;
-  document.documentElement.style.setProperty(
-    "--message-font-size",
-    `${normalizeMessageFontSize(value)}px`,
-  );
-}
-
-function normalizeMessageFontSize(value: unknown): number {
-  const numberValue =
-    typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
-  if (!Number.isFinite(numberValue)) return DEFAULT_MESSAGE_FONT_SIZE;
-  return Math.min(
-    MAX_MESSAGE_FONT_SIZE,
-    Math.max(MIN_MESSAGE_FONT_SIZE, Math.round(numberValue)),
   );
 }
 

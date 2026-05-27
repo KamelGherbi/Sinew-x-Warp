@@ -146,8 +146,8 @@ export function UpdateBadge() {
       return;
     }
     // Hand off to the global <UpdaterLockScreen />: <App /> listens for
-    // this event, swaps the whole window to the lock screen, and the
-    // lock screen auto-starts the install. We keep the custom-build
+    // this event, swaps the whole window to the updater screen, and the
+    // screen auto-starts the install. We keep the custom-build
     // protection above so official updates never replace local builds
     // without an explicit safe path.
     window.dispatchEvent(

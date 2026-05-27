@@ -80,6 +80,10 @@ pub enum AgentEvent {
         initial_message: Option<String>,
         event: Box<AgentEvent>,
     },
+    ConversationTitleUpdated {
+        title: String,
+        updated_at_ms: i64,
+    },
     AgentSlept,
     TurnFinished {
         #[serde(skip_serializing_if = "Option::is_none")]

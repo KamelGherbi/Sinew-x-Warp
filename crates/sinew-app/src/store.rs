@@ -1,15 +1,20 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
+use futures_util::StreamExt;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use sinew_core::{ChatMessage, ModelRef, Part, Role, ToolDescriptor};
+use sinew_core::{
+    ChatMessage, Effort, ModelRef, Part, Provider, ProviderRequest, Role, ServiceTier, StreamEvent,
+    ToolDescriptor,
+};
 use uuid::Uuid;
 
 use crate::agent::AgentMode;
@@ -30,6 +35,9 @@ const TOOL_SETTINGS_KEY: &str = "tool_settings";
 const SKILL_SETTINGS_KEY: &str = "skill_settings";
 const OPENROUTER_MODELS_KEY: &str = "openrouter_models";
 const HIDDEN_TOOL_SETTING_NAMES: &[&str] = &["skill"];
+const TITLE_MAX_CHARS: usize = 48;
+const TITLE_INPUT_MAX_CHARS: usize = 1_200;
+const TITLE_MODEL_TIMEOUT_SECS: u64 = 12;
 
 pub const DEFAULT_PLAN_MODE_PROMPT: &str = r#"You are in Plan mode.
 
@@ -723,19 +731,22 @@ impl AppStore {
             .context("unable to prepare session list query")?;
 
         let rows = statement
-            .query_map(params![like_query, limit, if archived { 1 } else { 0 }], |row| {
-                let workspace_id: String = row.get(1)?;
-                Ok(SessionSummary {
-                    id: row.get(0)?,
-                    workspace_name: workspace_name_from_id(&workspace_id),
-                    workspace_id,
-                    title: row.get(2)?,
-                    created_at_ms: row.get(3)?,
-                    updated_at_ms: row.get(4)?,
-                    message_count: row.get(5)?,
-                    archived_at_ms: row.get(6)?,
-                })
-            })
+            .query_map(
+                params![like_query, limit, if archived { 1 } else { 0 }],
+                |row| {
+                    let workspace_id: String = row.get(1)?;
+                    Ok(SessionSummary {
+                        id: row.get(0)?,
+                        workspace_name: workspace_name_from_id(&workspace_id),
+                        workspace_id,
+                        title: row.get(2)?,
+                        created_at_ms: row.get(3)?,
+                        updated_at_ms: row.get(4)?,
+                        message_count: row.get(5)?,
+                        archived_at_ms: row.get(6)?,
+                    })
+                },
+            )
             .context("unable to read session list")?;
 
         let mut sessions = Vec::new();
@@ -1352,6 +1363,49 @@ impl AppStore {
         Ok(normalized)
     }
 
+    pub fn update_generated_conversation_title(
+        &self,
+        workspace_id: &str,
+        id: &str,
+        expected_current_title: &str,
+        generated_title: &str,
+    ) -> Result<Option<i64>> {
+        let generated_title = generated_title.trim();
+        if generated_title.is_empty() {
+            return Ok(None);
+        }
+
+        let conn = self.connection()?;
+        let current_title = conn
+            .query_row(
+                "select title from conversations where workspace_id = ?1 and id = ?2",
+                params![workspace_id, id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .context("unable to read conversation title")?;
+        let Some(current_title) = current_title else {
+            return Ok(None);
+        };
+        if current_title.trim() != expected_current_title.trim()
+            || current_title.trim() == generated_title
+        {
+            return Ok(None);
+        }
+
+        let updated_at_ms = now_ms();
+        let changed = conn
+            .execute(
+                "update conversations set title = ?4, updated_at_ms = ?5 where workspace_id = ?1 and id = ?2 and title = ?3",
+                params![workspace_id, id, current_title, generated_title, updated_at_ms],
+            )
+            .context("unable to update generated conversation title")?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        Ok(Some(updated_at_ms))
+    }
+
     pub fn rename_conversation(&self, workspace_id: &str, id: &str, title: &str) -> Result<()> {
         let conn = self.connection()?;
         conn.execute(
@@ -1738,22 +1792,125 @@ fn resolve_title_for_save(
         }
     }
 
+    let incoming_title = normalize_conversation_title(incoming_title);
     let fallback_title = current_state
         .map(|state| state.title.as_str())
-        .unwrap_or(incoming_title);
-    match title_from_history(history) {
+        .unwrap_or(incoming_title.as_str());
+    match legacy_title_from_history(history) {
         Some(title) => ConversationTitleState {
             title,
             initialized: true,
         },
         None => ConversationTitleState {
-            title: fallback_title.to_string(),
+            title: normalize_conversation_title(fallback_title),
             initialized: false,
         },
     }
 }
 
-fn title_from_history(history: &[ChatMessage]) -> Option<String> {
+fn normalize_conversation_title(title: &str) -> String {
+    let title = title.trim();
+    if title.is_empty() {
+        DEFAULT_CONVERSATION_TITLE.to_string()
+    } else {
+        title.to_string()
+    }
+}
+
+fn conversation_needs_generated_title(current_title: &str, history: &[ChatMessage]) -> bool {
+    if first_visible_user_text(history).is_none() {
+        return false;
+    }
+
+    let current_title = current_title.trim();
+    if current_title.is_empty() || current_title == DEFAULT_CONVERSATION_TITLE {
+        return true;
+    }
+
+    legacy_title_from_history(history)
+        .as_deref()
+        .map(|legacy| legacy == current_title)
+        .unwrap_or(false)
+}
+
+pub async fn summarized_conversation_title(
+    current_title: &str,
+    provider: Arc<dyn Provider>,
+    model: ModelRef,
+    history: &[ChatMessage],
+) -> String {
+    let current_title = normalize_conversation_title(current_title);
+    if !conversation_needs_generated_title(&current_title, history) {
+        return current_title;
+    }
+
+    let fallback = fallback_conversation_title(history).unwrap_or_else(|| current_title.clone());
+    let Some(input) = title_generation_input(history) else {
+        return fallback;
+    };
+
+    match tokio::time::timeout(
+        Duration::from_secs(TITLE_MODEL_TIMEOUT_SECS),
+        request_summarized_title(provider, model, input),
+    )
+    .await
+    {
+        Ok(Some(title)) => title,
+        Ok(None) | Err(_) => fallback,
+    }
+}
+
+async fn request_summarized_title(
+    provider: Arc<dyn Provider>,
+    model: ModelRef,
+    input: String,
+) -> Option<String> {
+    let mut request = ProviderRequest::new(
+        model,
+        vec![ChatMessage::user_text(format!(
+            "Generate a title for this conversation:\n{input}"
+        ))],
+    )
+    .with_system(
+        "You are a title generator. Output ONLY a thread title. Nothing else. The title must be a single line, at most 50 characters, in the same language as the user message. Never include tool names. Focus on the main topic or question the user needs to retrieve. Keep exact technical terms, numbers, filenames, and HTTP codes. Never say you cannot generate a title; always output something meaningful.",
+    );
+    request.max_output_tokens = Some(32);
+    request.effort = Some(Effort::None);
+    request.service_tier = Some(ServiceTier::Fast);
+
+    let mut stream = provider.stream(request).await.ok()?;
+    let mut title = String::new();
+    while let Some(event) = stream.next().await {
+        match event.ok()? {
+            StreamEvent::TextDelta { delta, .. } => title.push_str(&delta),
+            StreamEvent::MessageStop { .. } => break,
+            _ => {}
+        }
+    }
+    sanitize_generated_title(&title)
+}
+
+fn title_generation_input(history: &[ChatMessage]) -> Option<String> {
+    first_visible_user_text(history).map(|text| {
+        let text = compact_whitespace(text);
+        if text.chars().count() <= TITLE_INPUT_MAX_CHARS {
+            text
+        } else {
+            let mut shortened = text
+                .chars()
+                .take(TITLE_INPUT_MAX_CHARS.saturating_sub(1))
+                .collect::<String>();
+            shortened.push('…');
+            shortened
+        }
+    })
+}
+
+fn fallback_conversation_title(history: &[ChatMessage]) -> Option<String> {
+    first_visible_user_text(history).map(heuristic_title_from_text)
+}
+
+fn first_visible_user_text(history: &[ChatMessage]) -> Option<&str> {
     history
         .iter()
         .filter(|message| matches!(message.role, Role::User))
@@ -1762,20 +1919,134 @@ fn title_from_history(history: &[ChatMessage]) -> Option<String> {
                 Part::Text { text, meta }
                     if !title_hidden_text(meta) && !text.trim().is_empty() =>
                 {
-                    Some(text.trim().to_string())
+                    Some(text.trim())
                 }
                 _ => None,
             })
         })
-        .map(|title| {
-            if title.chars().count() <= 48 {
-                title
-            } else {
-                let mut shortened = title.chars().take(45).collect::<String>();
-                shortened.push_str("...");
-                shortened
-            }
+}
+
+fn heuristic_title_from_text(text: &str) -> String {
+    let mut title = compact_whitespace(text);
+    title = strip_markdown_prefixes(&title);
+    title = strip_request_prefixes(&title);
+    title = title
+        .split(['\n', '\r'])
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    title = trim_title_edges(&title).to_string();
+    truncate_title(&title)
+}
+
+fn legacy_title_from_history(history: &[ChatMessage]) -> Option<String> {
+    first_visible_user_text(history).map(truncate_title)
+}
+
+fn compact_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn strip_markdown_prefixes(value: &str) -> String {
+    value
+        .trim_start_matches(|ch: char| {
+            ch.is_whitespace() || matches!(ch, '#' | '*' | '-' | '>' | '`')
         })
+        .trim()
+        .to_string()
+}
+
+fn strip_request_prefixes(value: &str) -> String {
+    let prefixes = [
+        "peux-tu ",
+        "peux tu ",
+        "est-ce que tu peux ",
+        "tu peux ",
+        "please ",
+        "can you ",
+        "could you ",
+        "i want to ",
+        "i want ",
+        "je veux ",
+        "j'aimerais ",
+        "j aimerais ",
+    ];
+    let lower = value.to_lowercase();
+    for prefix in prefixes {
+        if lower.starts_with(prefix) {
+            return value[prefix.len()..].trim().to_string();
+        }
+    }
+    value.trim().to_string()
+}
+
+fn sanitize_generated_title(raw: &str) -> Option<String> {
+    let mut title = raw
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?
+        .to_string();
+
+    title = strip_markdown_prefixes(&title);
+    title = strip_title_label(&title).to_string();
+    title = trim_title_edges(&title).to_string();
+    title = compact_whitespace(&title);
+    title = trim_title_edges(&title).to_string();
+
+    if title.is_empty() || title == DEFAULT_CONVERSATION_TITLE {
+        return None;
+    }
+
+    Some(truncate_title(&title))
+}
+
+fn strip_title_label(value: &str) -> &str {
+    let lower = value.to_lowercase();
+    for label in ["title:", "titre:", "chat title:", "nom:"] {
+        if lower.starts_with(label) {
+            return value[label.len()..].trim();
+        }
+    }
+    value.trim()
+}
+
+fn trim_title_edges(value: &str) -> &str {
+    value.trim_matches(|ch: char| {
+        ch.is_whitespace()
+            || matches!(
+                ch,
+                '"' | '\''
+                    | '`'
+                    | '“'
+                    | '”'
+                    | '‘'
+                    | '’'
+                    | '«'
+                    | '»'
+                    | '*'
+                    | '_'
+                    | '-'
+                    | '—'
+                    | ':'
+                    | ';'
+                    | '.'
+            )
+    })
+}
+
+fn truncate_title(title: &str) -> String {
+    let title = title.trim();
+    if title.chars().count() <= TITLE_MAX_CHARS {
+        return title.to_string();
+    }
+
+    let mut shortened = title
+        .chars()
+        .take(TITLE_MAX_CHARS.saturating_sub(1))
+        .collect::<String>();
+    shortened.push('…');
+    shortened
 }
 
 fn title_hidden_text(meta: &Option<Value>) -> bool {
@@ -1790,6 +2061,7 @@ fn title_hidden_text(meta: &Option<Value>) -> bool {
         || meta.get("compaction_summary").and_then(Value::as_bool) == Some(true)
         || meta.get("system_reminder").and_then(Value::as_bool) == Some(true)
         || meta.get("attachment_context").and_then(Value::as_bool) == Some(true)
+        || meta.get("agent_team_messages").and_then(Value::as_bool) == Some(true)
         || meta.get("plan_control").and_then(Value::as_str).is_some()
 }
 
@@ -1934,7 +2206,7 @@ mod tests {
     }
 
     #[test]
-    fn title_from_history_uses_first_visible_user_text() {
+    fn legacy_title_from_history_uses_first_visible_user_text() {
         let history = vec![
             message(Role::Assistant, "Assistant text", None),
             message(
@@ -1946,13 +2218,13 @@ mod tests {
         ];
 
         assert_eq!(
-            title_from_history(&history).as_deref(),
+            legacy_title_from_history(&history).as_deref(),
             Some("Real user request")
         );
     }
 
     #[test]
-    fn title_from_history_ignores_assistant_when_no_visible_user_text() {
+    fn legacy_title_from_history_ignores_assistant_when_no_visible_user_text() {
         let history = vec![
             message(
                 Role::User,
@@ -1962,7 +2234,35 @@ mod tests {
             message(Role::Assistant, "I'll start implementing the plan.", None),
         ];
 
-        assert_eq!(title_from_history(&history), None);
+        assert_eq!(legacy_title_from_history(&history), None);
+    }
+
+    #[test]
+    fn conversation_needs_generated_title_for_default_and_legacy_titles() {
+        let history = vec![message(
+            Role::User,
+            "Explain the new settings panel layout in detail",
+            None,
+        )];
+        let legacy = legacy_title_from_history(&history).expect("legacy title");
+
+        assert!(conversation_needs_generated_title(
+            DEFAULT_CONVERSATION_TITLE,
+            &history
+        ));
+        assert!(conversation_needs_generated_title(&legacy, &history));
+        assert!(!conversation_needs_generated_title(
+            "Settings layout",
+            &history
+        ));
+    }
+
+    #[test]
+    fn sanitize_generated_title_removes_labels_and_quotes() {
+        assert_eq!(
+            sanitize_generated_title("Titre: \"Nommage résumé des chats.\"").as_deref(),
+            Some("Nommage résumé des chats")
+        );
     }
 
     fn descriptor(name: &str, description: &str) -> ToolDescriptor {

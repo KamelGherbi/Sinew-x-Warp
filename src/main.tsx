@@ -4,13 +4,13 @@ import App from "./App";
 import "./styles.css";
 import "./lib/customIcons";
 import { api } from "./lib/ipc";
+import {
+  APPEARANCE_CHANGED_EVENT,
+  applyStoredAppearanceSettings,
+  watchSystemAppearance,
+} from "./lib/appearance";
 
-const MESSAGE_FONT_SIZE_STORAGE_KEY = "sinew.appearance.messageFontSize";
-const DEFAULT_MESSAGE_FONT_SIZE = 12;
-const MIN_MESSAGE_FONT_SIZE = 11;
-const MAX_MESSAGE_FONT_SIZE = 18;
-
-applyStoredMessageFontSize();
+applyStoredAppearanceSettings();
 
 // Suppress the native WebKit context menu everywhere except inside text
 // inputs (where the OS-level copy/paste menu is still useful). Components
@@ -70,37 +70,11 @@ const openAnchorExternally = (event: MouseEvent) => {
 window.addEventListener("click", openAnchorExternally);
 window.addEventListener("auxclick", openAnchorExternally);
 
-window.addEventListener("sinew:message-font-size-changed", applyStoredMessageFontSize);
+window.addEventListener(APPEARANCE_CHANGED_EVENT, applyStoredAppearanceSettings);
+watchSystemAppearance(applyStoredAppearanceSettings);
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>,
 );
-
-function applyStoredMessageFontSize(): void {
-  document.documentElement.style.setProperty(
-    "--message-font-size",
-    `${loadMessageFontSize()}px`,
-  );
-}
-
-function loadMessageFontSize(): number {
-  try {
-    return normalizeMessageFontSize(
-      window.localStorage.getItem(MESSAGE_FONT_SIZE_STORAGE_KEY),
-    );
-  } catch {
-    return DEFAULT_MESSAGE_FONT_SIZE;
-  }
-}
-
-function normalizeMessageFontSize(value: unknown): number {
-  const numberValue =
-    typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
-  if (!Number.isFinite(numberValue)) return DEFAULT_MESSAGE_FONT_SIZE;
-  return Math.min(
-    MAX_MESSAGE_FONT_SIZE,
-    Math.max(MIN_MESSAGE_FONT_SIZE, Math.round(numberValue)),
-  );
-}

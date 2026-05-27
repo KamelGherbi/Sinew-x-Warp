@@ -4,7 +4,8 @@ use anyhow::{anyhow, bail, Result};
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 use sinew_core::{
-    AppError, ChatMessage, ModelRef, Part, Provider, ProviderRequest, Role, ServiceTier, StreamEvent,
+    AppError, ChatMessage, ModelRef, Part, Provider, ProviderRequest, Role, ServiceTier,
+    StreamEvent,
 };
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};

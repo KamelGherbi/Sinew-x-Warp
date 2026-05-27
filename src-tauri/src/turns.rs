@@ -151,6 +151,7 @@ pub(super) async fn send_message(
     );
 
     let providers = provider_registry_snapshot(&state)?;
+    let title_provider = provider.clone();
     let context = TurnContext {
         provider,
         model: conversation.model.clone(),
@@ -343,6 +344,16 @@ pub(super) async fn send_message(
                                 }
                             };
                             if saved_ok {
+                                spawn_generated_conversation_title_update(
+                                    app.clone(),
+                                    store.clone(),
+                                    workspace_id.clone(),
+                                    conversation_id.clone(),
+                                    saved.title.clone(),
+                                    title_provider.clone(),
+                                    conversation_model.clone(),
+                                    saved.history.clone(),
+                                );
                                 if output.compacted {
                                     if let Err(err) =
                                         store.delete_turn_checkpoints_from(&conversation_id, 0)
@@ -839,6 +850,44 @@ pub(super) async fn wait_for_conversation_turn_slot_with_attempts(
         }
     }
     false
+}
+
+pub(super) fn spawn_generated_conversation_title_update(
+    app: AppHandle,
+    store: AppStore,
+    workspace_id: String,
+    conversation_id: String,
+    current_title: String,
+    provider: Arc<dyn Provider>,
+    model: ModelRef,
+    history: Vec<ChatMessage>,
+) {
+    tauri::async_runtime::spawn(async move {
+        let generated_title =
+            summarized_conversation_title(&current_title, provider, model, &history).await;
+        match store.update_generated_conversation_title(
+            &workspace_id,
+            &conversation_id,
+            &current_title,
+            &generated_title,
+        ) {
+            Ok(Some(updated_at_ms)) => {
+                let _ = emit_agent_event(
+                    &app,
+                    &workspace_id,
+                    &conversation_id,
+                    &AgentEvent::ConversationTitleUpdated {
+                        title: generated_title,
+                        updated_at_ms,
+                    },
+                );
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(%err, conversation_id = %conversation_id, "failed to update generated conversation title");
+            }
+        }
+    });
 }
 
 pub(super) fn emit_agent_event(

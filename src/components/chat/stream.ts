@@ -1508,6 +1508,9 @@ export function applyEvent(
     case "sub_agent_event":
       return state;
 
+    case "conversation_title_updated":
+      return state;
+
     case "agent_slept":
       return state;
 

@@ -105,14 +105,22 @@ const TERMINAL_OPEN_EVENT = "terminal-open-requested";
 const CLOSE_ACTIVE_TAB_EVENT = "editor-close-active-tab-requested";
 const SEND_BUSY_RETRY_DELAYS_MS = [160, 320, 640, 1000, 1400];
 const EMPTY_STREAMING_IDS: ReadonlySet<string> = new Set<string>();
+const LAYOUT_PANEL_VISIBILITY_KEY = "sinew.layout.panelVisibility";
 const LAYOUT_VIEW_MODE_KEY = "sinew.layout.viewMode";
+const PROJECT_TREE_COLLAPSED_KEY = "sinew.workspace.projectTreeCollapsed";
 const COMPACTION_CONTINUATION_PROMPT =
   "Continue from the compacted context. Do not repeat completed work. Pick up exactly where you left off and proceed with the next useful step.";
 const GOAL_COMPACTION_CONTINUATION_PROMPT =
   "Continue working toward the active goal from the compacted context. Do not repeat completed work. If the goal is now truly complete, audit it and call update_goal with status complete.";
 const IS_WINDOWS = isWindowsPlatform();
 
-type ViewMode = "chat" | "editor" | "all";
+type LayoutVisibility = {
+  folder: boolean;
+  editor: boolean;
+  chat: boolean;
+};
+
+type LayoutPanel = keyof LayoutVisibility;
 
 export function Workspace({
   bootstrap,
@@ -156,7 +164,9 @@ export function Workspace({
   const activeConvIdRef = useRef(bootstrap.activeConversation.id);
   const workspacePathRef = useRef(workspacePath);
   const navigationSeqRef = useRef(0);
-  const [viewMode, setViewMode] = useState<ViewMode>(() => loadLayoutViewMode());
+  const [layoutVisibility, setLayoutVisibility] = useState<LayoutVisibility>(() =>
+    loadLayoutVisibility(),
+  );
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [sessionsRefreshToken, setSessionsRefreshToken] = useState(0);
   // Bottom-sidebar tab — "conversations" preserves the existing default.
@@ -165,10 +175,17 @@ export function Workspace({
   const [bottomTab, setBottomTab] = useState<"conversations" | "git">(
     "conversations",
   );
+  const [projectTreeCollapsed, setProjectTreeCollapsed] = useState(() =>
+    loadProjectTreeCollapsed(workspacePath),
+  );
 
   useEffect(() => {
-    saveLayoutViewMode(viewMode);
-  }, [viewMode]);
+    setProjectTreeCollapsed(loadProjectTreeCollapsed(workspacePath));
+  }, [workspacePath]);
+
+  useEffect(() => {
+    saveLayoutVisibility(layoutVisibility);
+  }, [layoutVisibility]);
 
   useEffect(() => {
     activeConvIdRef.current = activeConv.id;
@@ -611,7 +628,7 @@ export function Workspace({
       reveal?: Omit<EditorRevealTarget, "id" | "relativePath">,
     ) => {
       if (entry.kind !== "file") return;
-      setViewMode("all");
+      setLayoutVisibility((current) => ({ ...current, editor: true, chat: false }));
       const queueReveal = () => {
         if (!reveal) return;
         setEditorRevealTarget({
@@ -672,7 +689,7 @@ export function Workspace({
     }
     setSettingsOpen(true);
     setSettingsActive(true);
-    setViewMode((current) => (current === "chat" ? "all" : current));
+    setLayoutVisibility((current) => ({ ...current, editor: true }));
     if (section) {
       window.dispatchEvent(
         new CustomEvent("sinew:open-settings-section", {
@@ -1254,6 +1271,44 @@ export function Workspace({
       const fileChanges = fileChangesFromAgentEvent(event);
       if (isActiveWorkspace && fileChanges.length > 0) {
         refreshChangedFiles(fileChanges);
+      }
+
+      if (event.type === "conversation_title_updated") {
+        if (isActiveWorkspace) {
+          const { title, updated_at_ms: updatedAtMs } = event;
+          startTransition(() => {
+            if (workspacePathRef.current !== eventWorkspacePath) return;
+            setActiveConv((current) =>
+              current.id === conversationId ? { ...current, title } : current,
+            );
+            setConversations((current) =>
+              sortConversationSummaries(
+                current.map((conversation) =>
+                  conversation.id === conversationId
+                    ? {
+                        ...conversation,
+                        title,
+                        updatedAtMs: Math.max(
+                          conversation.updatedAtMs,
+                          updatedAtMs,
+                        ),
+                      }
+                    : conversation,
+                ),
+              ),
+            );
+          });
+          void api
+            .listConversations(eventWorkspacePath)
+            .then((summaries) => {
+              onWorkspaceConversationsReplace?.(eventWorkspacePath, summaries);
+              if (workspacePathRef.current === eventWorkspacePath) {
+                setConversations(summaries);
+              }
+            })
+            .catch((err) => console.error(err));
+        }
+        return;
       }
 
       if (event.type === "turn_started") {
@@ -1935,15 +1990,31 @@ export function Workspace({
   const effectiveActiveSessionKey =
     activeSessionKey ?? workspaceSessionKey(workspacePath, activeConv.id);
   const openProjectPicker = onOpenProject ?? onOpenWorkspace ?? onSwitchWorkspace;
-  const sidebarVisible = true;
-  const effectiveCenterVisible = viewMode !== "chat";
-  const chatVisible = viewMode !== "editor";
-  const chatExpanded = viewMode === "chat";
-  const detachedTerminal = !effectiveCenterVisible;
+  const toggleProjectTreeCollapsed = useCallback(() => {
+    setProjectTreeCollapsed((current) => {
+      const next = !current;
+      saveProjectTreeCollapsed(workspacePathRef.current, next);
+      return next;
+    });
+  }, []);
+  const folderVisible = layoutVisibility.folder;
+  const editorVisible = layoutVisibility.editor;
+  const chatVisible = layoutVisibility.chat;
+  const centerVisible = editorVisible;
+  const visibleHorizontalPanels = [folderVisible, centerVisible, chatVisible].filter(
+    Boolean,
+  ).length;
+  const chatExpanded = chatVisible && visibleHorizontalPanels === 1;
+  const toggleLayoutPanel = useCallback((panel: LayoutPanel) => {
+    setLayoutVisibility((current) => ({
+      ...current,
+      [panel]: !current[panel],
+    }));
+  }, []);
   const titlebarActionsStyle = {
-    left: sidebarVisible ? leftWidth : 8,
+    left: folderVisible ? leftWidth : 8,
     right: chatVisible && !chatExpanded ? rightWidth : 180,
-  };
+  } satisfies React.CSSProperties;
   const conversationProjects = useMemo<ConversationListProject[] | undefined>(() => {
     if (!sessions) return undefined;
 
@@ -2194,8 +2265,8 @@ export function Workspace({
   return (
     <div
       className="workspace"
-      data-center-visible={effectiveCenterVisible ? "true" : "false"}
-      data-view={viewMode}
+      data-center-visible={centerVisible ? "true" : "false"}
+      data-folder-visible={folderVisible ? "true" : "false"}
     >
       <div
         className="titlebar"
@@ -2226,30 +2297,30 @@ export function Workspace({
           </button>
           <button
             className="titlebar__btn"
-            data-on={viewMode === "chat" ? "true" : "false"}
-            onClick={() => setViewMode("chat")}
-            title="Chat view"
+            data-on={chatVisible ? "true" : "false"}
+            onClick={() => toggleLayoutPanel("chat")}
+            title={chatVisible ? "Hide chat" : "Show chat"}
           >
             <Icon icon="solar:chat-round-dots-linear" width={12} height={12} />
             Chat
           </button>
           <button
             className="titlebar__btn"
-            data-on={viewMode === "editor" ? "true" : "false"}
-            onClick={() => setViewMode("editor")}
-            title="Editor view"
+            data-on={editorVisible ? "true" : "false"}
+            onClick={() => toggleLayoutPanel("editor")}
+            title={editorVisible ? "Hide editor" : "Show editor"}
           >
             <Icon icon="solar:code-square-linear" width={12} height={12} />
             Editor
           </button>
           <button
             className="titlebar__btn"
-            data-on={viewMode === "all" ? "true" : "false"}
-            onClick={() => setViewMode("all")}
-            title="All view"
+            data-on={folderVisible ? "true" : "false"}
+            onClick={() => toggleLayoutPanel("folder")}
+            title={folderVisible ? "Hide folder" : "Show folder"}
           >
-            <Icon icon="solar:widget-5-linear" width={12} height={12} />
-            All
+            <Icon icon="solar:folder-with-files-linear" width={12} height={12} />
+            Folder
           </button>
           <button
             className="titlebar__btn"
@@ -2281,26 +2352,66 @@ export function Workspace({
 
       <div
         className="main"
-        data-center-visible={effectiveCenterVisible ? "true" : "false"}
-        data-view={viewMode}
+        data-center-visible={centerVisible ? "true" : "false"}
+        data-folder-visible={folderVisible ? "true" : "false"}
       >
         <div
-          className="sidebar"
-          style={{ width: leftWidth, flex: `0 0 ${leftWidth}px` }}
-          ref={sidebarHeightRef}
+          className="main-panels"
+          data-hidden={terminalVisible && terminalFullHeight ? "true" : "false"}
         >
+          {folderVisible && (
           <div
-            className="sidebar__section"
-            style={{ flex: `0 0 ${topSplit * 100}%` }}
-            ref={fileTreeDropZoneRef}
-            data-drop-active={fileTreeDropState.active ? "true" : "false"}
+            className="sidebar"
+            style={
+              visibleHorizontalPanels === 1
+                ? { flex: "1 1 0", minWidth: 0 }
+                : { width: leftWidth, flex: `0 0 ${leftWidth}px` }
+            }
+            ref={sidebarHeightRef}
           >
-            <div className="sidebar__head">
-              <span className="sidebar__head-title">
-                <Icon icon="solar:folder-bold-duotone" width={16} height={16} />
-                <span>{bootstrap.workspace.name}</span>
-              </span>
-              <span className="sidebar__head-actions">
+            <div
+              className="sidebar__section"
+              style={
+                projectTreeCollapsed
+                  ? { flex: "0 0 32px" }
+                  : { flex: `0 0 ${topSplit * 100}%` }
+              }
+              ref={fileTreeDropZoneRef}
+              data-collapsed={projectTreeCollapsed ? "true" : "false"}
+              data-drop-active={fileTreeDropState.active ? "true" : "false"}
+            >
+              <div className="sidebar__head">
+                <span className="sidebar__head-title">
+                  <button
+                    type="button"
+                    className="sidebar__head-toggle"
+                    aria-expanded={!projectTreeCollapsed}
+                    aria-label={
+                      projectTreeCollapsed
+                        ? "Show project files"
+                        : "Hide project files"
+                    }
+                    title={
+                      projectTreeCollapsed
+                        ? "Show project files"
+                        : "Hide project files"
+                    }
+                    onClick={toggleProjectTreeCollapsed}
+                  >
+                    <Icon
+                      icon={
+                        projectTreeCollapsed
+                          ? "solar:alt-arrow-right-linear"
+                          : "solar:alt-arrow-down-linear"
+                      }
+                      width={13}
+                      height={13}
+                    />
+                  </button>
+                  <Icon icon="solar:folder-bold-duotone" width={16} height={16} />
+                  <span>{bootstrap.workspace.name}</span>
+                </span>
+                <span className="sidebar__head-actions">
                 <button
                   type="button"
                   className="sidebar__head-btn"
@@ -2340,38 +2451,41 @@ export function Workspace({
                 </button>
               </span>
             </div>
-            {fileSearchOpen ? (
-              <SearchPane
-                workspacePath={workspacePath}
-                onOpenFile={openFile}
-                refreshToken={fileTreeRefreshToken}
-              />
-            ) : (
-              <FileTree
-                ref={fileTreeRef}
-                workspacePath={workspacePath}
-                activeFile={activeFilePath}
-                onOpenFile={openFile}
-                onDragFile={onDragFile}
-                onEntryRenamed={handleTreeEntryRenamed}
-                onEntryDeleted={handleTreeEntryDeleted}
-                onEntriesMoved={handleTreeEntriesMoved}
-                refreshToken={fileTreeRefreshToken}
-                dropActive={fileTreeDropState.active}
-                dropTargetRelative={fileTreeDropState.targetRelative}
-              />
-            )}
-            {importError && (
-              <div
-                className="sidebar__import-error"
-                onClick={() => setImportError(null)}
-                title="click to dismiss"
-              >
-                {importError}
-              </div>
-            )}
+              {!projectTreeCollapsed &&
+                (fileSearchOpen ? (
+                  <SearchPane
+                    workspacePath={workspacePath}
+                    onOpenFile={openFile}
+                    refreshToken={fileTreeRefreshToken}
+                  />
+                ) : (
+                  <FileTree
+                    ref={fileTreeRef}
+                    workspacePath={workspacePath}
+                    activeFile={activeFilePath}
+                    onOpenFile={openFile}
+                    onDragFile={onDragFile}
+                    onEntryRenamed={handleTreeEntryRenamed}
+                    onEntryDeleted={handleTreeEntryDeleted}
+                    onEntriesMoved={handleTreeEntriesMoved}
+                    refreshToken={fileTreeRefreshToken}
+                    dropActive={fileTreeDropState.active}
+                    dropTargetRelative={fileTreeDropState.targetRelative}
+                  />
+                ))}
+              {!projectTreeCollapsed && importError && (
+                <div
+                  className="sidebar__import-error"
+                  onClick={() => setImportError(null)}
+                  title="click to dismiss"
+                >
+                  {importError}
+                </div>
+              )}
           </div>
-          <Splitter orientation="horizontal" onDelta={applyTopDelta} />
+          {!projectTreeCollapsed && (
+            <Splitter orientation="horizontal" onDelta={applyTopDelta} />
+          )}
           <div
             className="sidebar__section sidebar__section--bottom"
             style={{ flex: "1 1 0" }}
@@ -2484,18 +2598,20 @@ export function Workspace({
               />
             </div>
           </div>
-        </div>
-        {effectiveCenterVisible && (
+          </div>
+        )}
+        {folderVisible && (centerVisible || chatVisible) && (
           <Splitter
             orientation="vertical"
             onDelta={(delta) => setLeftWidth((v) => clampColumn(v + delta))}
           />
         )}
-        <div className="workbench-center">
-          <div
-            className="editor-shell"
-            data-hidden={terminalVisible && terminalFullHeight ? "true" : "false"}
-          >
+        {centerVisible && (
+          <div className="workbench-center">
+            <div
+              className="editor-shell"
+              data-hidden="false"
+            >
             <EditorPane
               tabs={tabs}
               activeIndex={activeTabIndex}
@@ -2512,139 +2628,119 @@ export function Workspace({
               onSettingsClose={closeSettings}
             />
           </div>
-          {!detachedTerminal && terminalVisible && !terminalFullHeight && (
-            <Splitter
-              orientation="horizontal"
-              onDelta={(delta) =>
-                setTerminalHeight((value) => clampTerminal(value - delta))
-              }
-            />
-          )}
-          <div
-            className="terminal-shell"
-            data-full-height={terminalFullHeight ? "true" : "false"}
-            style={{
-              display: !detachedTerminal && terminalVisible ? "block" : "none",
-              height: !detachedTerminal && terminalVisible
-                ? terminalFullHeight
-                  ? "auto"
-                  : terminalHeight
-                : 0,
-              flex: !detachedTerminal && terminalVisible
-                ? terminalFullHeight
-                  ? "1 1 0"
-                  : `0 0 ${terminalHeight}px`
-                : "0 0 0",
-            }}
-          >
-            {!detachedTerminal && terminalAvailable && (
-              <TerminalPanel
-                key={workspacePath}
-                active={terminalVisible}
-                fullHeight={terminalFullHeight}
-                workspacePath={workspacePath}
-                onClose={hideTerminal}
-                onCloseLastSession={closeTerminalPanel}
-                onToggleFullHeight={toggleTerminalFullHeight}
-                onOpenTerminalPath={openTerminalPath}
-              />
-            )}
+
           </div>
-          {!detachedTerminal && terminalAvailable && !terminalOpen && (
-            <div className="terminal-restore">
-              <button
-                type="button"
-                className="terminal-restore__button"
-                onClick={showTerminal}
-                title="Show terminal"
-              >
-                <Icon icon="solar:square-alt-arrow-up-linear" width={14} height={14} />
-              </button>
-            </div>
-          )}
-        </div>
-        {effectiveCenterVisible && chatVisible && (
+        )}
+        {centerVisible && chatVisible && (
           <Splitter
             orientation="vertical"
             onDelta={(delta) => setRightWidth((v) => clampColumn(v - delta))}
           />
         )}
-        <div
-          className="chat-stack"
-          data-expanded={chatExpanded ? "true" : "false"}
-          data-visible={chatVisible ? "true" : "false"}
-          data-terminal-open={detachedTerminal && terminalVisible ? "true" : "false"}
-          style={
-            chatExpanded
-              ? {
-                  flex: "1 1 0",
-                  minWidth: 0,
-                }
-              : {
-                  width: rightWidth,
-                  flex: `0 0 ${rightWidth}px`,
-                  minWidth: 0,
-                }
-          }
-        >
+        {chatVisible && (
           <div
-            className="chat-shell"
+            className="chat-stack"
             data-expanded={chatExpanded ? "true" : "false"}
-            data-hidden={detachedTerminal && terminalVisible && terminalFullHeight ? "true" : "false"}
+            data-visible={chatVisible ? "true" : "false"}
+            style={
+              chatExpanded
+                ? {
+                    flex: "1 1 0",
+                    minWidth: 0,
+                  }
+              : centerVisible
+                ? {
+                    width: rightWidth,
+                    flex: `0 0 ${rightWidth}px`,
+                    minWidth: 0,
+                  }
+                : {
+                    flex: "1 1 0",
+                    minWidth: 0,
+                  }
+            }
           >
-            <ChatPane
-              workspacePath={workspacePath}
-              conversationId={activeConv.id}
-              activeModel={activeConv.model}
-              modeModelSettings={chatModeModelSettings}
-              streamingModel={activeStreamingModel}
-              planWorkflow={activeConv.planWorkflow}
-              goalWorkflow={activeConv.goalWorkflow}
-              isStreaming={activeConversationIsStreaming}
-              history={activeConv.history}
-              subscribeEvents={subscribeEvents}
-              onSend={sendMessage}
-              onCompact={compactConversation}
-              onModeChange={changeConversationMode}
-              onModelPreferenceChange={changeConversationModelPreference}
-              onImplementPlanFresh={implementPlanFresh}
-              onStop={stopTurn}
-              onOpenFile={openChatFile}
-              onOpenSessions={openSessionSwitcher}
-              onOpenSettings={openSettings}
-              externalDrops={externalDropFeed}
-              dropZoneRef={chatDropZoneRef}
-            />
-          </div>
-          {detachedTerminal && terminalAvailable && terminalVisible && !terminalFullHeight && (
-            <Splitter
-              orientation="horizontal"
-              onDelta={(delta) =>
-                setTerminalHeight((value) => clampTerminal(value - delta))
-              }
-            />
-          )}
-          {detachedTerminal && terminalAvailable && terminalVisible && (
             <div
-              className="terminal-detached"
-              data-full-height={terminalFullHeight ? "true" : "false"}
-              style={{
-                flex: terminalFullHeight ? "1 1 0" : `0 0 ${terminalHeight}px`,
-                height: terminalFullHeight ? "auto" : terminalHeight,
-              }}
+              className="chat-shell"
+              data-expanded={chatExpanded ? "true" : "false"}
+              data-hidden="false"
             >
-              <TerminalPanel
-                active={terminalVisible}
-                fullHeight={terminalFullHeight}
+              <ChatPane
                 workspacePath={workspacePath}
-                onClose={hideTerminal}
-                onCloseLastSession={closeTerminalPanel}
-                onToggleFullHeight={toggleTerminalFullHeight}
-                onOpenTerminalPath={openTerminalPath}
+                conversationId={activeConv.id}
+                activeModel={activeConv.model}
+                modeModelSettings={chatModeModelSettings}
+                streamingModel={activeStreamingModel}
+                planWorkflow={activeConv.planWorkflow}
+                goalWorkflow={activeConv.goalWorkflow}
+                isStreaming={activeConversationIsStreaming}
+                history={activeConv.history}
+                subscribeEvents={subscribeEvents}
+                onSend={sendMessage}
+                onCompact={compactConversation}
+                onModeChange={changeConversationMode}
+                onModelPreferenceChange={changeConversationModelPreference}
+                onImplementPlanFresh={implementPlanFresh}
+                onStop={stopTurn}
+                onOpenFile={openChatFile}
+                onOpenSessions={openSessionSwitcher}
+                onOpenSettings={openSettings}
+                externalDrops={externalDropFeed}
+                dropZoneRef={chatDropZoneRef}
               />
             </div>
+          </div>
+        )}
+        </div>
+        {terminalVisible && !terminalFullHeight && (
+          <Splitter
+            orientation="horizontal"
+            onDelta={(delta) =>
+              setTerminalHeight((value) => clampTerminal(value - delta))
+            }
+          />
+        )}
+        <div
+          className="terminal-shell"
+          data-full-height={terminalFullHeight ? "true" : "false"}
+          style={{
+            display: terminalVisible ? "block" : "none",
+            height: terminalVisible
+              ? terminalFullHeight
+                ? "auto"
+                : terminalHeight
+              : 0,
+            flex: terminalVisible
+              ? terminalFullHeight
+                ? "1 1 0"
+                : `0 0 ${terminalHeight}px`
+              : "0 0 0",
+          }}
+        >
+          {terminalAvailable && (
+            <TerminalPanel
+              active={terminalVisible}
+              fullHeight={terminalFullHeight}
+              workspacePath={workspacePath}
+              onClose={hideTerminal}
+              onCloseLastSession={closeTerminalPanel}
+              onToggleFullHeight={toggleTerminalFullHeight}
+              onOpenTerminalPath={openTerminalPath}
+            />
           )}
         </div>
+        {terminalAvailable && !terminalOpen && (
+          <div className="terminal-restore">
+            <button
+              type="button"
+              className="terminal-restore__button"
+              onClick={showTerminal}
+              title="Show terminal"
+            >
+              <Icon icon="solar:square-alt-arrow-up-linear" width={14} height={14} />
+            </button>
+          </div>
+        )}
       </div>
       {sessionsOpen && (
         <SessionSwitcher
@@ -2664,27 +2760,74 @@ export function Workspace({
   );
 }
 
-function loadLayoutViewMode(): ViewMode {
+function loadLayoutVisibility(): LayoutVisibility {
+  const fallback: LayoutVisibility = { folder: true, editor: true, chat: true };
   try {
-    if (typeof window === "undefined") return "all";
-    const raw = window.localStorage.getItem(LAYOUT_VIEW_MODE_KEY);
-    if (raw === "chat" || raw === "editor" || raw === "all") return raw;
+    if (typeof window === "undefined") return fallback;
+    const raw = window.localStorage.getItem(LAYOUT_PANEL_VISIBILITY_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<LayoutVisibility>;
+      const next = {
+        folder: typeof parsed.folder === "boolean" ? parsed.folder : fallback.folder,
+        editor: typeof parsed.editor === "boolean" ? parsed.editor : fallback.editor,
+        chat: typeof parsed.chat === "boolean" ? parsed.chat : fallback.chat,
+      };
+      return next.folder || next.editor || next.chat ? next : fallback;
+    }
+
+    const oldRaw = window.localStorage.getItem(LAYOUT_VIEW_MODE_KEY);
+    if (oldRaw === "chat") return { folder: true, editor: false, chat: true };
+    if (oldRaw === "editor") return { folder: true, editor: true, chat: false };
+
     const oldChatFocus = window.localStorage.getItem("sinew.layout.chatFocus") === "true";
     const oldCenterVisible = window.localStorage.getItem("sinew.layout.centerVisible");
-    if (oldChatFocus) return "chat";
-    if (oldCenterVisible === "false") return "chat";
-    return "all";
+    if (oldChatFocus || oldCenterVisible === "false") {
+      return { folder: true, editor: false, chat: true };
+    }
+    return fallback;
   } catch {
-    return "all";
+    return fallback;
   }
 }
 
-function saveLayoutViewMode(value: ViewMode): void {
+function saveLayoutVisibility(value: LayoutVisibility): void {
   try {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(LAYOUT_VIEW_MODE_KEY, value);
+    window.localStorage.setItem(LAYOUT_PANEL_VISIBILITY_KEY, JSON.stringify(value));
   } catch {
     // Ignore storage errors; layout controls still work for the session.
+  }
+}
+
+function loadProjectTreeCollapsed(workspacePath: string): boolean {
+  try {
+    if (typeof window === "undefined" || !workspacePath) return false;
+    const raw = window.localStorage.getItem(PROJECT_TREE_COLLAPSED_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return parsed[workspacePath] === true;
+  } catch {
+    return false;
+  }
+}
+
+function saveProjectTreeCollapsed(workspacePath: string, collapsed: boolean): void {
+  try {
+    if (typeof window === "undefined" || !workspacePath) return;
+    const raw = window.localStorage.getItem(PROJECT_TREE_COLLAPSED_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const next: Record<string, boolean> = {};
+    for (const [path, value] of Object.entries(parsed)) {
+      if (value === true) next[path] = true;
+    }
+    if (collapsed) {
+      next[workspacePath] = true;
+    } else {
+      delete next[workspacePath];
+    }
+    window.localStorage.setItem(PROJECT_TREE_COLLAPSED_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore storage errors; the project tree still toggles for the session.
   }
 }
 

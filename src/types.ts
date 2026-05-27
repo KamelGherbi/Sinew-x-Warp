@@ -617,6 +617,11 @@ export type AgentEvent =
       initial_message?: string;
       event: AgentEvent;
     }
+  | {
+      type: "conversation_title_updated";
+      title: string;
+      updated_at_ms: number;
+    }
   | { type: "agent_slept" }
   | { type: "turn_finished"; duration_ms?: number | null };
 

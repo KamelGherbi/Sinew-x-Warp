@@ -37,22 +37,24 @@ type Props = {
   /// popover — surfacing the prompt again would feel like a re-ask).
   /// Defaults to `false` (boot flow).
   autoInstall?: boolean;
+  /// Optional escape hatch used by the boot-time notice. When present, the
+  /// user can keep using the current version and install later from the badge.
+  onSkip?: () => void | Promise<void>;
 };
 
-/// Full-screen, unbypassable update gate. Mounted by `App.tsx` when the boot
-/// updater check reports an available release. The user can only:
-///   * **Install** the update (download → install → auto-restart).
-///   * **Quit Sinew** (the OS-level close button on Windows; on macOS/Linux,
-///     the system traffic lights, plus an explicit button on the error
-///     path).
+/// Full-screen updater flow. During boot this acts as a notice with a "Later"
+/// escape hatch, so an available update never prevents Sinew from opening.
+/// When launched from the in-session <UpdateBadge /> with `autoInstall`, it
+/// remains modal because the user has already chosen to install and restart.
 ///
-/// There is no "Later", no "Skip" — the policy is "update or quit". While
-/// downloading/installing, the only escape is closing the window through
-/// the OS chrome. The component owns the entire lifecycle: it kicks off
-/// the install, listens to `updater://progress` / `updater://finished`,
-/// runs the auto-restart countdown, and surfaces errors with a Retry
-/// path.
-export function UpdaterLockScreen({ info, autoInstall = false }: Props) {
+/// The component owns the install lifecycle: it kicks off the install, listens
+/// to `updater://progress` / `updater://finished`, runs the auto-restart
+/// countdown, and surfaces errors with Retry or Continue/Quit paths.
+export function UpdaterLockScreen({
+  info,
+  autoInstall = false,
+  onSkip,
+}: Props) {
   const [phase, setPhase] = useState<Phase>({ kind: "prompt" });
   const [countdown, setCountdown] = useState<number>(AUTO_RESTART_SECS);
 
@@ -119,6 +121,16 @@ export function UpdaterLockScreen({ info, autoInstall = false }: Props) {
   }, [phase.kind]);
 
   const startInstall = useCallback(async () => {
+    if (info.updateProtected) {
+      setPhase({
+        kind: "error",
+        message:
+          info.protectionReason ??
+          "This update is protected to avoid replacing your custom build.",
+      });
+      return;
+    }
+
     setPhase({ kind: "downloading", downloaded: 0, total: null });
     try {
       await api.installUpdate();
@@ -133,7 +145,7 @@ export function UpdaterLockScreen({ info, autoInstall = false }: Props) {
     } catch (err) {
       setPhase({ kind: "error", message: String(err) });
     }
-  }, []);
+  }, [info.protectionReason, info.updateProtected]);
 
   const onRestart = useCallback(() => {
     void api.restartForUpdate();
@@ -143,9 +155,8 @@ export function UpdaterLockScreen({ info, autoInstall = false }: Props) {
   // the badge (the user already confirmed in the popover). We gate on
   // `phase.kind === "prompt"` so a re-render of the effect (e.g. on
   // hot-reload) doesn't loop us back into a fresh install once we've
-  // moved past the initial phase. `startInstall` is stable (empty deps
-  // in its `useCallback`), so in practice this effect fires once on
-  // mount.
+  // moved past the initial phase. In practice this effect fires once on
+  // mount for the same update descriptor.
   useEffect(() => {
     if (!autoInstall) return;
     if (phase.kind !== "prompt") return;
@@ -171,12 +182,11 @@ export function UpdaterLockScreen({ info, autoInstall = false }: Props) {
   const isBusy = phase.kind === "downloading" || phase.kind === "installing";
 
   return (
-    <div className="updater-lock" role="dialog" aria-label="Update required">
+    <div className="updater-lock" role="dialog" aria-label="App update">
       {IS_WINDOWS && (
         /* Frameless Windows shell needs a drag region + custom controls,
            same pattern as Welcome. We expose the controls so the user can
-           still minimize/close — the lock screen is a UX gate, not a
-           prison. */
+           still minimize/close while the updater screen is open. */
         <div className="updater-lock__titlebar" data-tauri-drag-region>
           <WindowControls />
         </div>
@@ -210,12 +220,23 @@ export function UpdaterLockScreen({ info, autoInstall = false }: Props) {
               )}
             </span>
           </span>
-          <h1 className="updater-lock__title">{titleFor(phase)}</h1>
-          <p className="updater-lock__sub">{subFor(phase, info, countdown)}</p>
+          <h1 className="updater-lock__title">{titleFor(phase, info)}</h1>
+          <p className="updater-lock__sub">
+            {subFor(phase, info, countdown, Boolean(onSkip))}
+          </p>
         </header>
 
         {phase.kind === "prompt" && info.notes && (
           <ReleaseNotes notes={info.notes} />
+        )}
+
+        {phase.kind === "prompt" && info.updateProtected && (
+          <div className="updater-lock__card updater-lock__card--warning">
+            <p className="updater-lock__error">
+              {info.protectionReason ??
+                "Installing this update would replace your custom Sinew build."}
+            </p>
+          </div>
         )}
 
         {(phase.kind === "downloading" || phase.kind === "installing") && (
@@ -264,23 +285,38 @@ export function UpdaterLockScreen({ info, autoInstall = false }: Props) {
 
         <footer className="updater-lock__actions">
           {phase.kind === "prompt" && (
-            <button
-              type="button"
-              className="updater-lock__cta"
-              onClick={startInstall}
-              autoFocus
-            >
-              <span className="updater-lock__cta-label">
-                Install update {info.version}
-              </span>
-              <span className="updater-lock__cta-chev">
-                <Icon
-                  icon="solar:alt-arrow-right-linear"
-                  width={16}
-                  height={16}
-                />
-              </span>
-            </button>
+            <>
+              {onSkip && (
+                <button
+                  type="button"
+                  className="updater-lock__btn updater-lock__btn--ghost"
+                  onClick={onSkip}
+                  autoFocus
+                >
+                  Later
+                </button>
+              )}
+              <button
+                type="button"
+                className="updater-lock__cta"
+                onClick={startInstall}
+                autoFocus={!onSkip && !info.updateProtected}
+                disabled={info.updateProtected}
+              >
+                <span className="updater-lock__cta-label">
+                  {info.updateProtected
+                    ? "Protected custom build"
+                    : `Install update ${info.version}`}
+                </span>
+                <span className="updater-lock__cta-chev">
+                  <Icon
+                    icon="solar:alt-arrow-right-linear"
+                    width={16}
+                    height={16}
+                  />
+                </span>
+              </button>
+            </>
           )}
           {phase.kind === "ready" && (
             <button
@@ -300,18 +336,20 @@ export function UpdaterLockScreen({ info, autoInstall = false }: Props) {
               <button
                 type="button"
                 className="updater-lock__btn updater-lock__btn--ghost"
-                onClick={onQuit}
+                onClick={onSkip ?? onQuit}
               >
-                Quit Sinew
+                {onSkip ? "Continue without updating" : "Quit Sinew"}
               </button>
-              <button
-                type="button"
-                className="updater-lock__btn updater-lock__btn--primary"
-                onClick={startInstall}
-                autoFocus
-              >
-                Retry
-              </button>
+              {!info.updateProtected && (
+                <button
+                  type="button"
+                  className="updater-lock__btn updater-lock__btn--primary"
+                  onClick={startInstall}
+                  autoFocus
+                >
+                  Retry
+                </button>
+              )}
             </>
           )}
         </footer>
@@ -340,10 +378,10 @@ function ReleaseNotes({ notes }: { notes: string }) {
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-function titleFor(phase: Phase): string {
+function titleFor(phase: Phase, info: UpdateInfo): string {
   switch (phase.kind) {
     case "prompt":
-      return "Update required";
+      return info.updateProtected ? "Update protected" : "Update available";
     case "downloading":
       return "Downloading update";
     case "installing":
@@ -355,10 +393,17 @@ function titleFor(phase: Phase): string {
   }
 }
 
-function subFor(phase: Phase, info: UpdateInfo, countdown: number): string {
+function subFor(
+  phase: Phase,
+  info: UpdateInfo,
+  countdown: number,
+  canSkip: boolean,
+): string {
   switch (phase.kind) {
     case "prompt":
-      return `Sinew ${info.version ?? ""} · you're on ${info.currentVersion}`;
+      return canSkip
+        ? `Sinew ${info.version ?? ""} is available · you're on ${info.currentVersion}`
+        : `Sinew ${info.version ?? ""} · you're on ${info.currentVersion}`;
     case "downloading":
       return `${info.currentVersion} → ${info.version ?? ""}`;
     case "installing":
@@ -368,7 +413,9 @@ function subFor(phase: Phase, info: UpdateInfo, countdown: number): string {
         ? `Restarting in ${countdown}s…`
         : "Restarting…";
     case "error":
-      return "We couldn't install the update. Sinew can't start until it's done.";
+      return canSkip
+        ? "You can retry now or continue with your current version."
+        : "We couldn't install the update. You can retry or quit Sinew.";
   }
 }
 

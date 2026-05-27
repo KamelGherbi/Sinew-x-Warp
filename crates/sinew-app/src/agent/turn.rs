@@ -259,8 +259,8 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
                                 && transient_provider_retry_attempts
                                     < TRANSIENT_PROVIDER_RETRY_DELAYS_MS.len() =>
                         {
-                            let delay_ms =
-                                TRANSIENT_PROVIDER_RETRY_DELAYS_MS[transient_provider_retry_attempts];
+                            let delay_ms = TRANSIENT_PROVIDER_RETRY_DELAYS_MS
+                                [transient_provider_retry_attempts];
                             transient_provider_retry_attempts += 1;
                             send_event(
                                 &event_tx,

@@ -328,6 +328,7 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
     let skill_settings = state.store.load_skill_settings().map_err(error_to_string)?;
     let turn_system_prompt = with_turn_plan_reminder(&effective_system_prompt, None);
     let providers = provider_registry_snapshot(&state)?;
+    let title_provider = provider.clone();
     let context = TurnContext {
         provider,
         model: conversation.model.clone(),
@@ -479,6 +480,16 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
                                 }
                             };
                             if saved_ok {
+                                spawn_generated_conversation_title_update(
+                                    app.clone(),
+                                    store.clone(),
+                                    workspace_id.clone(),
+                                    conversation_id_for_events.clone(),
+                                    saved.title.clone(),
+                                    title_provider.clone(),
+                                    conversation_model.clone(),
+                                    saved.history.clone(),
+                                );
                                 if output.compacted {
                                     if let Err(err) = store
                                         .delete_turn_checkpoints_from(&conversation_id_for_events, 0)

@@ -15,7 +15,7 @@ import type {
 
 type AppState =
   | { kind: "boot" }
-  | { kind: "update_required"; info: UpdateInfo; autoInstall: boolean }
+  | { kind: "update_available"; info: UpdateInfo; autoInstall: boolean }
   | { kind: "welcome" }
   | {
       kind: "workspace";
@@ -30,6 +30,29 @@ const startsEmpty =
 /// the normal flow. Keeps the app responsive on flaky networks — if the
 /// update endpoint is unreachable we don't trap the user on a black canvas.
 const BOOT_CHECK_TIMEOUT_MS = 4000;
+
+async function loadStartupState(): Promise<AppState> {
+  if (startsEmpty) {
+    return { kind: "welcome" };
+  }
+
+  const last = loadLastWorkspace();
+  if (!last) {
+    return { kind: "welcome" };
+  }
+
+  try {
+    const bootstrap = await api.openWorkspace(last);
+    recordRecent(bootstrap.workspace.path, bootstrap.workspace.name);
+    return {
+      kind: "workspace",
+      sessions: [sessionFromBootstrap(bootstrap)],
+      activeSessionKey: sessionKeyFromBootstrap(bootstrap),
+    };
+  } catch {
+    return { kind: "welcome" };
+  }
+}
 
 export default function App() {
   const [state, setState] = useState<AppState>({ kind: "boot" });
@@ -59,6 +82,13 @@ export default function App() {
     }
   }, []);
 
+  const continueWithoutUpdate = useCallback(async () => {
+    setBootError(null);
+    setState({ kind: "boot" });
+    const nextState = await loadStartupState();
+    setState(nextState);
+  }, []);
+
   const pickAndOpenWorkspace = useCallback(async () => {
     const selected = await open({ directory: true, multiple: false });
     if (typeof selected === "string") {
@@ -67,18 +97,19 @@ export default function App() {
   }, [openWorkspace]);
 
   // Boot sequence, in order:
-  //   1. Updater gate — race the check against a short timeout. If an
-  //      update is available we render <UpdaterLockScreen /> and stop;
-  //      the user can only install or quit (no "Later", no "Skip").
+  //   1. Updater notice — race the check against a short timeout. If an
+  //      update is available we render <UpdaterLockScreen /> with a "Later"
+  //      path, so the user can keep using the app without installing.
   //   2. Auto-open last workspace (existing behaviour) when no update is
-  //      pending. Silent fallback to Welcome on any failure.
+  //      pending, or after the user skips the update. Silent fallback to
+  //      Welcome on any failure.
   // The whole thing runs once at mount; the in-session <UpdateBadge />
   // still handles mid-session checks via its own 30 min interval.
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
-      // 1. Updater gate.
+      // 1. Updater notice.
       try {
         const info = await Promise.race<UpdateInfo | null>([
           api.checkForUpdate(),
@@ -88,38 +119,19 @@ export default function App() {
         ]);
         if (cancelled) return;
         if (info && info.available && info.version) {
-          setState({ kind: "update_required", info, autoInstall: false });
+          setState({ kind: "update_available", info, autoInstall: false });
           return;
         }
       } catch {
         // Silent: a failed check (offline, server down, manifest 5xx)
         // shouldn't prevent the app from booting. The mid-session badge
-        // will retry later, and the next launch will re-gate cleanly.
+        // will retry later, and the next launch will check again.
       }
 
       // 2. Auto-open last workspace, falling back to Welcome.
       if (cancelled) return;
-      if (startsEmpty) {
-        setState({ kind: "welcome" });
-        return;
-      }
-      const last = loadLastWorkspace();
-      if (!last) {
-        setState({ kind: "welcome" });
-        return;
-      }
-      try {
-        const bootstrap = await api.openWorkspace(last);
-        if (cancelled) return;
-        recordRecent(bootstrap.workspace.path, bootstrap.workspace.name);
-        setState({
-          kind: "workspace",
-          sessions: [sessionFromBootstrap(bootstrap)],
-          activeSessionKey: sessionKeyFromBootstrap(bootstrap),
-        });
-      } catch {
-        if (!cancelled) setState({ kind: "welcome" });
-      }
+      const nextState = await loadStartupState();
+      if (!cancelled) setState(nextState);
     })();
 
     return () => {
@@ -127,19 +139,17 @@ export default function App() {
     };
   }, []);
 
-  // Mid-session escalation: when the <UpdateBadge /> in Workspace fires
+  // Mid-session install: when the <UpdateBadge /> in Workspace fires
   // "sinew:install-update" (user clicked "Install & restart" in the
-  // popover), we swap the whole window to the lock screen with
-  // `autoInstall` enabled. From there the screen runs the same download
-  // → install → auto-restart flow as the boot gate. This means the
-  // policy is identical regardless of entry point: once the user
-  // commits to installing, Sinew becomes uninteractive until the update
-  // is applied or they quit.
+  // popover), we swap the whole window to the updater screen with
+  // `autoInstall` enabled. From there the screen runs the download
+  // → install → auto-restart flow and stays modal until the update is
+  // applied or the user quits.
   useEffect(() => {
     const handler = (event: WindowEventMap["sinew:install-update"]) => {
       const info = event.detail?.info;
       if (!info || !info.available || !info.version) return;
-      setState({ kind: "update_required", info, autoInstall: true });
+      setState({ kind: "update_available", info, autoInstall: true });
     };
     window.addEventListener("sinew:install-update", handler);
     return () => window.removeEventListener("sinew:install-update", handler);
@@ -407,9 +417,13 @@ export default function App() {
     return <div className="app-boot" aria-hidden="true" />;
   }
 
-  if (state.kind === "update_required") {
+  if (state.kind === "update_available") {
     return (
-      <UpdaterLockScreen info={state.info} autoInstall={state.autoInstall} />
+      <UpdaterLockScreen
+        info={state.info}
+        autoInstall={state.autoInstall}
+        onSkip={state.autoInstall ? undefined : continueWithoutUpdate}
+      />
     );
   }
 

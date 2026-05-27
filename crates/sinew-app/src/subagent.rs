@@ -2,7 +2,9 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sinew_core::{ChatMessage, Effort, ModelRef, Part, Provider, Role, ServiceTier, ToolDescriptor};
+use sinew_core::{
+    ChatMessage, Effort, ModelRef, Part, Provider, Role, ServiceTier, ToolDescriptor,
+};
 use tokio::sync::mpsc;
 
 use crate::tool_run::FileChange;

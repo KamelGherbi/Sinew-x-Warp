@@ -88,7 +88,7 @@ fn payloads_for_event(
             vec![base_payload(workspace_id, conversation_id, "StopFailure")
                 .with("reason", json!(truncate_for_bridge(message)))]
         }
-        AgentEvent::TurnFinished => {
+        AgentEvent::TurnFinished { .. } => {
             vec![base_payload(workspace_id, conversation_id, "Stop")]
         }
         AgentEvent::SubAgentEvent {
@@ -112,14 +112,8 @@ fn payloads_for_event(
                 if let Some(initial_message) = initial_message {
                     payload.insert("prompt".into(), json!(initial_message));
                 }
-                payload.insert(
-                    "title".into(),
-                    json!(format!("Sinew · {agent_name}")),
-                );
-                payload.insert(
-                    "customTitle".into(),
-                    json!(format!("Sinew · {agent_name}")),
-                );
+                payload.insert("title".into(), json!(format!("Sinew · {agent_name}")));
+                payload.insert("customTitle".into(), json!(format!("Sinew · {agent_name}")));
             }
             payloads
         }
@@ -127,7 +121,11 @@ fn payloads_for_event(
     }
 }
 
-fn base_payload(workspace_id: &str, conversation_id: &str, hook_event_name: &str) -> Map<String, Value> {
+fn base_payload(
+    workspace_id: &str,
+    conversation_id: &str,
+    hook_event_name: &str,
+) -> Map<String, Value> {
     let mut payload = Map::new();
     payload.insert("hook_event_name".into(), json!(hook_event_name));
     payload.insert("session_id".into(), session_id(conversation_id));
