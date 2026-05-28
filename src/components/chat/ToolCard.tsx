@@ -10,11 +10,13 @@ import { Icon } from "@iconify/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type {
   FileChange,
+  ModelRef,
   TodoListState,
   TodoStatus,
   ToolResultImage,
 } from "../../types";
 import { canonicalToolName } from "../../lib/tools";
+import { compactModelLabel, thinkingLabelForRef } from "../../lib/models";
 import { FileChangeBlock } from "./FileChangeBlock";
 
 function extractEditFilePaths(argsPretty?: string): string[] {
@@ -66,6 +68,7 @@ export type ToolCardTeamAgent = {
   status?: string;
   color: string;
   agentId?: string;
+  model?: ModelRef;
 };
 
 function TerminalGlyph() {
@@ -692,11 +695,27 @@ function omitInternalTeamFields(input: Record<string, unknown>): Record<string, 
   );
 }
 
+const MODEL_EFFORTS = new Set(["none", "low", "medium", "high", "xhigh", "max"]);
+
+function modelRefFromUnknown(value: unknown): ModelRef | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.provider !== "string" || typeof record.name !== "string") {
+    return undefined;
+  }
+  const model: ModelRef = { provider: record.provider, name: record.name };
+  if (typeof record.effort === "string" && MODEL_EFFORTS.has(record.effort)) {
+    model.effort = record.effort as NonNullable<ModelRef["effort"]>;
+  }
+  return model;
+}
+
 type SwarmAgentMini = {
   name: string;
   status?: string;
   color: string;
   agentId?: string;
+  model?: ModelRef;
 };
 
 function teamRunDetails(
@@ -722,16 +741,19 @@ function teamRunDetails(
     status?: unknown,
     color?: string,
     agentId?: string,
+    model?: ModelRef,
   ) => {
     if (typeof name !== "string") return;
     const trimmed = name.replace(/^@/, "").trim();
     if (!trimmed) return;
     const key = trimmed.toLowerCase();
+    const previous = agents.get(key);
     agents.set(key, {
       name: trimmed,
       status: typeof status === "string" ? status : undefined,
       color: color || fallbackSwarmAgentColor(trimmed),
       agentId,
+      model: model ?? previous?.model,
     });
   };
 
@@ -739,14 +761,26 @@ function teamRunDetails(
   for (const raw of subagents) {
     if (!raw || typeof raw !== "object") continue;
     const record = raw as Record<string, unknown>;
-    addAgent(record.name, record.status);
+    addAgent(
+      record.name,
+      record.status,
+      undefined,
+      undefined,
+      modelRefFromUnknown(record.model),
+    );
   }
 
   const teamAgents = Array.isArray(teamRecord?.agents) ? teamRecord.agents : [];
   for (const raw of teamAgents) {
     if (!raw || typeof raw !== "object") continue;
     const record = raw as Record<string, unknown>;
-    addAgent(record.name, record.status);
+    addAgent(
+      record.name,
+      record.status,
+      undefined,
+      undefined,
+      modelRefFromUnknown(record.model),
+    );
   }
 
   const inputNames = Array.isArray(input.agent_names) ? input.agent_names : [];
@@ -755,7 +789,7 @@ function teamRunDetails(
   for (const agent of liveAgents) {
     const agentTeamName = teamNameFromAgentId(agent.agentId);
     if (teamName && agentTeamName !== teamName) continue;
-    addAgent(agent.name, agent.status, agent.color, agent.agentId);
+    addAgent(agent.name, agent.status, agent.color, agent.agentId, agent.model);
   }
 
   const sortedAgents = Array.from(agents.values()).sort((left, right) =>
@@ -936,6 +970,11 @@ function SwarmAgentsInline({
           <span className="tool-card__swarm-name">@{agent.name}</span>
           {agent.status && (
             <span className="tool-card__swarm-status">{agent.status}</span>
+          )}
+          {agent.model && (
+            <span className="tool-card__swarm-model">
+              {compactModelLabel(agent.model)} · {thinkingLabelForRef(agent.model)}
+            </span>
           )}
         </div>
       ))}
@@ -1139,7 +1178,12 @@ export function ToolCard({
     return (
       <div className="tool-card__changes" data-bare="true">
         {renderedFileChanges.map((change, idx) => (
-          <FileChangeBlock key={idx} change={change} live={isLiveFileChange} />
+          <FileChangeBlock
+            key={idx}
+            change={change}
+            live={isLiveFileChange}
+            onOpenFile={onOpenFile}
+          />
         ))}
       </div>
     );
@@ -1362,7 +1406,12 @@ export function ToolCard({
           {hasChanges && (
             <div className="tool-card__changes">
               {renderedFileChanges!.map((change, idx) => (
-                <FileChangeBlock key={idx} change={change} live={isLiveFileChange} />
+                <FileChangeBlock
+            key={idx}
+            change={change}
+            live={isLiveFileChange}
+            onOpenFile={onOpenFile}
+          />
               ))}
             </div>
           )}

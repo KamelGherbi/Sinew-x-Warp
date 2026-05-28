@@ -7605,6 +7605,12 @@ textarea {
   font-family: var(--font-mono);
   font-size: var(--fs-mono-sm);
 }
+.tool-card__swarm-model {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  opacity: 0.85;
+}
 .tool-card__swarm-loading {
   min-height: 24px;
   display: inline-flex;
@@ -8389,6 +8395,17 @@ textarea {
   letter-spacing: -0.005em;
   flex: 1 1 auto;
   min-width: 0;
+}
+.filechange__path-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.filechange__path-button:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .filechange__caret {
   color: var(--text-3);

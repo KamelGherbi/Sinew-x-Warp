@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Icon } from "@iconify/react";
 import { fileIcon } from "../../lib/fileIcon";
 import type { FileChange } from "../../types";
@@ -22,9 +22,11 @@ function normalizeDiffLineKind(kind: string): RenderedDiffLineKind {
 export function FileChangeBlock({
   change,
   live = false,
+  onOpenFile,
 }: {
   change: FileChange;
   live?: boolean;
+  onOpenFile?: (path: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -54,6 +56,13 @@ export function FileChangeBlock({
       ? "binary"
       : "no text diff"
     : null;
+  const canOpenFile = Boolean(onOpenFile && change.kind !== "deleted");
+
+  const openFile = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (change.kind === "deleted") return;
+    onOpenFile?.(change.relativePath);
+  };
 
   useEffect(() => {
     if (!open || firstChangedLineIndex < 0 || live) return undefined;
@@ -88,9 +97,20 @@ export function FileChangeBlock({
         >
           <Icon icon={fileIcon(name)} width={14} height={14} />
         </span>
-        <span className="filechange__path" title={change.relativePath}>
-          {name}
-        </span>
+        {canOpenFile ? (
+          <button
+            type="button"
+            className="filechange__path filechange__path-button"
+            title={`Open ${change.relativePath}`}
+            onClick={openFile}
+          >
+            {name}
+          </button>
+        ) : (
+          <span className="filechange__path" title={change.relativePath}>
+            {name}
+          </span>
+        )}
         {hasTextStats && (
           <span className="filechange__stats">
             {added > 0 && (

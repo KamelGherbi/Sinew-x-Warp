@@ -33,11 +33,14 @@ import {
   PROVIDERS,
   THINKING_LEVELS,
   availableModelsForProviders,
+  compactModelLabel,
+  modelEntryFromRef,
   modelRefFromId,
   modelsWithOpenRouter,
   selectionFromRef,
   selectionsFromSettings,
   thinkingFromRef,
+  thinkingLabelForRef,
   type ModelEntry,
   type ModeModelSelection,
   type ModeModelSelections,
@@ -198,6 +201,36 @@ function preserveTrailingTurnDuration(
   if (trailing?.kind !== "turn-duration") return next;
   if (next.blocks[next.blocks.length - 1]?.kind === "turn-duration") return next;
   return { ...next, blocks: [...next.blocks, trailing] };
+}
+
+function hydrateStreamingViewFromHistory(
+  current: ChatViewState,
+  historyView: ChatViewState,
+): ChatViewState {
+  if (!streamingViewMissingHistory(current, historyView)) return current;
+  const liveBlocks = current.blocks.filter(isLiveStreamBlock);
+  return {
+    ...current,
+    blocks: [...historyView.blocks, ...liveBlocks],
+  };
+}
+
+function streamingViewMissingHistory(
+  current: ChatViewState,
+  historyView: ChatViewState,
+): boolean {
+  if (historyView.blocks.length === 0) return false;
+  const currentHistoryAnchors = current.blocks.filter(isHistoryAnchorBlock).length;
+  const nextHistoryAnchors = historyView.blocks.filter(isHistoryAnchorBlock).length;
+  return nextHistoryAnchors > currentHistoryAnchors;
+}
+
+function isHistoryAnchorBlock(block: ChatBlock): boolean {
+  return block.kind === "user-text" || block.kind === "compaction-summary";
+}
+
+function isLiveStreamBlock(block: ChatBlock): boolean {
+  return block.id.startsWith("s-");
 }
 
 function isHistoryViewBehindCurrentTurn(
@@ -436,6 +469,7 @@ export function ChatPane({
   });
   const viewRef = useRef(view);
   const appliedHistoryRef = useRef(history);
+  const historyRef = useRef(history);
   const viewConversationIdRef = useRef(conversationId);
   const [subAgentViews, setSubAgentViews] = useState<
     Map<string, SubAgentViewRecord>
@@ -752,6 +786,10 @@ export function ChatPane({
   }, [subAgentViews]);
 
   useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+
+  useEffect(() => {
     viewRef.current = view;
     conversationViewsRef.current.set(viewConversationIdRef.current, view);
   }, [view]);
@@ -837,6 +875,23 @@ export function ChatPane({
     goalAutoContinueCountRef.current = 0;
     goalContinuationKeysRef.current.clear();
   }, [conversationId, goalWorkflow.status]);
+
+  useEffect(() => {
+    if (view.status !== "streaming" && !isStreaming) return;
+    if (appliedHistoryRef.current === history) return;
+    const historyView = initialStateFromHistory(history);
+    const current = viewRef.current;
+    const next = hydrateStreamingViewFromHistory(current, historyView);
+    appliedHistoryRef.current = history;
+    if (next === current) return;
+    viewRef.current = next;
+    conversationViewsRef.current.set(conversationId, next);
+    setView(next);
+    const storedSubAgentViews = subAgentViewsFromHistory(history);
+    setSubAgentViewsForConversation(conversationId, (currentViews) =>
+      mergeSubAgentViews(currentViews, storedSubAgentViews),
+    );
+  }, [conversationId, history, isStreaming, setSubAgentViewsForConversation, view.status]);
 
   useEffect(() => {
     if (view.status === "streaming" || isStreaming) return;
@@ -1200,19 +1255,23 @@ export function ChatPane({
 
   const applyEventToConversationView = useCallback(
     (cid: string, event: AgentEvent) => {
-      const viewBeforeEvent =
+      const currentBeforeEvent =
         cid === viewConversationIdRef.current
           ? viewRef.current
           : conversationViewsRef.current.get(cid) ?? initialStateFromHistory([]);
       setActiveTeamNamesByConversation((current) =>
-        updateActiveTeamNamesForEvent(current, cid, event, viewBeforeEvent),
+        updateActiveTeamNamesForEvent(current, cid, event, currentBeforeEvent),
       );
       if (event.type === "sub_agent_event") applySubAgentEvent(cid, event);
       if (event.type === "tool_finished") applySubAgentToolMeta(cid, event);
       applyTokenUsageEvent(cid, event);
       if (cid === viewConversationIdRef.current) {
         setView((prev) => {
-          const next = reduceEventForConversation(cid, prev, event);
+          const base =
+            prev.blocks.length === 0 && event.type === "turn_started"
+              ? initialStateFromHistory(historyRef.current)
+              : prev;
+          const next = reduceEventForConversation(cid, base, event);
           viewRef.current = next;
           conversationViewsRef.current.set(cid, next);
           return next;
@@ -1220,9 +1279,7 @@ export function ChatPane({
         return;
       }
 
-      const current =
-        conversationViewsRef.current.get(cid) ?? initialStateFromHistory([]);
-      const next = reduceEventForConversation(cid, current, event);
+      const next = reduceEventForConversation(cid, currentBeforeEvent, event);
       conversationViewsRef.current.set(cid, next);
     },
     [
@@ -3647,7 +3704,9 @@ function TeamAgentRail({
     <div className="team-agent-rail" aria-label="Agent Swarm">
       <div className="team-agent-rail__track" role="list">
         {agents.map((agent) => {
-          const label = compactModelLabel(agent.model ?? fallbackModel, allModels);
+          const modelRef = agent.model ?? fallbackModel;
+          const label = compactModelLabel(modelRef, allModels);
+          const thinking = thinkingLabelForRef(modelRef, allModels);
           return (
             <button
               key={agent.id}
@@ -3671,7 +3730,7 @@ function TeamAgentRail({
               <span className="team-agent-chip__body">
                 <span className="team-agent-chip__name">{agent.name}</span>
                 <span className="team-agent-chip__meta">
-                  {agentStatusLabel(agent.status)} · {label}
+                  {agentStatusLabel(agent.status)} · {label} · {thinking}
                 </span>
               </span>
             </button>
@@ -4495,32 +4554,12 @@ function agentStatusLabel(status: TeamAgentRosterItem["status"]): string {
   }
 }
 
-function compactModelLabel(
-  model: ModelRef,
-  allModels: readonly ModelEntry[] = MODELS,
-): string {
-  const entry = modelEntryFromRef(model, allModels);
-  return entry?.label ?? model.name;
-}
-
 function isTeamAgentId(agentId?: string): boolean {
   return !!agentId && agentId.includes("@");
 }
 
 function subAgentViewId(turnId: string, agentId?: string): string {
   return isTeamAgentId(agentId) ? `agent:${agentId}` : turnId;
-}
-
-function modelEntryFromRef(
-  model: ModelRef,
-  allModels: readonly ModelEntry[] = MODELS,
-) {
-  return (
-    allModels.find((entry) => {
-      const ref = modelRefFromId(entry.value);
-      return ref.provider === model.provider && ref.name === model.name;
-    }) ?? null
-  );
 }
 
 function initialSubAgentViewFromHistory(history: ChatMessage[]): ChatViewState {

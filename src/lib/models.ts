@@ -365,3 +365,36 @@ export function selectionsFromSettings(
     goal: selectionFromRef(settings?.goal ?? settings?.act ?? fallback),
   };
 }
+
+export function modelEntryFromRef(
+  model: ModelRef,
+  allModels: readonly ModelEntry[] = MODELS,
+): ModelEntry | null {
+  return (
+    allModels.find((entry) => {
+      const ref = modelRefFromId(entry.value);
+      return ref.provider === model.provider && ref.name === model.name;
+    }) ?? null
+  );
+}
+
+export function compactModelLabel(
+  model: ModelRef,
+  allModels: readonly ModelEntry[] = MODELS,
+): string {
+  const entry = modelEntryFromRef(model, allModels);
+  return entry?.label ?? model.name;
+}
+
+export function thinkingLabelForRef(
+  model: ModelRef | null | undefined,
+  allModels: readonly ModelEntry[] = MODELS,
+): string {
+  if (!model) return "Unknown";
+  const level = thinkingFromRef(model);
+  const found = THINKING_LEVELS.find((entry) => entry.value === level);
+  if (!found) return "Medium";
+  const entry = modelEntryFromRef(model, allModels);
+  if (entry?.provider === "kimi" && found.value !== "off") return "Thinking";
+  return found.label;
+}

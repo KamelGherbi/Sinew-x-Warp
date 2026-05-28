@@ -1085,10 +1085,16 @@ export function Workspace({
             payloadWorkspacePath,
             payload.conversationId,
           );
-          if (payload.event.type === "turn_started") {
+          if (
+            payload.event.type === "turn_started" &&
+            payloadWorkspacePath === workspacePathRef.current
+          ) {
             lastAgentEventSequenceByConversationRef.current.delete(sequenceKey);
           }
-          if (typeof payload.sequence === "number") {
+          if (
+            typeof payload.sequence === "number" &&
+            payloadWorkspacePath === workspacePathRef.current
+          ) {
             const last =
               lastAgentEventSequenceByConversationRef.current.get(
                 sequenceKey,
@@ -1181,7 +1187,7 @@ export function Workspace({
         const sequenceKey = workspaceSessionKey(workspaceAtRequest, conversationId);
         const last =
           lastAgentEventSequenceByConversationRef.current.get(sequenceKey) ?? 0;
-        if (entry.sequence === last && last !== 0) continue;
+        if (entry.sequence <= last && last !== 0) continue;
         lastAgentEventSequenceByConversationRef.current.set(
           sequenceKey,
           entry.sequence,
@@ -1355,6 +1361,18 @@ export function Workspace({
       agentSubsRef.current.delete(handler);
     };
   }, [markConversationStreaming, onWorkspaceConversationsReplace, refreshChangedFiles]);
+
+  useEffect(() => {
+    if (!streamingConversationIds.has(activeConv.id)) return;
+    const sequenceKey = workspaceSessionKey(workspacePath, activeConv.id);
+    const last = lastAgentEventSequenceByConversationRef.current.get(sequenceKey) ?? 0;
+    void replayActiveTurnEvents(activeConv.id, last).catch((err) => {
+      console.error(err);
+    });
+    // Only replay on conversation/workspace switches. A newly submitted prompt is
+    // marked streaming optimistically before the backend can replay it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConv.id, replayActiveTurnEvents, workspacePath]);
 
   useEffect(() => {
     let cancelled = false;
