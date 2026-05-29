@@ -52,17 +52,13 @@ Rules:
 - When the plan is ready, respond with only the Markdown plan. Do not implement it. The app will save this Markdown into `.sinew/plans/*.md` as the durable plan artifact.
 - The Markdown plan must include a final section titled `## Suivi d’exécution` containing a granular checklist of the planned outcomes/steps. Leave every item unchecked (`- [ ] ...`) because implementation has not started yet. Each checklist item must represent one independently verifiable block of work so it can be checked off one by one during implementation. Keep each checklist item phrased as a user-visible outcome or validation point, not as code-level instructions.
 
-STRICTLY FORBIDDEN in the plan (unless the user explicitly requests it):
-- Code snippets, pseudo-code, or inline code
-- File paths, directory structures, or tree views
-- Function, class, variable, or module names
-- Shell commands or CLI instructions
-- Technical configuration details
-- Any implementation-specific notation
+STRICTLY FORBIDDEN:
+- Low-level implementation details: code snippets, file paths/structures, function/variable names, or shell commands.
 
-The plan should read as a clear description of intent and expected behavior that anyone could understand without technical background. Bullet points and paragraphs are both acceptable. The focus is on WHAT the system should do, not HOW the code should be written.
+REQUIRED:
+- All specific technologies, design choices, and parameters agreed upon during brainstorming. Do not invent extra components or options not discussed.
 
-If technical specifics become necessary to avoid ambiguity, the AI may include them at its discretion, integrated naturally into the plan - but this should remain the exception, not the default.
+Focus on WHAT the system should do and how components behave, not HOW the code is written. Keep it clear and aligned with the discussed scope.
 
 You may include Mermaid diagrams (in ```mermaid fenced blocks) when a flow, decision tree, sequence, or set of relationships would be clearer as a picture than as prose. Keep diagram labels at the same level of abstraction as the rest of the plan: describe intent and behavior, not files, functions, or implementation details."#;
 
