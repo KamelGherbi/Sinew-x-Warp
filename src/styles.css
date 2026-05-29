@@ -4443,6 +4443,65 @@ textarea {
   min-width: 0;
 }
 
+.settings-pane__provider-card--visibility {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+}
+
+.settings-pane__provider-card--visibility .settings-pane__provider-main {
+  width: 100%;
+}
+
+.settings-pane__provider-card--visibility .settings-pane__provider-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-pane__visibility-group {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-pane__visibility-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.settings-pane__visibility-group-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 550;
+  letter-spacing: 0.01em;
+}
+
+.settings-pane__visibility-group-name svg {
+  flex: 0 0 auto;
+  color: var(--text-3);
+}
+
+.settings-pane__visibility-bulk {
+  flex: 0 0 auto;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.settings-pane__visibility-bulk:hover {
+  color: var(--text-1);
+}
+
 .settings-pane__provider-detail {
   display: grid;
   gap: 8px;
@@ -9607,6 +9666,14 @@ textarea {
 }
 .composer__popover-row[data-selected="true"] {
   color: var(--text-0);
+}
+.composer__popover-empty {
+  padding: 6px 9px;
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  letter-spacing: -0.005em;
+  line-height: 1.4;
 }
 .composer__popover-label {
   display: inline-flex;

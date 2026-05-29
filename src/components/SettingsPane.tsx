@@ -45,6 +45,17 @@ import {
   type ModelEntry,
   type ModelId,
 } from "../lib/models";
+import {
+  filterVisibleModels,
+  isModelHidden,
+  isModelVisible,
+  loadModelVisibility,
+  resetModelVisibility,
+  saveModelVisibility,
+  setModelHidden,
+  setModelsHidden,
+  type ModelVisibilitySettings,
+} from "../lib/modelVisibility";
 import type {
   AnthropicProviderStatus,
   GoogleProviderStatus,
@@ -150,6 +161,14 @@ export function SettingsPane({ workspacePath }: Props) {
   const [providersMessage, setProvidersMessage] = useState<string | null>(null);
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([]);
   const [appearance, setAppearance] = useState(loadAppearanceSettings);
+  const [modelVisibility, setModelVisibility] = useState(loadModelVisibility);
+
+  // Persisting also dispatches the changed event so any open model selector
+  // (chat composer, sub-agents) refreshes live.
+  const updateModelVisibility = useCallback((next: ModelVisibilitySettings) => {
+    setModelVisibility(next);
+    saveModelVisibility(next);
+  }, []);
 
   useEffect(() => {
     applyAppearanceSettings(appearance);
@@ -397,6 +416,13 @@ export function SettingsPane({ workspacePath }: Props) {
   const availableModels = useMemo(
     () => availableModelsForProviders(configuredProviders, openRouterModels),
     [configuredProviders, openRouterModels],
+  );
+  // Subset honouring the user's visibility prefs. The full `availableModels`
+  // list stays the source of truth for resolution, so hiding never drops a
+  // currently selected model.
+  const visibleModels = useMemo(
+    () => filterVisibleModels(availableModels, modelVisibility),
+    [availableModels, modelVisibility],
   );
 
   const loadOpenAiStatus = useCallback(async () => {
@@ -1254,6 +1280,9 @@ export function SettingsPane({ workspacePath }: Props) {
             kimiStatus={kimiStatus}
             openRouterStatus={openRouterStatus}
             openRouterModels={openRouterModels}
+            availableModels={availableModels}
+            modelVisibility={modelVisibility}
+            onModelVisibilityChange={updateModelVisibility}
             loading={providersLoading}
             busy={providersBusy}
             message={providersMessage}
@@ -1356,6 +1385,7 @@ export function SettingsPane({ workspacePath }: Props) {
             dirty={subAgentsDirty}
             status={subAgentsStatus}
             availableModels={availableModels}
+            visibleModels={visibleModels}
             onSelect={setSelectedSubAgentId}
             onAdd={addSubAgent}
             onDelete={deleteSubAgent}
@@ -1934,6 +1964,9 @@ type ProvidersSectionProps = {
   kimiStatus: KimiProviderStatus | null;
   openRouterStatus: OpenRouterProviderStatus | null;
   openRouterModels: OpenRouterModel[];
+  availableModels: readonly ModelEntry[];
+  modelVisibility: ModelVisibilitySettings;
+  onModelVisibilityChange: (next: ModelVisibilitySettings) => void;
   loading: boolean;
   busy: boolean;
   message: string | null;
@@ -1963,6 +1996,9 @@ function ProvidersSection({
   kimiStatus,
   openRouterStatus,
   openRouterModels,
+  availableModels,
+  modelVisibility,
+  onModelVisibilityChange,
   loading,
   busy,
   message,
@@ -2082,8 +2118,135 @@ function ProvidersSection({
           onModelsChange={onOpenRouterModelsChange}
           onChanged={onOpenRouterChanged}
         />
+        <VisibleModelsCard
+          models={availableModels}
+          visibility={modelVisibility}
+          onChange={onModelVisibilityChange}
+        />
       </div>
     </>
+  );
+}
+
+function VisibleModelsCard({
+  models,
+  visibility,
+  onChange,
+}: {
+  models: readonly ModelEntry[];
+  visibility: ModelVisibilitySettings;
+  onChange: (next: ModelVisibilitySettings) => void;
+}) {
+  // Group the currently available models by provider, keeping PROVIDERS order.
+  const groups = useMemo(
+    () =>
+      PROVIDERS.map((provider) => ({
+        provider,
+        models: models.filter((model) => model.provider === provider.value),
+      })).filter((group) => group.models.length > 0),
+    [models],
+  );
+  const hiddenCount = useMemo(
+    () => models.filter((model) => isModelHidden(model.value, visibility)).length,
+    [models, visibility],
+  );
+
+  return (
+    <section className="settings-pane__provider-card settings-pane__provider-card--visibility">
+      <div className="settings-pane__provider-main">
+        <div className="settings-pane__provider-mark" aria-hidden>
+          <Icon icon="solar:eye-linear" width={24} height={24} />
+        </div>
+        <div className="settings-pane__provider-copy">
+          <div className="settings-pane__provider-title-row">
+            <h2>Visible models</h2>
+            {hiddenCount > 0 && (
+              <span className="settings-pane__chip" data-tone="pending">
+                <span className="settings-pane__chip-dot" />
+                {hiddenCount} hidden
+              </span>
+            )}
+          </div>
+          <p>Choose which models appear in the chat and sub-agent selectors.</p>
+        </div>
+        <div className="settings-pane__provider-actions">
+          <button
+            type="button"
+            className="settings-pane__btn"
+            onClick={() => onChange(resetModelVisibility())}
+            disabled={hiddenCount === 0}
+            title="Make every model visible again"
+          >
+            <Icon icon="solar:eye-linear" width={13} height={13} />
+            <span>Show all</span>
+          </button>
+        </div>
+      </div>
+
+      {models.length === 0 ? (
+        <div className="settings-pane__openrouter-hint">
+          Connect a provider to choose which models are visible.
+        </div>
+      ) : (
+        <div className="settings-pane__provider-detail">
+          {groups.map((group) => {
+            const values = group.models.map((model) => model.value);
+            const visibleInGroup = group.models.filter((model) =>
+              isModelVisible(model.value, visibility),
+            ).length;
+            const allHidden = visibleInGroup === 0;
+            return (
+              <div
+                key={group.provider.value}
+                className="settings-pane__visibility-group"
+              >
+                <div className="settings-pane__visibility-group-head">
+                  <span className="settings-pane__visibility-group-name">
+                    <Icon icon={group.provider.icon} width={13} height={13} />
+                    <span>{group.provider.label}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="settings-pane__visibility-bulk"
+                    onClick={() =>
+                      onChange(setModelsHidden(values, !allHidden, visibility))
+                    }
+                  >
+                    {allHidden ? "Show all" : "Hide all"}
+                  </button>
+                </div>
+                <div className="settings-pane__openrouter-list">
+                  {group.models.map((model) => {
+                    const visible = isModelVisible(model.value, visibility);
+                    return (
+                      <div
+                        key={model.value}
+                        className="settings-pane__openrouter-row"
+                      >
+                        <span title={model.value}>{model.label}</span>
+                        <button
+                          type="button"
+                          className="settings-pane__switch settings-pane__switch--mini"
+                          role="switch"
+                          aria-checked={visible}
+                          aria-label={`${visible ? "Hide" : "Show"} ${model.label}`}
+                          data-on={visible ? "true" : "false"}
+                          onClick={() =>
+                            onChange(setModelHidden(model.value, visible, visibility))
+                          }
+                        >
+                          <span className="settings-pane__switch-thumb" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -3328,6 +3491,7 @@ type SubAgentsSectionProps = {
   dirty: boolean;
   status: string | null;
   availableModels: readonly ModelEntry[];
+  visibleModels: readonly ModelEntry[];
   onSelect: (id: string) => void;
   onAdd: () => void;
   onDelete: (id: string) => void;
@@ -3343,6 +3507,7 @@ function SubAgentsSection({
   dirty,
   status,
   availableModels,
+  visibleModels,
   onSelect,
   onAdd,
   onDelete,
@@ -3439,6 +3604,7 @@ function SubAgentsSection({
             <SubAgentEditor
               agent={selectedAgent}
               availableModels={availableModels}
+              visibleModels={visibleModels}
               onUpdate={(patch) => onUpdate(selectedAgent.id, patch)}
               onDelete={() => onDelete(selectedAgent.id)}
             />
@@ -3553,11 +3719,13 @@ function settingsThinkingLabel(
 function SubAgentEditor({
   agent,
   availableModels,
+  visibleModels,
   onUpdate,
   onDelete,
 }: {
   agent: SubAgentConfig;
   availableModels: readonly ModelEntry[];
+  visibleModels: readonly ModelEntry[];
   onUpdate: (patch: Partial<SubAgentConfig>) => void;
   onDelete: () => void;
 }) {
@@ -3568,6 +3736,14 @@ function SubAgentEditor({
     availableModels[0] ??
     null;
   const modelId = modelEntry?.value ?? rawModelId;
+  // Offer the visibility-filtered list, but always keep the agent's current
+  // model selectable even if it was hidden after the fact.
+  const pickerModels = useMemo(() => {
+    if (!modelEntry) return visibleModels;
+    return visibleModels.some((model) => model.value === modelEntry.value)
+      ? visibleModels
+      : [modelEntry, ...visibleModels];
+  }, [visibleModels, modelEntry]);
   const thinkingOptions = modelEntry
     ? THINKING_LEVELS.filter((level) => modelEntry.thinking.includes(level.value))
     : [];
@@ -3661,7 +3837,7 @@ function SubAgentEditor({
             <span>Model</span>
             <SettingsPicker
               value={modelId}
-              options={availableModels.map((model) => ({
+              options={pickerModels.map((model) => ({
                 value: model.value,
                 label: model.label,
                 icon: PROVIDERS.find((p) => p.value === model.provider)?.icon,

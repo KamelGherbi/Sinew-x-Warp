@@ -176,6 +176,7 @@ Code map:
 │   │   ├── ipc.ts
 │   │   ├── language.ts
 │   │   ├── models.ts
+│   │   ├── modelVisibility.ts
 │   │   ├── recents.ts
 │   │   ├── sessions.ts
 │   │   └── tools.ts

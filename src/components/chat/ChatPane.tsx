@@ -46,6 +46,11 @@ import {
   type ModeModelSelections,
   type ModelId,
 } from "../../lib/models";
+import {
+  filterVisibleModels,
+  loadModelVisibility,
+  watchModelVisibility,
+} from "../../lib/modelVisibility";
 import type {
   AgentMode,
   AttachmentInput,
@@ -518,6 +523,7 @@ export function ChatPane({
   );
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([]);
   const [openRouterModels, setOpenRouterModels] = useState<OpenRouterModel[]>([]);
+  const [modelVisibility, setModelVisibility] = useState(loadModelVisibility);
   const [agentTeamsEnabled, setAgentTeamsEnabled] = useState(false);
   const modelRef = useRef<HTMLDivElement | null>(null);
   const thinkingRef = useRef<HTMLDivElement | null>(null);
@@ -658,6 +664,11 @@ export function ChatPane({
     };
   }, [loadConfiguredProviders]);
 
+  useEffect(
+    () => watchModelVisibility(() => setModelVisibility(loadModelVisibility())),
+    [],
+  );
+
   const loadAgentTeamsEnabled = useCallback(async () => {
     try {
       const settings = await api.listToolSettings(workspacePath);
@@ -685,9 +696,16 @@ export function ChatPane({
     () => modelsWithOpenRouter(openRouterModels),
     [openRouterModels],
   );
+  // Full set the active selection is always resolved against, so hiding a model
+  // never drops the current pick or empties the picker logic.
   const availableModels = useMemo(
     () => availableModelsForProviders(configuredProviders, openRouterModels),
     [configuredProviders, openRouterModels],
+  );
+  // Subset shown in the composer dropdown — honours the user's visibility prefs.
+  const visibleModels = useMemo(
+    () => filterVisibleModels(availableModels, modelVisibility),
+    [availableModels, modelVisibility],
   );
 
   const baseModeSelections = useMemo(
@@ -3509,7 +3527,12 @@ export function ChatPane({
                     role="menu"
                     aria-label="Model"
                   >
-                    {availableModels.map((m) => {
+                    {visibleModels.length === 0 && (
+                      <div className="composer__popover-empty">
+                        All models are hidden. Enable some in Settings › Providers.
+                      </div>
+                    )}
+                    {visibleModels.map((m) => {
                       const selected = m.value === model;
                       const providerIcon =
                         PROVIDERS.find((p) => p.value === m.provider)?.icon;
