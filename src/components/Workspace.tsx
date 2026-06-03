@@ -628,7 +628,7 @@ export function Workspace({
       reveal?: Omit<EditorRevealTarget, "id" | "relativePath">,
     ) => {
       if (entry.kind !== "file") return;
-      setLayoutVisibility((current) => ({ ...current, editor: true, chat: false }));
+      setLayoutVisibility((current) => ({ ...current, editor: true }));
       const queueReveal = () => {
         if (!reveal) return;
         setEditorRevealTarget({
