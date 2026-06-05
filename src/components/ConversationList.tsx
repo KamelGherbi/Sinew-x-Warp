@@ -1,6 +1,8 @@
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { Icon } from "@iconify/react";
 import type { ConversationSummary } from "../types";
+
+const EMPTY_IDS: ReadonlySet<string> = new Set<string>();
 
 export type ConversationListProject = {
   key: string;
@@ -8,6 +10,10 @@ export type ConversationListProject = {
   path: string;
   conversations: ConversationListConversation[];
   streamingIds: ReadonlySet<string>;
+  // Conversations whose AI turn has finished and should stay easy to notice
+  // until the user opens them. Optional so existing callers keep compiling
+  // until the parent wires the state.
+  attentionIds?: ReadonlySet<string>;
 };
 
 export type ConversationListConversation = ConversationSummary & {
@@ -18,6 +24,8 @@ type Props = {
   conversations: ConversationSummary[];
   activeId: string | null;
   streamingIds: ReadonlySet<string>;
+  // Finished/attention conversations for the single-project (ungrouped) view.
+  attentionIds?: ReadonlySet<string>;
   projects?: ConversationListProject[];
   activeSessionKey?: string | null;
   onSelect: (id: string, workspacePath?: string, sessionKey?: string) => void;
@@ -28,6 +36,25 @@ type Props = {
   onCloseProject?: (workspacePath: string) => void;
 };
 
+// A conversation row decorated with its current status so we can both order
+// and render it without recomputing. `surfaced` rows (running + finished) are
+// pinned to the top of each project so they stay reachable amid long history.
+type DecoratedRow = {
+  conv: ConversationListConversation;
+  rowKey: string;
+  isActive: boolean;
+  isStreaming: boolean;
+  isAttention: boolean;
+};
+
+// Lower rank floats to the top: running first, finished/attention next, then
+// the rest of the history in its incoming (recency) order.
+function rowRank(row: DecoratedRow): number {
+  if (row.isStreaming) return 0;
+  if (row.isAttention) return 1;
+  return 2;
+}
+
 // Renders only the body of the conversations list. The parent owns the
 // `sidebar__section` shell and the head (shared with the Git tab), so this
 // component focuses on the project/conversation rows.
@@ -35,6 +62,7 @@ export function ConversationList({
   conversations,
   activeId,
   streamingIds,
+  attentionIds,
   projects,
   activeSessionKey,
   onSelect,
@@ -59,9 +87,10 @@ export function ConversationList({
         path: "",
         conversations,
         streamingIds,
+        attentionIds: attentionIds ?? EMPTY_IDS,
       },
     ];
-  }, [conversations, projects, streamingIds]);
+  }, [conversations, projects, streamingIds, attentionIds]);
 
   const hasProjectGroups = Boolean(projects);
 
@@ -93,10 +122,41 @@ export function ConversationList({
         )}
         {displayProjects.map((project) => {
           const isCollapsed = collapsedProjects.has(project.key);
-          const streamingCount = project.conversations.reduce(
-            (count, conv) => count + (project.streamingIds.has(conv.id) ? 1 : 0),
+          const attentionSet = project.attentionIds ?? EMPTY_IDS;
+
+          // Decorate every conversation with its status once, then derive the
+          // pinned order and head counts from the same source of truth.
+          const decorated: DecoratedRow[] = project.conversations.map((conv) => {
+            const rowKey = conv.sessionKey ?? `${project.path}::${conv.id}`;
+            const isActive = activeSessionKey
+              ? activeSessionKey === rowKey
+              : activeId === conv.id;
+            const isStreaming = project.streamingIds.has(conv.id);
+            // Once a conversation is open (active) or running it no longer
+            // needs an attention nudge, so suppress it in both states.
+            const isAttention =
+              !isStreaming && !isActive && attentionSet.has(conv.id);
+            return { conv, rowKey, isActive, isStreaming, isAttention };
+          });
+
+          const orderedRows = decorated
+            .map((row, index) => ({ row, index }))
+            .sort(
+              (a, b) =>
+                rowRank(a.row) - rowRank(b.row) || a.index - b.index,
+            )
+            .map((entry) => entry.row);
+
+          const streamingCount = decorated.reduce(
+            (count, row) => count + (row.isStreaming ? 1 : 0),
             0,
           );
+          const attentionCount = decorated.reduce(
+            (count, row) => count + (row.isAttention ? 1 : 0),
+            0,
+          );
+          const surfacedCount = streamingCount + attentionCount;
+
           return (
             <div className="conv-project" key={project.key}>
               {hasProjectGroups && (
@@ -120,8 +180,16 @@ export function ConversationList({
                   </button>
                   <span className="conv-project__meta">
                     {streamingCount > 0 && (
-                      <span className="conv-project__streaming" title="Streaming conversations">
+                      <span className="conv-project__streaming" title="Running conversations">
                         {streamingCount}
+                      </span>
+                    )}
+                    {attentionCount > 0 && (
+                      <span
+                        className="conv-project__attention"
+                        title="Finished — open to view"
+                      >
+                        {attentionCount}
                       </span>
                     )}
                     <button
@@ -163,109 +231,126 @@ export function ConversationList({
                 <div className="conv-empty">No conversations yet.</div>
               )}
               {!isCollapsed &&
-                project.conversations.map((conv) => {
-                  const rowKey = conv.sessionKey ?? `${project.path}::${conv.id}`;
+                orderedRows.map((row, index) => {
+                  const { conv, rowKey, isActive, isStreaming, isAttention } = row;
                   const isEditing = editingId === rowKey;
-                  const isActive = activeSessionKey
-                    ? activeSessionKey === rowKey
-                    : activeId === conv.id;
-                  const isStreaming = project.streamingIds.has(conv.id);
+                  // Separate the pinned (running + finished) rows from the rest
+                  // of the history so the surfaced section is obvious.
+                  const showDivider =
+                    surfacedCount > 0 &&
+                    surfacedCount < orderedRows.length &&
+                    index === surfacedCount;
                   return (
-                    <div
-                      key={rowKey}
-                      className="conv-row"
-                      data-active={isActive ? "true" : "false"}
-                      data-streaming={isStreaming ? "true" : "false"}
-                      data-grouped={hasProjectGroups ? "true" : "false"}
-                      onClick={() =>
-                        !isEditing && onSelect(conv.id, project.path, conv.sessionKey)
-                      }
-                    >
-                      <span className="conv-row__icon">
-                        {isStreaming ? (
-                          <span className="conv-row__spinner" aria-label="Streaming" />
-                        ) : (
-                          <Icon
-                            icon={
-                              isActive
-                                ? "solar:chat-round-dots-bold"
-                                : "solar:chat-round-dots-linear"
-                            }
-                            width={15}
-                            height={15}
-                          />
-                        )}
-                      </span>
-                      <span
-                        ref={isEditing ? editRef : undefined}
-                        className="conv-row__title"
-                        contentEditable={isEditing}
-                        suppressContentEditableWarning
-                        onKeyDown={(event) => {
-                          if (!isEditing) return;
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            commitRename(conv.id, project.path);
-                          } else if (event.key === "Escape") {
-                            setEditingId(null);
-                          }
-                        }}
-                        onBlur={() => {
-                          if (isEditing) commitRename(conv.id, project.path);
-                        }}
+                    <Fragment key={rowKey}>
+                      {showDivider && (
+                        <div
+                          className="conv-row__divider"
+                          role="separator"
+                          data-grouped={hasProjectGroups ? "true" : "false"}
+                        />
+                      )}
+                      <div
+                        className="conv-row"
+                        data-active={isActive ? "true" : "false"}
+                        data-streaming={isStreaming ? "true" : "false"}
+                        data-attention={isAttention ? "true" : "false"}
+                        data-grouped={hasProjectGroups ? "true" : "false"}
+                        onClick={() =>
+                          !isEditing && onSelect(conv.id, project.path, conv.sessionKey)
+                        }
                       >
-                        {conv.title || "Untitled"}
-                      </span>
-                      <span className="conv-row__actions">
-                        <button
-                          className="conv-row__btn"
-                          title="Archive"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onArchive(conv.id, project.path);
-                          }}
-                        >
-                          <Icon icon="solar:archive-linear" width={13} height={13} />
-                        </button>
-                        <button
-                          className="conv-row__btn"
-                          title="Rename"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setEditingId(rowKey);
-                            queueMicrotask(() => {
-                              const node = editRef.current;
-                              if (node) {
-                                node.focus();
-                                const sel = window.getSelection();
-                                const range = document.createRange();
-                                range.selectNodeContents(node);
-                                sel?.removeAllRanges();
-                                sel?.addRange(range);
+                        <span className="conv-row__icon">
+                          {isStreaming ? (
+                            <span className="conv-row__spinner" aria-label="Running" />
+                          ) : isAttention ? (
+                            <span
+                              className="conv-row__notif"
+                              role="img"
+                              aria-label="Finished — open to view"
+                            />
+                          ) : (
+                            <Icon
+                              icon={
+                                isActive
+                                  ? "solar:chat-round-dots-bold"
+                                  : "solar:chat-round-dots-linear"
                               }
-                            });
-                          }}
-                        >
-                          <Icon icon="solar:pen-linear" width={13} height={13} />
-                        </button>
-                        <button
-                          className="conv-row__btn conv-row__btn--danger"
-                          title="Delete"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            if (confirm("Delete this conversation?")) {
-                              onDelete(conv.id, project.path);
+                              width={15}
+                              height={15}
+                            />
+                          )}
+                        </span>
+                        <span
+                          ref={isEditing ? editRef : undefined}
+                          className="conv-row__title"
+                          contentEditable={isEditing}
+                          suppressContentEditableWarning
+                          onKeyDown={(event) => {
+                            if (!isEditing) return;
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              commitRename(conv.id, project.path);
+                            } else if (event.key === "Escape") {
+                              setEditingId(null);
                             }
                           }}
+                          onBlur={() => {
+                            if (isEditing) commitRename(conv.id, project.path);
+                          }}
                         >
-                          <Icon
-                            icon="solar:trash-bin-minimalistic-linear"
-                            width={13}
-                            height={13}
-                          />
-                        </button>
-                      </span>
-                    </div>
+                          {conv.title || "Untitled"}
+                        </span>
+                        <span className="conv-row__actions">
+                          <button
+                            className="conv-row__btn"
+                            title="Archive"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onArchive(conv.id, project.path);
+                            }}
+                          >
+                            <Icon icon="solar:archive-linear" width={13} height={13} />
+                          </button>
+                          <button
+                            className="conv-row__btn"
+                            title="Rename"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setEditingId(rowKey);
+                              queueMicrotask(() => {
+                                const node = editRef.current;
+                                if (node) {
+                                  node.focus();
+                                  const sel = window.getSelection();
+                                  const range = document.createRange();
+                                  range.selectNodeContents(node);
+                                  sel?.removeAllRanges();
+                                  sel?.addRange(range);
+                                }
+                              });
+                            }}
+                          >
+                            <Icon icon="solar:pen-linear" width={13} height={13} />
+                          </button>
+                          <button
+                            className="conv-row__btn conv-row__btn--danger"
+                            title="Delete"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (confirm("Delete this conversation?")) {
+                                onDelete(conv.id, project.path);
+                              }
+                            }}
+                          >
+                            <Icon
+                              icon="solar:trash-bin-minimalistic-linear"
+                              width={13}
+                              height={13}
+                            />
+                          </button>
+                        </span>
+                      </div>
+                    </Fragment>
                   );
                 })}
             </div>

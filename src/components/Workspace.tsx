@@ -105,6 +105,7 @@ const TERMINAL_OPEN_EVENT = "terminal-open-requested";
 const CLOSE_ACTIVE_TAB_EVENT = "editor-close-active-tab-requested";
 const SEND_BUSY_RETRY_DELAYS_MS = [160, 320, 640, 1000, 1400];
 const EMPTY_STREAMING_IDS: ReadonlySet<string> = new Set<string>();
+const EMPTY_ATTENTION_IDS: ReadonlySet<string> = new Set<string>();
 const LAYOUT_PANEL_VISIBILITY_KEY = "sinew.layout.panelVisibility";
 const LAYOUT_VIEW_MODE_KEY = "sinew.layout.viewMode";
 const PROJECT_TREE_COLLAPSED_KEY = "sinew.workspace.projectTreeCollapsed";
@@ -152,6 +153,8 @@ export function Workspace({
     bootstrap.modeModelSettings,
   );
   const [streamingConversationIdsByWorkspace, setStreamingConversationIdsByWorkspace] =
+    useState<Map<string, Set<string>>>(() => new Map());
+  const [attentionConversationIdsByWorkspace, setAttentionConversationIdsByWorkspace] =
     useState<Map<string, Set<string>>>(() => new Map());
   const [streamingModelsBySession, setStreamingModelsBySession] =
     useState<Map<string, SavedConversation["model"]>>(() => new Map());
@@ -213,6 +216,35 @@ export function Workspace({
     [streamingConversationIdsByWorkspace, workspacePath],
   );
 
+  const attentionConversationIds = useMemo<ReadonlySet<string>>(
+    () => attentionConversationIdsByWorkspace.get(workspacePath) ?? EMPTY_ATTENTION_IDS,
+    [attentionConversationIdsByWorkspace, workspacePath],
+  );
+
+  const markConversationAttention = useCallback(
+    (targetWorkspacePath: string, id: string, needsAttention: boolean) => {
+      if (!targetWorkspacePath || !id) return;
+      setAttentionConversationIdsByWorkspace((prev) => {
+        const current = prev.get(targetWorkspacePath) ?? EMPTY_ATTENTION_IDS;
+        if (current.has(id) === needsAttention) return prev;
+        const nextIds = new Set(current);
+        if (needsAttention) {
+          nextIds.add(id);
+        } else {
+          nextIds.delete(id);
+        }
+        const next = new Map(prev);
+        if (nextIds.size > 0) {
+          next.set(targetWorkspacePath, nextIds);
+        } else {
+          next.delete(targetWorkspacePath);
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
   const markConversationStreaming = useCallback(
     (workspacePathOrId: string, conversationIdOrActive: string | boolean, maybeActive?: boolean) => {
       const targetWorkspacePath =
@@ -224,6 +256,10 @@ export function Workspace({
       const active =
         typeof maybeActive === "boolean" ? maybeActive : Boolean(conversationIdOrActive);
       if (!targetWorkspacePath || !id) return;
+
+      if (active) {
+        markConversationAttention(targetWorkspacePath, id, false);
+      }
 
       setStreamingConversationIdsByWorkspace((prev) => {
         const current = prev.get(targetWorkspacePath) ?? EMPTY_STREAMING_IDS;
@@ -253,7 +289,7 @@ export function Workspace({
         });
       }
     },
-    [],
+    [markConversationAttention],
   );
 
   const markConversationStreamingModel = useCallback(
@@ -279,6 +315,10 @@ export function Workspace({
     [],
   );
 
+  useEffect(() => {
+    markConversationAttention(workspacePath, activeConv.id, false);
+  }, [activeConv.id, markConversationAttention, workspacePath]);
+
   const refreshConversationList = useCallback(async () => {
     const workspaceAtRequest = workspacePath;
     try {
@@ -292,6 +332,7 @@ export function Workspace({
 
   const selectConversation = useCallback(
     async (id: string) => {
+      markConversationAttention(workspacePath, id, false);
       if (id === activeConv.id) return;
       const seq = ++navigationSeqRef.current;
       try {
@@ -312,7 +353,7 @@ export function Workspace({
         console.error(err);
       }
     },
-    [workspacePath, activeConv.id, onSelectSession, streamingConversationIds],
+    [workspacePath, activeConv.id, onSelectSession, streamingConversationIds, markConversationAttention],
   );
 
   const createConversation = useCallback(async (targetWorkspacePath?: string) => {
@@ -400,6 +441,7 @@ export function Workspace({
   const deleteConversation = useCallback(
     async (id: string) => {
       if (streamingConversationIds.has(id)) return;
+      markConversationAttention(workspacePath, id, false);
       if (onDeleteConversationSession) {
         await onDeleteConversationSession(workspacePath, id);
         return;
@@ -429,12 +471,14 @@ export function Workspace({
       streamingConversationIds,
       onDeleteConversationSession,
       onWorkspaceConversationsReplace,
+      markConversationAttention,
     ],
   );
 
   const archiveConversation = useCallback(
     async (id: string) => {
       if (streamingConversationIds.has(id)) return;
+      markConversationAttention(workspacePath, id, false);
       if (onArchiveConversationSession) {
         await onArchiveConversationSession(workspacePath, id);
         return;
@@ -464,6 +508,7 @@ export function Workspace({
       streamingConversationIds,
       onArchiveConversationSession,
       onWorkspaceConversationsReplace,
+      markConversationAttention,
     ],
   );
 
@@ -1248,6 +1293,26 @@ export function Workspace({
         return changed ? next : prev;
       });
 
+      setAttentionConversationIdsByWorkspace((prev) => {
+        if (prev.size === 0) return prev;
+        let changed = false;
+        const next = new Map(prev);
+        for (const [activeWorkspacePath, activeIds] of activeIdsByWorkspace) {
+          const currentIds = next.get(activeWorkspacePath);
+          if (!currentIds) continue;
+          const nextIds = new Set(currentIds);
+          for (const id of activeIds) {
+            if (nextIds.delete(id)) changed = true;
+          }
+          if (nextIds.size > 0) {
+            next.set(activeWorkspacePath, nextIds);
+          } else {
+            next.delete(activeWorkspacePath);
+          }
+        }
+        return changed ? next : prev;
+      });
+
       for (const turn of activeTurns) {
         if (turn.workspaceId !== workspacePathRef.current) continue;
         const sequenceKey = workspaceSessionKey(turn.workspaceId, turn.conversationId);
@@ -1326,8 +1391,14 @@ export function Workspace({
       }
       markConversationStreaming(eventWorkspacePath, conversationId, false);
       const workspaceAtRequest = eventWorkspacePath;
-      const shouldLoadActive =
+      const isActiveConversation =
         isActiveWorkspace && conversationId === activeConvIdRef.current;
+      markConversationAttention(
+        workspaceAtRequest,
+        conversationId,
+        !isActiveConversation,
+      );
+      const shouldLoadActive = isActiveConversation;
       try {
         const summariesPromise = api.listConversations(workspaceAtRequest);
         const loadedPromise =
@@ -1360,7 +1431,7 @@ export function Workspace({
     return () => {
       agentSubsRef.current.delete(handler);
     };
-  }, [markConversationStreaming, onWorkspaceConversationsReplace, refreshChangedFiles]);
+  }, [markConversationStreaming, markConversationAttention, onWorkspaceConversationsReplace, refreshChangedFiles]);
 
   useEffect(() => {
     if (!streamingConversationIds.has(activeConv.id)) return;
@@ -1808,8 +1879,8 @@ export function Workspace({
         conversations: titledConversations,
         activeConversation: titledActiveConversation,
       });
-      markConversationStreamingModel(conversationId, seedModel, seedThinking);
-      markConversationStreaming(conversationId, true);
+      markConversationStreamingModel(implementationWorkspacePath, conversationId, seedModel, seedThinking);
+      markConversationStreaming(implementationWorkspacePath, conversationId, true);
       try {
         await sendMessageWithBusyRetry(
           implementationWorkspacePath,
@@ -2044,6 +2115,7 @@ export function Workspace({
         path: string;
         conversations: ConversationListProject["conversations"];
         streamingIds: Set<string>;
+        attentionIds: Set<string>;
       }
     >();
 
@@ -2058,6 +2130,7 @@ export function Workspace({
           path: workspace.path,
           conversations: [],
           streamingIds: new Set<string>(),
+          attentionIds: new Set<string>(),
         };
       projects.set(workspace.path, project);
       return project;
@@ -2093,6 +2166,9 @@ export function Workspace({
       for (const id of streamingConversationIdsByWorkspace.get(sessionWorkspace.path) ?? EMPTY_STREAMING_IDS) {
         project.streamingIds.add(id);
       }
+      for (const id of attentionConversationIdsByWorkspace.get(sessionWorkspace.path) ?? EMPTY_ATTENTION_IDS) {
+        project.attentionIds.add(id);
+      }
     }
 
     for (const session of sessions) {
@@ -2118,6 +2194,7 @@ export function Workspace({
       conversations: sortConversationSummaries(project.conversations),
     }));
   }, [
+    attentionConversationIdsByWorkspace,
     activeConv,
     conversations,
     effectiveActiveSessionKey,
@@ -2128,17 +2205,19 @@ export function Workspace({
 
   const selectConversationFromList = useCallback(
     (id: string, targetWorkspacePath?: string, sessionKey?: string) => {
+      const resolvedWorkspacePath = targetWorkspacePath || workspacePath;
+      markConversationAttention(resolvedWorkspacePath, id, false);
       if (
         sessionKey &&
         sessionKey !== effectiveActiveSessionKey &&
         onSelectSession
       ) {
-        void onSelectSession(targetWorkspacePath ?? workspacePath, id);
+        void onSelectSession(resolvedWorkspacePath, id);
         return;
       }
-      if (targetWorkspacePath && targetWorkspacePath !== workspacePath) {
+      if (resolvedWorkspacePath !== workspacePath) {
         if (onSelectSession) {
-          void onSelectSession(targetWorkspacePath, id);
+          void onSelectSession(resolvedWorkspacePath, id);
         }
         return;
       }
@@ -2146,6 +2225,7 @@ export function Workspace({
     },
     [
       effectiveActiveSessionKey,
+      markConversationAttention,
       onSelectSession,
       selectConversation,
       workspacePath,
@@ -2176,26 +2256,30 @@ export function Workspace({
 
   const deleteConversationFromList = useCallback(
     (id: string, targetWorkspacePath?: string) => {
-      if (targetWorkspacePath && targetWorkspacePath !== workspacePath) {
+      const resolvedWorkspacePath = targetWorkspacePath || workspacePath;
+      markConversationAttention(resolvedWorkspacePath, id, false);
+      if (resolvedWorkspacePath !== workspacePath) {
         if (onDeleteConversationSession) {
-          void onDeleteConversationSession(targetWorkspacePath, id);
+          void onDeleteConversationSession(resolvedWorkspacePath, id);
         }
         return;
       }
       void deleteConversation(id);
     },
-    [deleteConversation, onDeleteConversationSession, workspacePath],
+    [deleteConversation, markConversationAttention, onDeleteConversationSession, workspacePath],
   );
 
   const archiveConversationFromList = useCallback(
     (id: string, targetWorkspacePath?: string) => {
-      if (targetWorkspacePath && targetWorkspacePath !== workspacePath) {
+      const resolvedWorkspacePath = targetWorkspacePath || workspacePath;
+      markConversationAttention(resolvedWorkspacePath, id, false);
+      if (resolvedWorkspacePath !== workspacePath) {
         if (onArchiveConversationSession) {
-          void onArchiveConversationSession(targetWorkspacePath, id);
+          void onArchiveConversationSession(resolvedWorkspacePath, id);
         } else {
           void api
-            .archiveConversation(targetWorkspacePath, id)
-            .then((next) => onWorkspaceConversationsReplace?.(targetWorkspacePath, next))
+            .archiveConversation(resolvedWorkspacePath, id)
+            .then((next) => onWorkspaceConversationsReplace?.(resolvedWorkspacePath, next))
             .catch((err) => console.error(err));
         }
         return;
@@ -2204,6 +2288,7 @@ export function Workspace({
     },
     [
       archiveConversation,
+      markConversationAttention,
       onArchiveConversationSession,
       onWorkspaceConversationsReplace,
       workspacePath,
@@ -2220,6 +2305,7 @@ export function Workspace({
 
   const selectSessionFromSwitcher = useCallback(
     (targetWorkspacePath: string, id: string) => {
+      markConversationAttention(targetWorkspacePath, id, false);
       setSessionsOpen(false);
       if (onSelectSession) {
         void onSelectSession(targetWorkspacePath, id);
@@ -2231,7 +2317,7 @@ export function Workspace({
         workspaceSessionKey(targetWorkspacePath, id),
       );
     },
-    [onSelectSession, selectConversationFromList],
+    [markConversationAttention, onSelectSession, selectConversationFromList],
   );
 
   const createSessionFromSwitcher = useCallback(() => {
@@ -2590,6 +2676,7 @@ export function Workspace({
                 conversations={conversations}
                 activeId={activeConv.id}
                 streamingIds={streamingConversationIds}
+                attentionIds={attentionConversationIds}
                 projects={conversationProjects}
                 activeSessionKey={effectiveActiveSessionKey}
                 onSelect={selectConversationFromList}
@@ -2876,12 +2963,17 @@ function conversationContinuationMode(conversation: SavedConversation): AgentMod
   return "act";
 }
 
+const CONVERSATION_TITLE_MAX_WORDS = 6;
+const CONVERSATION_TITLE_MAX_CHARS = 48;
+
 function titleFromOutgoingUserText(text: string): string | null {
-  const title = text.trim();
+  const words = text.trim().split(/\s+/).filter(Boolean).slice(0, CONVERSATION_TITLE_MAX_WORDS);
+  if (words.length === 0) return null;
+  const title = words.join(" ").replace(/[\s"'`“”‘’«»*_—:;.?!-]+$/u, "");
   if (!title) return null;
   const chars = Array.from(title);
-  if (chars.length <= 48) return title;
-  return `${chars.slice(0, 45).join("")}...`;
+  if (chars.length <= CONVERSATION_TITLE_MAX_CHARS) return title;
+  return `${chars.slice(0, CONVERSATION_TITLE_MAX_CHARS - 1).join("")}…`;
 }
 
 function titleFromPlanImplementation(plan: PlanArtifact): string {

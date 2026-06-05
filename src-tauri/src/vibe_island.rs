@@ -62,10 +62,20 @@ fn payloads_for_event(
             id, args_pretty, ..
         } => {
             let tool_name = remembered_tool_name(conversation_id, id).unwrap_or_else(|| id.clone());
-            vec![base_payload(workspace_id, conversation_id, "PreToolUse")
+            let mut payloads = vec![base_payload(workspace_id, conversation_id, "PreToolUse")
                 .with("tool_use_id", json!(id))
                 .with("tool_name", json!(tool_name))
-                .with("tool_input", parse_json_or_string(args_pretty))]
+                .with("tool_input", parse_json_or_string(args_pretty))];
+            if tool_name == "question" {
+                payloads.push(
+                    base_payload(workspace_id, conversation_id, "Notification")
+                        .with("message", json!("Sinew attend votre réponse"))
+                        .with("tool_use_id", json!(id))
+                        .with("tool_name", json!(tool_name))
+                        .with("tool_input", parse_json_or_string(args_pretty)),
+                );
+            }
+            payloads
         }
         AgentEvent::ToolFinished {
             id,
@@ -89,7 +99,7 @@ fn payloads_for_event(
                 .with("reason", json!(truncate_for_bridge(message)))]
         }
         AgentEvent::TurnFinished { .. } => {
-            vec![base_payload(workspace_id, conversation_id, "Stop")]
+            vec![base_payload(workspace_id, conversation_id, "Stop").with("stop_hook_active", json!(true))]
         }
         AgentEvent::SubAgentEvent {
             id,

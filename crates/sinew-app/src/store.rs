@@ -36,6 +36,7 @@ const SKILL_SETTINGS_KEY: &str = "skill_settings";
 const OPENROUTER_MODELS_KEY: &str = "openrouter_models";
 const HIDDEN_TOOL_SETTING_NAMES: &[&str] = &["skill"];
 const TITLE_MAX_CHARS: usize = 48;
+const TITLE_MAX_WORDS: usize = 6;
 const TITLE_INPUT_MAX_CHARS: usize = 1_200;
 const TITLE_MODEL_TIMEOUT_SECS: u64 = 12;
 
@@ -1868,9 +1869,9 @@ async fn request_summarized_title(
         ))],
     )
     .with_system(
-        "You are a title generator. Output ONLY a thread title. Nothing else. The title must be a single line, at most 50 characters, in the same language as the user message. Never include tool names. Focus on the main topic or question the user needs to retrieve. Keep exact technical terms, numbers, filenames, and HTTP codes. Never say you cannot generate a title; always output something meaningful.",
+        "You are a title generator. Output ONLY a very short conversation title. Nothing else. The title must be a single line, at most 6 words, in the same language as the user message. Prefer 2 to 5 plain words. Never include tool names, labels, quotes, markdown, or ending punctuation. Focus on the main topic or question the user needs to retrieve. Keep exact technical terms, numbers, filenames, and HTTP codes. Never say you cannot generate a title; always output something meaningful.",
     );
-    request.max_output_tokens = Some(32);
+    request.max_output_tokens = Some(16);
     request.effort = Some(Effort::None);
     request.service_tier = Some(ServiceTier::Fast);
 
@@ -1937,7 +1938,7 @@ fn heuristic_title_from_text(text: &str) -> String {
 }
 
 fn legacy_title_from_history(history: &[ChatMessage]) -> Option<String> {
-    first_visible_user_text(history).map(truncate_title)
+    first_visible_user_text(history).map(heuristic_title_from_text)
 }
 
 fn compact_whitespace(value: &str) -> String {
@@ -2032,9 +2033,9 @@ fn trim_title_edges(value: &str) -> &str {
 }
 
 fn truncate_title(title: &str) -> String {
-    let title = title.trim();
+    let title = truncate_title_words(title);
     if title.chars().count() <= TITLE_MAX_CHARS {
-        return title.to_string();
+        return title;
     }
 
     let mut shortened = title
@@ -2043,6 +2044,15 @@ fn truncate_title(title: &str) -> String {
         .collect::<String>();
     shortened.push('…');
     shortened
+}
+
+fn truncate_title_words(title: &str) -> String {
+    let words = title
+        .trim()
+        .split_whitespace()
+        .take(TITLE_MAX_WORDS)
+        .collect::<Vec<_>>();
+    trim_title_edges(&words.join(" ")).to_string()
 }
 
 fn title_hidden_text(meta: &Option<Value>) -> bool {
@@ -2258,6 +2268,27 @@ mod tests {
         assert_eq!(
             sanitize_generated_title("Titre: \"Nommage résumé des chats.\"").as_deref(),
             Some("Nommage résumé des chats")
+        );
+    }
+
+    #[test]
+    fn sanitize_generated_title_limits_words() {
+        assert_eq!(
+            sanitize_generated_title(
+                "Titre: Corriger les titres automatiques trop longs maintenant"
+            )
+            .as_deref(),
+            Some("Corriger les titres automatiques trop longs")
+        );
+    }
+
+    #[test]
+    fn heuristic_title_from_text_strips_request_prefix_and_limits_words() {
+        assert_eq!(
+            heuristic_title_from_text(
+                "Peux-tu corriger les titres automatiques trop longs dans Sinew ?",
+            ),
+            "corriger les titres automatiques trop longs"
         );
     }
 
