@@ -179,6 +179,7 @@ Code map:
 │   │   ├── modelVisibility.ts
 │   │   ├── recents.ts
 │   │   ├── sessions.ts
+│   │   ├── subscriptionUsage.ts
 │   │   └── tools.ts
 │   ├── App.tsx
 │   ├── main.tsx

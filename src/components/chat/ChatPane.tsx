@@ -51,6 +51,12 @@ import {
   loadModelVisibility,
   watchModelVisibility,
 } from "../../lib/modelVisibility";
+import {
+  appendSubscriptionUsageFromEvent,
+  isSubscriptionTrackedProvider,
+  readSubscriptionUsageSnapshot,
+  type SubscriptionUsageSnapshot,
+} from "../../lib/subscriptionUsage";
 import type {
   AgentMode,
   AttachmentInput,
@@ -746,6 +752,26 @@ export function ChatPane({
     availableModels,
     fastServiceTierEnabled,
   );
+  const subscriptionUsageModel = useMemo(() => modelRefFromId(model), [model]);
+  const [subscriptionUsage, setSubscriptionUsage] =
+    useState<SubscriptionUsageSnapshot>(() =>
+      readSubscriptionUsageSnapshot(activeModel),
+    );
+  const pendingSubscriptionUsageEventsRef = useRef<Map<string, TokenUsageEvent>>(
+    new Map(),
+  );
+  const refreshSubscriptionUsage = useCallback(() => {
+    setSubscriptionUsage(readSubscriptionUsageSnapshot(subscriptionUsageModel));
+  }, [subscriptionUsageModel]);
+
+  useEffect(() => {
+    refreshSubscriptionUsage();
+  }, [refreshSubscriptionUsage]);
+
+  useEffect(() => {
+    const timer = window.setInterval(refreshSubscriptionUsage, 60_000);
+    return () => window.clearInterval(timer);
+  }, [refreshSubscriptionUsage]);
   // Surface a clear "connect a provider" affordance when nothing is wired up
   // yet. The selectors stay hidden in that case — there's nothing meaningful
   // to pick from until the user signs into at least one provider.
@@ -1248,7 +1274,29 @@ export function ChatPane({
 
   const applyTokenUsageEvent = useCallback(
     (cid: string, event: AgentEvent) => {
+      const flushSubscriptionUsage = (key: string) => {
+        const pending = pendingSubscriptionUsageEventsRef.current.get(key);
+        if (!pending) return;
+        pendingSubscriptionUsageEventsRef.current.delete(key);
+        const snapshot = appendSubscriptionUsageFromEvent(pending);
+        if (
+          snapshot &&
+          snapshot.provider === subscriptionUsageModel.provider &&
+          snapshot.model === subscriptionUsageModel.name
+        ) {
+          setSubscriptionUsage(snapshot);
+          return;
+        }
+        refreshSubscriptionUsage();
+      };
+
+      if (event.type === "turn_started") {
+        pendingSubscriptionUsageEventsRef.current.delete(cid);
+        return;
+      }
+
       if (event.type === "token_usage") {
+        pendingSubscriptionUsageEventsRef.current.set(cid, event);
         const estimate = contextEstimateFromTokenUsageEvent(event);
         if (cid === contextEstimateConversationIdRef.current) {
           setContextEstimate({ conversationId: cid, status: "ready", estimate });
@@ -1256,19 +1304,43 @@ export function ChatPane({
         return;
       }
 
-      if (event.type !== "sub_agent_event") return;
-      const inner = event.event;
-      if (inner.type !== "token_usage") return;
-      if (cid !== contextEstimateConversationIdRef.current) return;
-      if (!subAgentEventMatchesActiveView(event, activeSubAgentIdRef.current)) {
+      if (
+        event.type === "turn_finished" ||
+        event.type === "interrupted" ||
+        event.type === "error"
+      ) {
+        flushSubscriptionUsage(cid);
         return;
       }
-      setSubAgentContextEstimate({
-        status: "ready",
-        estimate: contextEstimateFromTokenUsageEvent(inner),
-      });
+
+      if (event.type !== "sub_agent_event") return;
+      const inner = event.event;
+      const subAgentKey = `${cid}:sub:${event.agent_id}:${event.id}`;
+      if (inner.type === "turn_started") {
+        pendingSubscriptionUsageEventsRef.current.delete(subAgentKey);
+        return;
+      }
+      if (inner.type === "token_usage") {
+        pendingSubscriptionUsageEventsRef.current.set(subAgentKey, inner);
+        if (cid !== contextEstimateConversationIdRef.current) return;
+        if (!subAgentEventMatchesActiveView(event, activeSubAgentIdRef.current)) {
+          return;
+        }
+        setSubAgentContextEstimate({
+          status: "ready",
+          estimate: contextEstimateFromTokenUsageEvent(inner),
+        });
+        return;
+      }
+      if (
+        inner.type === "turn_finished" ||
+        inner.type === "interrupted" ||
+        inner.type === "error"
+      ) {
+        flushSubscriptionUsage(subAgentKey);
+      }
     },
-    [],
+    [refreshSubscriptionUsage, subscriptionUsageModel],
   );
 
   const applyEventToConversationView = useCallback(
@@ -3658,6 +3730,7 @@ export function ChatPane({
               )}
             </div>
             <div className="composer__actions-right">
+              <SubscriptionUsageMeter snapshot={subscriptionUsage} />
               <button
                 type="button"
                 className="composer__iconbtn composer__compact"
@@ -3903,6 +3976,134 @@ function ContextMeter({ state }: { state: ContextEstimateState }) {
       ) : null}
     </div>
   );
+}
+
+function SubscriptionUsageMeter({
+  snapshot,
+}: {
+  snapshot: SubscriptionUsageSnapshot;
+}) {
+  // Inert for providers we don't locally track (OpenAI + Anthropic show).
+  if (!isSubscriptionTrackedProvider(snapshot.provider)) return null;
+
+  const providerLabel =
+    PROVIDERS.find((entry) => entry.value === snapshot.provider)?.label ??
+    snapshot.provider;
+  const displayPercent = Math.round(clampRatio(snapshot.displayRatio) * 100);
+  const status =
+    snapshot.displayRatio >= 0.95
+      ? "danger"
+      : snapshot.displayRatio >= 0.8
+        ? "warn"
+        : "ok";
+  const windowReset = formatUsageReset(snapshot.nextWindowResetAtMs);
+  const weeklyReset = formatUsageReset(snapshot.weeklyResetAtMs);
+
+  return (
+    <div
+      className="usage-meter"
+      data-status={status}
+      style={
+        {
+          "--usage-fill": `${clampRatio(snapshot.displayRatio) * 100}%`,
+        } as CSSProperties
+      }
+      tabIndex={0}
+      aria-label={`Subscription usage ${displayPercent}% (local estimate)`}
+    >
+      <span className="usage-meter__track" aria-hidden="true">
+        <span className="usage-meter__fill" />
+      </span>
+      <div className="usage-meter__popover" role="tooltip">
+        <div className="usage-meter__head">
+          <span className="usage-meter__title">Subscription usage</span>
+          <span className="usage-meter__provider">{providerLabel}</span>
+        </div>
+        <div className="usage-meter__model">{snapshot.model}</div>
+        <div className="usage-meter__rows">
+          <UsageWindowRow
+            label="5h window"
+            ratio={snapshot.windowRatio}
+            used={snapshot.windowUsed}
+            remaining={snapshot.windowRemaining}
+            limit={snapshot.windowLimit}
+            reset={windowReset}
+          />
+          <UsageWindowRow
+            label="Weekly"
+            ratio={snapshot.weeklyRatio}
+            used={snapshot.weeklyUsed}
+            remaining={snapshot.weeklyRemaining}
+            limit={snapshot.weeklyLimit}
+            reset={weeklyReset}
+          />
+        </div>
+        <div className="usage-meter__note">Local Sinew estimate</div>
+      </div>
+    </div>
+  );
+}
+
+function UsageWindowRow({
+  label,
+  ratio,
+  used,
+  remaining,
+  limit,
+  reset,
+}: {
+  label: string;
+  ratio: number;
+  used: number;
+  remaining: number;
+  limit: number;
+  reset: string | null;
+}) {
+  const clamped = clampRatio(ratio);
+  const percent = Math.round(clamped * 100);
+  const status = ratio >= 0.95 ? "danger" : ratio >= 0.8 ? "warn" : "ok";
+  return (
+    <div className="usage-window" data-status={status}>
+      <div className="usage-window__head">
+        <span className="usage-window__label">{label}</span>
+        <span className="usage-window__meta">
+          {percent}%{reset ? ` \u00b7 resets in ${reset}` : ""}
+        </span>
+      </div>
+      <span className="usage-window__track" aria-hidden="true">
+        <span
+          className="usage-window__fill"
+          style={{ "--usage-window-fill": `${clamped * 100}%` } as CSSProperties}
+        />
+      </span>
+      <div className="usage-window__values">
+        <span>{formatCompactTokenCount(used)} used</span>
+        <span>{formatCompactTokenCount(remaining)} left</span>
+        <span>{formatCompactTokenCount(limit)} limit</span>
+      </div>
+    </div>
+  );
+}
+
+function clampRatio(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function formatUsageReset(atMs: number | null, nowMs = Date.now()): string | null {
+  if (atMs === null || !Number.isFinite(atMs)) return null;
+  const deltaMs = atMs - nowMs;
+  if (deltaMs <= 0) return "now";
+  const minutes = Math.round(deltaMs / 60_000);
+  if (minutes < 60) return `${Math.max(1, minutes)}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    const mins = minutes % 60;
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  }
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
 }
 
 function autoCompactWindow(estimate: ContextEstimate): number {
