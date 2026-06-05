@@ -10,7 +10,7 @@ const MAX_RECORDS = 2_000;
 // estimate units, not provider tokens: each request is weighted by model before
 // it is compared to the rolling-window budget.
 const OPENAI_CODEX_STANDARD_5H_LIMIT = 330_000;
-const OPENAI_CODEX_STANDARD_WEEKLY_LIMIT = 765_000;
+const OPENAI_CODEX_STANDARD_WEEKLY_LIMIT = 1_950_000;
 const OPENAI_CODEX_SPARK_5H_LIMIT = 900_000;
 const OPENAI_CODEX_SPARK_WEEKLY_LIMIT = 6_000_000;
 
