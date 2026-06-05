@@ -6,6 +6,14 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_RECORD_AGE_MS = 15 * 24 * 60 * 60 * 1000;
 const MAX_RECORDS = 2_000;
 
+// Calibrated against the Codex subscription usage dashboard. These are local
+// estimate units, not provider tokens: each request is weighted by model before
+// it is compared to the rolling-window budget.
+const OPENAI_CODEX_STANDARD_5H_LIMIT = 330_000;
+const OPENAI_CODEX_STANDARD_WEEKLY_LIMIT = 765_000;
+const OPENAI_CODEX_SPARK_5H_LIMIT = 900_000;
+const OPENAI_CODEX_SPARK_WEEKLY_LIMIT = 6_000_000;
+
 export type SubscriptionUsageRecord = {
   id: string;
   provider: string;
@@ -40,6 +48,11 @@ export type SubscriptionUsageSnapshot = {
 
 type StoredUsage = {
   records: SubscriptionUsageRecord[];
+};
+
+type UsageBucket = {
+  provider: string;
+  key: string;
 };
 
 export function readSubscriptionUsageSnapshot(
@@ -85,12 +98,14 @@ function snapshotForModel(
   model: ModelRef,
   nowMs: number,
 ): SubscriptionUsageSnapshot {
-  const providerRecords = records.filter((record) => record.provider === model.provider);
-  const modelRecords = providerRecords.filter((record) => record.model === model.name);
+  const selectedBucket = usageBucket(model.provider, model.name);
+  const bucketRecords = records.filter((record) =>
+    sameUsageBucket(usageBucket(record.provider, record.model), selectedBucket),
+  );
   const windowStartMs = nowMs - FIVE_HOURS_MS;
   const weeklyStartMs = nowMs - WEEK_MS;
-  const windowUsed = sumUnits(modelRecords, windowStartMs);
-  const weeklyUsed = sumUnits(modelRecords, weeklyStartMs);
+  const windowUsed = sumUnits(bucketRecords, windowStartMs);
+  const weeklyUsed = sumUnits(bucketRecords, weeklyStartMs);
   const limits = modelLimits(model.provider, model.name);
   const windowRatio = ratio(windowUsed, limits.windowLimit);
   const weeklyRatio = ratio(weeklyUsed, limits.weeklyLimit);
@@ -107,15 +122,37 @@ function snapshotForModel(
     displayRatio: Math.max(windowRatio, weeklyRatio),
     windowRemaining: Math.max(0, limits.windowLimit - windowUsed),
     weeklyRemaining: Math.max(0, limits.weeklyLimit - weeklyUsed),
-    nextWindowResetAtMs: nextRollingResetAtMs(modelRecords, windowStartMs, nowMs),
-    weeklyResetAtMs: nextRollingResetAtMs(modelRecords, weeklyStartMs, nowMs),
-    recordCount: modelRecords.length,
+    nextWindowResetAtMs: nextRollingResetAtMs(bucketRecords, windowStartMs, nowMs),
+    weeklyResetAtMs: nextRollingResetAtMs(bucketRecords, weeklyStartMs, nowMs),
+    recordCount: bucketRecords.length,
     source: "local_estimate",
   };
 }
 
 export function isSubscriptionTrackedProvider(provider: string): boolean {
   return provider === "openai" || provider === "anthropic";
+}
+
+function usageBucket(provider: string, model: string): UsageBucket {
+  if (provider === "openai") {
+    return {
+      provider,
+      key: model.includes("spark") ? "codex-spark" : "codex-standard",
+    };
+  }
+
+  if (provider === "anthropic") {
+    return {
+      provider,
+      key: model.includes("opus") ? "claude-opus" : "claude-standard",
+    };
+  }
+
+  return { provider, key: model };
+}
+
+function sameUsageBucket(a: UsageBucket, b: UsageBucket): boolean {
+  return a.provider === b.provider && a.key === b.key;
 }
 
 function usageUnits(provider: string, model: string, usage: StreamTokenUsage): number {
@@ -143,14 +180,20 @@ function modelUsageWeight(provider: string, model: string): number {
   return 1;
 }
 
-function modelLimits(provider: string, _model: string): {
+function modelLimits(provider: string, model: string): {
   windowLimit: number;
   weeklyLimit: number;
 } {
   if (provider === "openai") {
+    if (model.includes("spark")) {
+      return {
+        windowLimit: OPENAI_CODEX_SPARK_5H_LIMIT,
+        weeklyLimit: OPENAI_CODEX_SPARK_WEEKLY_LIMIT,
+      };
+    }
     return {
-      windowLimit: 900_000,
-      weeklyLimit: 6_000_000,
+      windowLimit: OPENAI_CODEX_STANDARD_5H_LIMIT,
+      weeklyLimit: OPENAI_CODEX_STANDARD_WEEKLY_LIMIT,
     };
   }
   if (provider === "anthropic") {
@@ -167,8 +210,26 @@ function modelLimits(provider: string, _model: string): {
 
 function sumUnits(records: SubscriptionUsageRecord[], sinceMs: number): number {
   return records.reduce(
-    (total, record) => (record.atMs >= sinceMs ? total + record.units : total),
+    (total, record) =>
+      record.atMs >= sinceMs ? total + recordUsageUnits(record) : total,
     0,
+  );
+}
+
+function recordUsageUnits(record: SubscriptionUsageRecord): number {
+  const tokens = storedTotalTokens(record);
+  if (tokens > 0) return tokens * modelUsageWeight(record.provider, record.model);
+  return record.units;
+}
+
+function storedTotalTokens(record: SubscriptionUsageRecord): number {
+  if (record.totalTokens > 0) return record.totalTokens;
+  return (
+    record.inputTokens +
+    record.outputTokens +
+    record.reasoningTokens +
+    record.cacheReadTokens +
+    record.cacheCreationTokens
   );
 }
 

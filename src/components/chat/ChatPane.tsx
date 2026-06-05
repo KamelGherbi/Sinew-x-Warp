@@ -4024,17 +4024,13 @@ function SubscriptionUsageMeter({
           <UsageWindowRow
             label="5h window"
             ratio={snapshot.windowRatio}
-            used={snapshot.windowUsed}
-            remaining={snapshot.windowRemaining}
-            limit={snapshot.windowLimit}
+            remainingRatio={1 - snapshot.windowRatio}
             reset={windowReset}
           />
           <UsageWindowRow
             label="Weekly"
             ratio={snapshot.weeklyRatio}
-            used={snapshot.weeklyUsed}
-            remaining={snapshot.weeklyRemaining}
-            limit={snapshot.weeklyLimit}
+            remainingRatio={1 - snapshot.weeklyRatio}
             reset={weeklyReset}
           />
         </div>
@@ -4047,20 +4043,17 @@ function SubscriptionUsageMeter({
 function UsageWindowRow({
   label,
   ratio,
-  used,
-  remaining,
-  limit,
+  remainingRatio,
   reset,
 }: {
   label: string;
   ratio: number;
-  used: number;
-  remaining: number;
-  limit: number;
+  remainingRatio: number;
   reset: string | null;
 }) {
   const clamped = clampRatio(ratio);
   const percent = Math.round(clamped * 100);
+  const remainingPercent = Math.max(0, Math.round(clampRatio(remainingRatio) * 100));
   const status = ratio >= 0.95 ? "danger" : ratio >= 0.8 ? "warn" : "ok";
   return (
     <div className="usage-window" data-status={status}>
@@ -4077,9 +4070,9 @@ function UsageWindowRow({
         />
       </span>
       <div className="usage-window__values">
-        <span>{formatCompactTokenCount(used)} used</span>
-        <span>{formatCompactTokenCount(remaining)} left</span>
-        <span>{formatCompactTokenCount(limit)} limit</span>
+        <span>{percent}% used</span>
+        <span>{remainingPercent}% left</span>
+        <span>calibrated estimate</span>
       </div>
     </div>
   );
