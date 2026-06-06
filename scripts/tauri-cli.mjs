@@ -9,18 +9,26 @@ import { execFile as execFileCallback } from "node:child_process";
 const execFile = promisify(execFileCallback);
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, "..");
-const tauriBin = path.join(
+const tauriCli = path.join(
   projectRoot,
   "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tauri.cmd" : "tauri",
+  "@tauri-apps",
+  "cli",
+  "tauri.js",
 );
 const args = process.argv.slice(2);
+
+// GitHub Actions substitutes missing repository secrets with empty strings.
+// Tauri treats a present-but-empty APPLE_CERTIFICATE / signing key as "please
+// sign this", then fails (`security import` / "Missing comment in secret key").
+// Drop blank signing vars so unsigned builds succeed when no secrets are set.
+sanitizeSigningEnv();
 
 if (shouldUseMacosDmgWorkaround(args)) {
   await buildMacosAppThenDmg(args);
 } else {
-  process.exit(await run(tauriBin, args));
+  const extra = args[0] === "build" ? updaterDisableArgs() : [];
+  process.exit(await run([...args, ...extra]));
 }
 
 function shouldUseMacosDmgWorkaround(args) {
@@ -33,14 +41,11 @@ function shouldUseMacosDmgWorkaround(args) {
 
 async function buildMacosAppThenDmg(args) {
   const passthrough = stripBundleArgs(args.slice(1));
-  const config = process.env.TAURI_SIGNING_PRIVATE_KEY
-    ? []
-    : ["--config", '{"bundle":{"createUpdaterArtifacts":false}}'];
-  const status = await run(tauriBin, [
+  const status = await run([
     "build",
     "--bundles",
     "app",
-    ...config,
+    ...updaterDisableArgs(),
     ...passthrough,
   ]);
   if (status !== 0) process.exit(status);
@@ -153,13 +158,16 @@ async function detachStaleSinewDmgs(...dirs) {
   }
 }
 
-function run(command, args) {
+function run(args) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    // Invoke the Tauri CLI through the current Node binary instead of the
+    // `.bin/tauri(.cmd)` shim. On Windows, spawning a `.cmd` without a shell
+    // throws `EINVAL` (Node's CVE-2024-27980 fix); running node directly avoids
+    // that and keeps args literal (no shell quoting) on every platform.
+    const child = spawn(process.execPath, [tauriCli, ...args], {
       cwd: projectRoot,
       env: process.env,
       stdio: "inherit",
-      shell: false,
     });
     child.on("close", (code) => resolve(code ?? 1));
     child.on("error", (err) => {
@@ -167,4 +175,33 @@ function run(command, args) {
       resolve(1);
     });
   });
+}
+
+// `createUpdaterArtifacts` requires a signing key; without one, disable it so
+// bundling doesn't fail trying to sign updater artifacts with an empty key.
+function updaterDisableArgs() {
+  return process.env.TAURI_SIGNING_PRIVATE_KEY
+    ? []
+    : ["--config", '{"bundle":{"createUpdaterArtifacts":false}}'];
+}
+
+function sanitizeSigningEnv() {
+  const optional = [
+    "TAURI_SIGNING_PRIVATE_KEY",
+    "APPLE_CERTIFICATE",
+    "APPLE_CERTIFICATE_PASSWORD",
+    "APPLE_SIGNING_IDENTITY",
+    "APPLE_ID",
+    "APPLE_PASSWORD",
+    "APPLE_TEAM_ID",
+  ];
+  for (const key of optional) {
+    if ((process.env[key] ?? "").trim() === "") {
+      delete process.env[key];
+    }
+  }
+  // A blank key password is only meaningful next to an actual signing key.
+  if (!process.env.TAURI_SIGNING_PRIVATE_KEY) {
+    delete process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD;
+  }
 }
