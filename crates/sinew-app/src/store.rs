@@ -36,7 +36,7 @@ const SKILL_SETTINGS_KEY: &str = "skill_settings";
 const OPENROUTER_MODELS_KEY: &str = "openrouter_models";
 const HIDDEN_TOOL_SETTING_NAMES: &[&str] = &["skill"];
 const TITLE_MAX_CHARS: usize = 48;
-const TITLE_MAX_WORDS: usize = 6;
+const TITLE_MAX_WORDS: usize = 3;
 const TITLE_INPUT_MAX_CHARS: usize = 1_200;
 const TITLE_MODEL_TIMEOUT_SECS: u64 = 12;
 
@@ -1869,7 +1869,7 @@ async fn request_summarized_title(
         ))],
     )
     .with_system(
-        "You are a title generator. Output ONLY a very short conversation title. Nothing else. The title must be a single line, at most 6 words, in the same language as the user message. Prefer 2 to 5 plain words. Never include tool names, labels, quotes, markdown, or ending punctuation. Focus on the main topic or question the user needs to retrieve. Keep exact technical terms, numbers, filenames, and HTTP codes. Never say you cannot generate a title; always output something meaningful.",
+        "You are a title generator. Output ONLY a very short conversation title. Nothing else. The title must be a single line of AT MOST 3 words, in the same language as the user message. Strongly prefer exactly 3 words; never exceed 3 words under any circumstance. Never include tool names, labels, quotes, markdown, or ending punctuation. Focus on the main topic or question the user needs to retrieve. Keep exact technical terms, numbers, filenames, and HTTP codes. Every word must be meaningful on its own; never output filler, partial, or cut-off words. Never say you cannot generate a title; always output something meaningful.",
     );
     request.max_output_tokens = Some(16);
     request.effort = Some(Effort::None);
@@ -2267,7 +2267,7 @@ mod tests {
     fn sanitize_generated_title_removes_labels_and_quotes() {
         assert_eq!(
             sanitize_generated_title("Titre: \"Nommage résumé des chats.\"").as_deref(),
-            Some("Nommage résumé des chats")
+            Some("Nommage résumé des")
         );
     }
 
@@ -2278,7 +2278,7 @@ mod tests {
                 "Titre: Corriger les titres automatiques trop longs maintenant"
             )
             .as_deref(),
-            Some("Corriger les titres automatiques trop longs")
+            Some("Corriger les titres")
         );
     }
 
@@ -2288,7 +2288,7 @@ mod tests {
             heuristic_title_from_text(
                 "Peux-tu corriger les titres automatiques trop longs dans Sinew ?",
             ),
-            "corriger les titres automatiques trop longs"
+            "corriger les titres"
         );
     }
 
