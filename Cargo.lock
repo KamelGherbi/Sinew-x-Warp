@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "Sinew"
-version = "0.1.34"
+version = "0.1.36"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3906,7 +3906,7 @@ checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "sinew-anthropic"
-version = "0.1.34"
+version = "0.1.36"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3928,13 +3928,14 @@ dependencies = [
 
 [[package]]
 name = "sinew-app"
-version = "0.1.34"
+version = "0.1.36"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
  "directories",
  "eventsource-stream",
+ "flate2",
  "futures-util",
  "kuchikiki",
  "portable-pty",
@@ -3948,15 +3949,17 @@ dependencies = [
  "similar",
  "sinew-core",
  "sinew-openai",
+ "tar",
  "tokio",
  "tracing",
  "uuid",
  "walkdir",
+ "zip",
 ]
 
 [[package]]
 name = "sinew-core"
-version = "0.1.34"
+version = "0.1.36"
 dependencies = [
  "async-trait",
  "futures",
@@ -3967,7 +3970,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-google"
-version = "0.1.34"
+version = "0.1.36"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3989,7 +3992,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-kimi"
-version = "0.1.34"
+version = "0.1.36"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4008,7 +4011,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-openai"
-version = "0.1.34"
+version = "0.1.36"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4030,7 +4033,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-openrouter"
-version = "0.1.34"
+version = "0.1.36"
 dependencies = [
  "async-trait",
  "bytes",
@@ -6394,6 +6397,7 @@ checksum = "caa8cd6af31c3b31c6631b8f483848b91589021b28fffe50adada48d4f4d2ed1"
 dependencies = [
  "arbitrary",
  "crc32fast",
+ "flate2",
  "indexmap 2.14.0",
  "memchr",
 ]
