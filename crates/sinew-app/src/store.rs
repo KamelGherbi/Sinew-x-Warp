@@ -36,9 +36,14 @@ const SKILL_SETTINGS_KEY: &str = "skill_settings";
 const OPENROUTER_MODELS_KEY: &str = "openrouter_models";
 const HIDDEN_TOOL_SETTING_NAMES: &[&str] = &["skill"];
 const TITLE_MAX_CHARS: usize = 48;
-const TITLE_MAX_WORDS: usize = 3;
+const TITLE_MAX_WORDS: usize = 6;
 const TITLE_INPUT_MAX_CHARS: usize = 1_200;
 const TITLE_MODEL_TIMEOUT_SECS: u64 = 12;
+// Title generation is best-effort and runs in the background, so we retry a few
+// times before falling back to the heuristic title instead of giving up after a
+// single transient failure/timeout.
+const TITLE_GENERATION_ATTEMPTS: usize = 3;
+const TITLE_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 
 pub const DEFAULT_PLAN_MODE_PROMPT: &str = r#"You are in Plan mode.
 
@@ -1360,6 +1365,19 @@ impl AppStore {
         Ok(normalized)
     }
 
+    /// Reads the current persisted title. Used by background title generation so
+    /// it works from the freshly saved title rather than a stale in-memory copy.
+    pub fn conversation_title(&self, workspace_id: &str, id: &str) -> Result<Option<String>> {
+        let conn = self.connection()?;
+        conn.query_row(
+            "select title from conversations where workspace_id = ?1 and id = ?2",
+            params![workspace_id, id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .context("unable to read conversation title")
+    }
+
     pub fn update_generated_conversation_title(
         &self,
         workspace_id: &str,
@@ -1846,14 +1864,40 @@ pub async fn summarized_conversation_title(
         return fallback;
     };
 
-    match tokio::time::timeout(
-        Duration::from_secs(TITLE_MODEL_TIMEOUT_SECS),
-        request_summarized_title(provider, model, input),
-    )
-    .await
-    {
-        Ok(Some(title)) => title,
-        Ok(None) | Err(_) => fallback,
+    // Use a dedicated lightweight model (same provider/credentials) so titles are
+    // fast and reliable regardless of how heavy the conversation model is.
+    let title_model = title_model(&model);
+    for attempt in 0..TITLE_GENERATION_ATTEMPTS {
+        match tokio::time::timeout(
+            Duration::from_secs(TITLE_MODEL_TIMEOUT_SECS),
+            request_summarized_title(provider.clone(), title_model.clone(), input.clone()),
+        )
+        .await
+        {
+            Ok(Some(title)) => return title,
+            Ok(None) | Err(_) => {
+                if attempt + 1 < TITLE_GENERATION_ATTEMPTS {
+                    tokio::time::sleep(TITLE_RETRY_BACKOFF).await;
+                }
+            }
+        }
+    }
+    fallback
+}
+
+/// Picks a fast/light model on the same provider as the conversation so title
+/// generation stays cheap and quick. Unknown providers keep the conversation
+/// model as a safe fallback.
+fn title_model(model: &ModelRef) -> ModelRef {
+    let lightweight = match model.provider.as_str() {
+        "anthropic" => Some("claude-haiku-4-5"),
+        "openai" => Some("gpt-5.4-mini"),
+        "google" => Some("gemini-3.1-flash-lite"),
+        _ => None,
+    };
+    match lightweight {
+        Some(name) => ModelRef::new(model.provider.clone(), name),
+        None => model.clone(),
     }
 }
 
@@ -1869,9 +1913,9 @@ async fn request_summarized_title(
         ))],
     )
     .with_system(
-        "You are a title generator. Output ONLY a very short conversation title. Nothing else. The title must be a single line of AT MOST 3 words, in the same language as the user message. Strongly prefer exactly 3 words; never exceed 3 words under any circumstance. Never include tool names, labels, quotes, markdown, or ending punctuation. Focus on the main topic or question the user needs to retrieve. Keep exact technical terms, numbers, filenames, and HTTP codes. Every word must be meaningful on its own; never output filler, partial, or cut-off words. Never say you cannot generate a title; always output something meaningful.",
+        "You are a title generator. Output ONLY a short conversation title that summarizes the user's request. Nothing else. The title must be a single line of 4 to 6 words, in the same language as the user message. Prefer 4 to 6 words; never exceed 6 words under any circumstance. Never include tool names, labels, quotes, markdown, or ending punctuation. Summarize the main topic or request so the user can recognize the conversation later. Keep exact technical terms, numbers, filenames, and HTTP codes. Every word must be meaningful on its own; never output filler, partial, or cut-off words. Never say you cannot generate a title; always output something meaningful.",
     );
-    request.max_output_tokens = Some(16);
+    request.max_output_tokens = Some(32);
     request.effort = Some(Effort::None);
     request.service_tier = Some(ServiceTier::Fast);
 
@@ -2267,7 +2311,7 @@ mod tests {
     fn sanitize_generated_title_removes_labels_and_quotes() {
         assert_eq!(
             sanitize_generated_title("Titre: \"Nommage résumé des chats.\"").as_deref(),
-            Some("Nommage résumé des")
+            Some("Nommage résumé des chats")
         );
     }
 
@@ -2278,7 +2322,7 @@ mod tests {
                 "Titre: Corriger les titres automatiques trop longs maintenant"
             )
             .as_deref(),
-            Some("Corriger les titres")
+            Some("Corriger les titres automatiques trop longs")
         );
     }
 
@@ -2288,7 +2332,7 @@ mod tests {
             heuristic_title_from_text(
                 "Peux-tu corriger les titres automatiques trop longs dans Sinew ?",
             ),
-            "corriger les titres"
+            "corriger les titres automatiques trop longs"
         );
     }
 

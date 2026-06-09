@@ -204,6 +204,18 @@ pub(super) async fn send_message(
 
     let providers = provider_registry_snapshot(&state)?;
     let title_provider = provider.clone();
+    // Generate the conversation title up front, in parallel with the turn, so a
+    // meaningful summary appears immediately instead of only after the (possibly
+    // long) turn finishes.
+    spawn_generated_conversation_title_update(
+        app.clone(),
+        state.store.clone(),
+        workspace_id.clone(),
+        input.conversation_id.clone(),
+        title_provider.clone(),
+        conversation.model.clone(),
+        conversation.history.clone(),
+    );
     let context = TurnContext {
         provider,
         model: conversation.model.clone(),
@@ -396,16 +408,6 @@ pub(super) async fn send_message(
                                 }
                             };
                             if saved_ok {
-                                spawn_generated_conversation_title_update(
-                                    app.clone(),
-                                    store.clone(),
-                                    workspace_id.clone(),
-                                    conversation_id.clone(),
-                                    saved.title.clone(),
-                                    title_provider.clone(),
-                                    conversation_model.clone(),
-                                    saved.history.clone(),
-                                );
                                 if output.compacted {
                                     if let Err(err) =
                                         store.delete_turn_checkpoints_from(&conversation_id, 0)
@@ -909,12 +911,21 @@ pub(super) fn spawn_generated_conversation_title_update(
     store: AppStore,
     workspace_id: String,
     conversation_id: String,
-    current_title: String,
     provider: Arc<dyn Provider>,
     model: ModelRef,
     history: Vec<ChatMessage>,
 ) {
     tauri::async_runtime::spawn(async move {
+        // Read the freshly persisted title so the optimistic update guard compares
+        // against the real stored value, not a stale in-memory copy.
+        let current_title = match store.conversation_title(&workspace_id, &conversation_id) {
+            Ok(Some(title)) => title,
+            Ok(None) => return,
+            Err(err) => {
+                tracing::warn!(%err, conversation_id = %conversation_id, "failed to read conversation title for generation");
+                return;
+            }
+        };
         let generated_title =
             summarized_conversation_title(&current_title, provider, model, &history).await;
         match store.update_generated_conversation_title(

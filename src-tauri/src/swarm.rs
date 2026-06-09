@@ -329,6 +329,17 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
     let turn_system_prompt = with_turn_plan_reminder(&effective_system_prompt, None);
     let providers = provider_registry_snapshot(&state)?;
     let title_provider = provider.clone();
+    // Generate the conversation title up front (in parallel with the turn) from the
+    // freshly saved title, so a meaningful summary appears right away.
+    spawn_generated_conversation_title_update(
+        app.clone(),
+        state.store.clone(),
+        workspace_id.clone(),
+        conversation_id.clone(),
+        title_provider.clone(),
+        conversation.model.clone(),
+        conversation.history.clone(),
+    );
     let context = TurnContext {
         provider,
         model: conversation.model.clone(),
@@ -480,16 +491,6 @@ pub(super) async fn wake_main_agent_for_swarm_notice(
                                 }
                             };
                             if saved_ok {
-                                spawn_generated_conversation_title_update(
-                                    app.clone(),
-                                    store.clone(),
-                                    workspace_id.clone(),
-                                    conversation_id_for_events.clone(),
-                                    saved.title.clone(),
-                                    title_provider.clone(),
-                                    conversation_model.clone(),
-                                    saved.history.clone(),
-                                );
                                 if output.compacted {
                                     if let Err(err) = store
                                         .delete_turn_checkpoints_from(&conversation_id_for_events, 0)
