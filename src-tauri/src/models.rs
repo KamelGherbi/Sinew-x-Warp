@@ -284,7 +284,7 @@ pub(super) struct SendMessageInput {
     pub(super) plan_implementation_options: Option<PlanImplementationOptionsInput>,
     #[serde(default)]
     pub(super) rewrite_from_history_index: Option<usize>,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub(super) revert_workspace_changes: bool,
 }
 
@@ -292,6 +292,22 @@ pub(super) struct SendMessageInput {
 #[serde(rename_all = "camelCase")]
 pub(super) struct PlanImplementationOptionsInput {
     pub(super) implementation_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct CheckRewriteWorkspaceRestoreInput {
+    pub(super) workspace_path: String,
+    pub(super) conversation_id: String,
+    pub(super) history_index: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RewriteWorkspaceRestoreCheck {
+    pub(super) has_checkpoints: bool,
+    pub(super) restorable: bool,
+    pub(super) reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
