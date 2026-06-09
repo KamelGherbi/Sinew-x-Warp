@@ -6771,6 +6771,48 @@ textarea {
   max-width: 100%;
 }
 
+.msg__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.msg-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 2px 7px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+.msg-copy-btn:hover:not(:disabled) {
+  background: var(--bg-3);
+  color: var(--text-1);
+}
+.msg-copy-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.msg-copy-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.msg-copy-btn[data-copied="true"] {
+  color: var(--ok);
+}
+.msg-copy-btn[data-copied="true"]:hover {
+  color: var(--ok);
+}
+.msg-copy-btn svg {
+  flex: 0 0 auto;
+}
+
 :root[data-message-meta="roles"] .msg::before {
   align-self: flex-start;
   color: var(--text-3);

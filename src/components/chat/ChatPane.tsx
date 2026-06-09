@@ -5946,6 +5946,68 @@ function ChatBlocks({
   );
 }
 
+function AssistantTextBlock({
+  text,
+  streaming,
+  onOpenFile,
+}: {
+  text: string;
+  streaming: boolean;
+  onOpenFile: (path: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const id = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(id);
+  }, [copied]);
+
+  const handleCopy = useCallback(async () => {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      // Clipboard unavailable or blocked; fail silently.
+    }
+  }, [text]);
+
+  const disabled = streaming || text.length === 0;
+
+  return (
+    <div className="msg" data-role="assistant">
+      <div className="msg__body">
+        <Markdown text={text} onOpenFile={onOpenFile} />
+      </div>
+      <div className="msg__actions">
+        <button
+          type="button"
+          className="msg-copy-btn"
+          data-copied={copied ? "true" : "false"}
+          onClick={handleCopy}
+          disabled={disabled}
+          title={
+            streaming
+              ? "Response in progress"
+              : copied
+                ? "Copied to clipboard"
+                : "Copy response"
+          }
+          aria-label={copied ? "Response copied" : "Copy response"}
+        >
+          <Icon
+            icon={copied ? "solar:check-read-linear" : "solar:copy-linear"}
+            width={13}
+            height={13}
+          />
+          <span>{copied ? "Copied" : "Copy"}</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function BlockView({
   workspacePath,
   block,
@@ -6073,11 +6135,11 @@ function BlockView({
       );
     case "assistant-text":
       return (
-        <div className="msg" data-role="assistant">
-          <div className="msg__body">
-            <Markdown text={block.text} onOpenFile={onOpenFile} />
-          </div>
-        </div>
+        <AssistantTextBlock
+          text={block.text}
+          streaming={block.id.startsWith("s-")}
+          onOpenFile={onOpenFile}
+        />
       );
     case "compaction-summary":
       return (
