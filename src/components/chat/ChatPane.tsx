@@ -51,6 +51,7 @@ import type {
   ContextEstimate,
   FileChange,
   GoalWorkflowState,
+  InstalledSkill,
   MessageVisibility,
   ModeModelSettings,
   ModelRef,
@@ -539,6 +540,11 @@ export function ChatPane({
   );
   const [mention, setMention] = useState<MentionState | null>(null);
   const [inlineMentions, setInlineMentions] = useState<InlineMention[]>([]);
+  const skillLoadingRef = useRef(false);
+  const skillListRef = useRef<InstalledSkill[] | null>(null);
+  const skillMentionRef = useRef<MentionState | null>(null);
+  const [skillList, setSkillList] = useState<InstalledSkill[] | null>(null);
+  const [skillMention, setSkillMention] = useState<MentionState | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const overlayInnerRef = useRef<HTMLDivElement | null>(null);
   const planWritingRef = useRef<{ conversationId: string; placeholderId: string } | null>(null);
@@ -810,6 +816,7 @@ export function ChatPane({
     setCompactInstruction("");
     setEditingQueuedPrompt(composerDraft?.editingQueuedPrompt ?? null);
     setMention(null);
+    setSkillMention(null);
     setMode(
       planWorkflow.status !== "idle"
         ? "plan"
@@ -1045,6 +1052,38 @@ export function ChatPane({
     [scheduleMentionFilesRefresh],
   );
 
+  const refreshSkills = useCallback(
+    async (force = false) => {
+      if (skillLoadingRef.current) return;
+      if (!force && skillListRef.current !== null) return;
+      skillLoadingRef.current = true;
+      try {
+        const list = await api.listInstalledSkills(workspacePath);
+        skillListRef.current = list;
+        setSkillList(list);
+      } catch (err) {
+        console.error(err);
+        if (skillListRef.current === null) {
+          skillListRef.current = [];
+          setSkillList([]);
+        }
+      } finally {
+        skillLoadingRef.current = false;
+      }
+    },
+    [workspacePath],
+  );
+
+  useEffect(() => {
+    skillListRef.current = null;
+    setSkillList(null);
+    void refreshSkills(true);
+  }, [refreshSkills]);
+
+  useEffect(() => {
+    skillMentionRef.current = skillMention;
+  }, [skillMention]);
+
   useEffect(() => {
     let cancelled = false;
     let unlisten: UnlistenFn | null = null;
@@ -1104,6 +1143,7 @@ export function ChatPane({
           if (prev === "" || /\s/.test(prev)) {
             const query = value.slice(i + 1, caret);
             if (!/\s/.test(query) && query.length <= 80) {
+              setSkillMention(null);
               setMention((prev) =>
                 prev && prev.tokenStart === i && prev.query === query
                   ? prev
@@ -1115,12 +1155,33 @@ export function ChatPane({
           }
           break;
         }
-        if (/\s/.test(ch)) break;
+        if (ch === "/") {
+          const prev = i === 0 ? "" : value[i - 1];
+          if (prev === "" || /\s/.test(prev)) {
+            const query = value.slice(i + 1, caret);
+            if (!/[\s/\\]/.test(query) && query.length <= 64) {
+              const start = i;
+              setMention(null);
+              void refreshSkills(skillMentionRef.current === null);
+              setSkillMention((prev) =>
+                prev && prev.tokenStart === start && prev.query === query
+                  ? prev
+                  : { tokenStart: start, query, index: 0 },
+              );
+              return;
+            }
+            break;
+          }
+          // "/" inside a token (e.g. a path after "@"): treat as a normal char.
+        } else if (/\s/.test(ch)) {
+          break;
+        }
         i--;
       }
       setMention(null);
+      setSkillMention(null);
     },
-    [refreshMentionFiles],
+    [refreshMentionFiles, refreshSkills],
   );
 
   const matches = useMemo<WorkspaceEntry[]>(() => {
@@ -1157,6 +1218,69 @@ export function ChatPane({
       setMention({ ...mention, index: matches.length - 1 });
     }
   }, [mention, matches]);
+
+  const enabledSkills = useMemo(
+    () => (skillList ?? []).filter((skill) => skill.enabled),
+    [skillList],
+  );
+
+  const enabledSkillNames = useMemo(
+    () => enabledSkills.map((skill) => skill.name),
+    [enabledSkills],
+  );
+
+  const skillMatches = useMemo<InstalledSkill[]>(() => {
+    if (!skillMention) return [];
+    const q = skillMention.query.toLowerCase();
+    if (!q) return enabledSkills.slice(0, MENTION_MAX_RESULTS);
+    const scored: { skill: InstalledSkill; score: number }[] = [];
+    for (const skill of enabledSkills) {
+      const name = skill.name.toLowerCase();
+      let score = 0;
+      if (name === q) score = 1000;
+      else if (name.startsWith(q)) score = 800;
+      else if (name.includes(q)) score = 600;
+      else if (skill.description?.toLowerCase().includes(q)) score = 300;
+      else continue;
+      scored.push({ skill, score });
+    }
+    scored.sort(
+      (a, b) => b.score - a.score || a.skill.name.localeCompare(b.skill.name),
+    );
+    return scored.slice(0, MENTION_MAX_RESULTS).map((s) => s.skill);
+  }, [skillMention, enabledSkills]);
+
+  useEffect(() => {
+    if (!skillMention) return;
+    if (skillMatches.length === 0) {
+      if (skillMention.index !== 0) {
+        setSkillMention({ ...skillMention, index: 0 });
+      }
+      return;
+    }
+    if (skillMention.index >= skillMatches.length) {
+      setSkillMention({ ...skillMention, index: skillMatches.length - 1 });
+    }
+  }, [skillMention, skillMatches]);
+
+  const selectSkillMention = useCallback(
+    (skill: InstalledSkill) => {
+      if (!skillMention) return;
+      const ta = textareaRef.current;
+      const tokenEnd = ta
+        ? ta.selectionStart
+        : skillMention.tokenStart + 1 + skillMention.query.length;
+      const insertion = `/${skill.name} `;
+      const next =
+        text.slice(0, skillMention.tokenStart) +
+        insertion +
+        text.slice(tokenEnd);
+      pendingCaretRef.current = skillMention.tokenStart + insertion.length;
+      setText(next);
+      setSkillMention(null);
+    },
+    [skillMention, text],
+  );
 
   const selectMention = useCallback(
     (file: WorkspaceEntry) => {
@@ -1655,6 +1779,7 @@ export function ChatPane({
       setText("");
       setAttachments([]);
       setInlineMentions([]);
+      setSkillMention(null);
       setRewriteState(null);
       setEditingQueuedPrompt(null);
       setSendTick((t) => t + 1);
@@ -1690,6 +1815,7 @@ export function ChatPane({
     setText("");
     setAttachments([]);
     setInlineMentions([]);
+    setSkillMention(null);
     setRewriteState(null);
     setSendTick((t) => t + 1);
     try {
@@ -2378,6 +2504,44 @@ export function ChatPane({
   );
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (skillMention) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        if (skillMatches.length > 0) {
+          setSkillMention({
+            ...skillMention,
+            index: (skillMention.index + 1) % skillMatches.length,
+          });
+        }
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        if (skillMatches.length > 0) {
+          setSkillMention({
+            ...skillMention,
+            index:
+              (skillMention.index - 1 + skillMatches.length) %
+              skillMatches.length,
+          });
+        }
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        if (skillMatches.length > 0) {
+          event.preventDefault();
+          selectSkillMention(
+            skillMatches[skillMention.index] ?? skillMatches[0],
+          );
+          return;
+        }
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSkillMention(null);
+        return;
+      }
+    }
     if (mention) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -2440,6 +2604,7 @@ export function ChatPane({
 
       event.preventDefault();
       setMention(null);
+      setSkillMention(null);
       void (async () => {
         const next: Attachment[] = [];
         for (const [index, file] of files.entries()) {
@@ -2779,6 +2944,7 @@ export function ChatPane({
       setInlineMentions([]);
       setRewriteState(null);
       setMention(null);
+      setSkillMention(null);
       setEditingQueuedPrompt({
         conversationId,
         id: item.id,
@@ -3203,6 +3369,55 @@ export function ChatPane({
           className="composer__box"
           data-drop={dropActive ? "true" : "false"}
         >
+          {skillMention && (
+            <div
+              className="mention-popover"
+              role="listbox"
+              aria-label="Skill mentions"
+            >
+              {skillMatches.length === 0 ? (
+                <div className="mention-popover__empty">
+                  {skillList === null
+                    ? "Loading skills…"
+                    : enabledSkills.length === 0
+                      ? "No skills enabled"
+                      : "No matches"}
+                </div>
+              ) : (
+                skillMatches.map((skill, idx) => {
+                  const selected = idx === skillMention.index;
+                  return (
+                    <button
+                      key={skill.name}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      className="mention-popover__row"
+                      data-selected={selected ? "true" : "false"}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => selectSkillMention(skill)}
+                      onMouseEnter={() =>
+                        setSkillMention((prev) =>
+                          prev ? { ...prev, index: idx } : prev,
+                        )
+                      }
+                    >
+                      <span className="mention-popover__icon">
+                        <Icon
+                          icon="solar:magic-stick-3-linear"
+                          width={14}
+                          height={14}
+                        />
+                      </span>
+                      <span className="mention-popover__name mention-popover__name--wide">
+                        Skill: {skill.name}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          )}
           {mention && (
             <div
               className="mention-popover"
@@ -3269,7 +3484,7 @@ export function ChatPane({
                 className="composer__overlay-inner"
                 ref={overlayInnerRef}
               >
-                {renderMentionHighlights(text, inlineMentions)}
+                {renderMentionHighlights(text, inlineMentions, enabledSkillNames)}
               </div>
             </div>
             <textarea
@@ -3284,7 +3499,7 @@ export function ChatPane({
               placeholder={
                 view.status === "streaming" || isStreaming
                   ? "Queue next prompt..."
-                  : "Message the agent… (type @ to mention a file)"
+                  : "Message the agent… (@ to mention a file, / for skills)"
               }
               onChange={handleTextChange}
               onKeyDown={handleKeyDown}
@@ -3307,6 +3522,7 @@ export function ChatPane({
                     !composerRef.current?.contains(document.activeElement)
                   ) {
                     setMention(null);
+                    setSkillMention(null);
                   }
                 }, 80);
               }}
@@ -6328,8 +6544,11 @@ function relativizePath(workspacePath: string, candidate: string): string | null
 function renderMentionHighlights(
   text: string,
   mentions: { path: string }[],
+  skillNames: string[] = [],
 ): ReactNode {
-  if (mentions.length === 0) return text + "\u200B";
+  if (mentions.length === 0 && skillNames.length === 0) {
+    return text + "\u200B";
+  }
   const regions: { start: number; end: number }[] = [];
   for (const m of mentions) {
     if (!m.path) continue;
@@ -6341,6 +6560,23 @@ function renderMentionHighlights(
       const after = text[found + needle.length] ?? "";
       const isBoundary = after === "" || /[\s.,;:!?)\]}'"`]/.test(after);
       if (isBoundary) {
+        regions.push({ start: found, end: found + needle.length });
+      }
+      idx = found + needle.length;
+    }
+  }
+  for (const name of skillNames) {
+    if (!name) continue;
+    const needle = `/${name}`;
+    let idx = 0;
+    while (idx < text.length) {
+      const found = text.indexOf(needle, idx);
+      if (found < 0) break;
+      const before = found === 0 ? "" : text[found - 1];
+      const after = text[found + needle.length] ?? "";
+      const startsToken = before === "" || /\s/.test(before);
+      const isBoundary = after === "" || /[\s.,;:!?)\]}'"`]/.test(after);
+      if (startsToken && isBoundary) {
         regions.push({ start: found, end: found + needle.length });
       }
       idx = found + needle.length;

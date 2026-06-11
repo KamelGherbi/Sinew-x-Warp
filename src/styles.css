@@ -7475,6 +7475,9 @@ textarea {
   white-space: nowrap;
   max-width: 40%;
 }
+.mention-popover__name--wide {
+  max-width: 100%;
+}
 .mention-popover__path {
   color: var(--text-3);
   font-family: var(--font-mono);
