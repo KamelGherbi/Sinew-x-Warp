@@ -3,12 +3,18 @@ import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import { marked } from "https://esm.sh/marked@15.0.6";
 import DOMPurify from "https://esm.sh/dompurify@3.2.3";
 
+const h = React.createElement;
+
 const REMOTE_PROTOCOL_VERSION = 1;
 const STORAGE_SESSION_KEY = "sinew.remote.session.v1";
 const AES_AAD = new TextEncoder().encode("sinew-remote-v1");
 const MODES = ["act", "goal", "plan"];
-const modeLabels = { act: "Act", goal: "Goal", plan: "Plan" };
+const MODE_LABELS = { act: "Act", goal: "Goal", plan: "Plan" };
 const INSTALL_HINT_KEY = "sinew.remote.installHintDismissed.v1";
+
+marked.setOptions({ gfm: true, breaks: true });
+
+/* ── Utilities ─────────────────────────────────────────────────────────── */
 
 function isIosDevice() {
   return /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -16,10 +22,6 @@ function isIosDevice() {
 
 function isStandaloneDisplay() {
   return window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone === true;
-}
-
-function nowMs() {
-  return Date.now();
 }
 
 function wsUrl() {
@@ -146,7 +148,7 @@ function thinkingFromModel(model) {
   return "medium";
 }
 
-function htmlFromMarkdown(text) {
+function renderMarkdown(text) {
   return { __html: DOMPurify.sanitize(marked.parse(text || "")) };
 }
 
@@ -162,10 +164,49 @@ function fileToBase64(file) {
   });
 }
 
-function parseQuestionArgs(argsPretty) {
-  if (!argsPretty) return [];
+function relativeDate(ms) {
+  if (!ms) return "";
+  const diff = Date.now() - ms;
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return new Date(ms).toLocaleDateString();
+}
+
+const TOOL_TONES = [
+  [/^(read|glob|list)/i, "read"],
+  [/^(grep|search|web)/i, "grep"],
+  [/^(edit|write|create)/i, "edit"],
+  [/^(bash|powershell|terminal|command)/i, "bash"],
+];
+
+function toolTone(name = "") {
+  for (const [pattern, tone] of TOOL_TONES) {
+    if (pattern.test(name)) return tone;
+  }
+  return "default";
+}
+
+function toolTitle(block) {
+  if (block.summary) return block.summary;
+  const name = block.name || "Tool";
+  const input = block.input || {};
+  const hint = input.path || input.pattern || input.command || input.description || "";
+  if (typeof hint === "string" && hint) {
+    const short = hint.length > 48 ? `${hint.slice(0, 48)}…` : hint;
+    return `${name} · ${short}`;
+  }
+  return name;
+}
+
+function parseQuestionArgs(raw) {
+  if (!raw) return [];
   try {
-    const parsed = JSON.parse(argsPretty);
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
     const records = Array.isArray(parsed.questions) ? parsed.questions : [parsed];
     return records
       .map((record) => {
@@ -197,7 +238,9 @@ function parseQuestionArgs(argsPretty) {
   }
 }
 
-function buildBlocks(history = [], liveEvents = []) {
+/* ── Blocks: history + live events, no duplication ─────────────────────── */
+
+function blocksFromHistory(history = []) {
   const blocks = [];
   for (const message of history) {
     if (message.role === "user") {
@@ -208,20 +251,32 @@ function buildBlocks(history = [], liveEvents = []) {
     if (message.role === "assistant") {
       for (const part of message.parts || []) {
         if (part.type === "text" && part.text) blocks.push({ kind: "assistant", text: part.text });
-        if (part.type === "thinking" && part.text) blocks.push({ kind: "thinking", text: part.text });
-        if (part.type === "tool_call") blocks.push({ kind: "tool", id: part.id, name: part.name, status: "done", input: part.input, argsPretty: JSON.stringify(part.input || {}) });
+        else if (part.type === "thinking" && part.text) blocks.push({ kind: "thinking", text: part.text, streaming: false });
+        else if (part.type === "tool_call") {
+          blocks.push({
+            kind: "tool",
+            id: part.id,
+            name: part.name,
+            status: "done",
+            input: part.input,
+            argsPretty: JSON.stringify(part.input || {}),
+          });
+        }
       }
     }
   }
+  return blocks;
+}
 
+function blocksFromLiveEvents(liveEvents = []) {
+  const blocks = [];
   let currentText = null;
   let currentThinking = null;
   const tools = new Map();
+  const subagents = new Map();
+
   for (const event of liveEvents) {
     switch (event.type) {
-      case "turn_started":
-        blocks.push({ kind: "status", text: "Agent started" });
-        break;
       case "text_started":
         currentText = { kind: "assistant", text: "" };
         blocks.push(currentText);
@@ -237,17 +292,18 @@ function buildBlocks(history = [], liveEvents = []) {
         currentText = null;
         break;
       case "thinking_started":
-        currentThinking = { kind: "thinking", text: "" };
+        currentThinking = { kind: "thinking", text: "", streaming: true };
         blocks.push(currentThinking);
         break;
       case "thinking_chunk":
         if (!currentThinking) {
-          currentThinking = { kind: "thinking", text: "" };
+          currentThinking = { kind: "thinking", text: "", streaming: true };
           blocks.push(currentThinking);
         }
         currentThinking.text += event.delta || "";
         break;
       case "thinking_finished":
+        if (currentThinking) currentThinking.streaming = false;
         currentThinking = null;
         break;
       case "tool_started": {
@@ -269,19 +325,38 @@ function buildBlocks(history = [], liveEvents = []) {
         break;
       case "tool_finished":
         if (tools.has(event.id)) {
-          Object.assign(tools.get(event.id), { status: event.is_error ? "error" : "done", output: event.output, meta: event.meta });
+          Object.assign(tools.get(event.id), {
+            status: event.is_error ? "error" : "done",
+            output: event.output,
+            meta: event.meta,
+          });
         }
+        break;
+      case "sub_agent_event": {
+        let block = subagents.get(event.id);
+        if (!block) {
+          block = { kind: "subagent", id: event.id, name: event.agent_name || "Agent", status: "running" };
+          subagents.set(event.id, block);
+          blocks.push(block);
+        }
+        if (event.event?.type === "turn_finished") block.status = "done";
+        if (event.event?.type === "error") block.status = "error";
+        break;
+      }
+      case "interrupted":
+        blocks.push({ kind: "status", text: "Interrupted" });
         break;
       case "error":
         blocks.push({ kind: "error", text: event.message || "Error" });
         break;
-      case "turn_finished":
-        blocks.push({ kind: "status", text: "Response finished" });
+      default:
         break;
     }
   }
   return blocks;
 }
+
+/* ── Relay client ──────────────────────────────────────────────────────── */
 
 class RemoteClient {
   constructor({ onStatus, onPayload, onPairingResponse }) {
@@ -314,7 +389,9 @@ class RemoteClient {
       this.onStatus({ relay: "connected" });
       if (this.session) this.announce();
     };
-    ws.onmessage = (event) => void this.handleFrame(JSON.parse(event.data));
+    ws.onmessage = (event) => {
+      void this.handleFrame(JSON.parse(event.data)).catch(() => undefined);
+    };
     ws.onclose = () => {
       this.onStatus({ relay: "offline", pcReachable: false });
       if (!this.closed) setTimeout(() => this.connect(), 1500);
@@ -347,6 +424,7 @@ class RemoteClient {
       this.session = null;
       this.key = null;
       this.onStatus({ revoked: true, pcReachable: false });
+      this.onPayload({ type: "device_revoked" });
       return;
     }
     if (frame.kind === "pairing_response") {
@@ -383,9 +461,8 @@ class RemoteClient {
           payload.ok ? pending.resolve(payload.data) : pending.reject(new Error(payload.error || "Remote command failed"));
         }
         return;
-      } else {
-        this.onPayload(payload);
       }
+      this.onPayload(payload);
     }
   }
 
@@ -396,7 +473,7 @@ class RemoteClient {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error("PC did not confirm this request."));
+        reject(new Error("The PC did not respond in time."));
       }, 60_000);
       this.pending.set(id, {
         resolve: (value) => {
@@ -418,14 +495,61 @@ class RemoteClient {
   }
 }
 
-function QuestionToolPanel({ block, questions, disabled, pending, allowStopQuestions, onSubmit, onReject }) {
+/* ── Small components ──────────────────────────────────────────────────── */
+
+function StatusDot({ on }) {
+  return h("span", { className: "status-dot", "data-on": on ? "true" : "false" });
+}
+
+function ThinkingBlock({ block }) {
+  const [open, setOpen] = useState(false);
+  const streaming = Boolean(block.streaming);
+  const hasContent = Boolean(block.text);
+  return h("div", { className: "thinking" },
+    h("button", {
+      type: "button",
+      className: "thinking__head",
+      "data-streaming": streaming ? "true" : "false",
+      onClick: () => hasContent && setOpen((value) => !value),
+    },
+      h("span", { className: "thinking__caret", "data-open": open ? "true" : "false" }, "›"),
+      h("span", { className: "thinking__label", "data-streaming": streaming ? "true" : "false" }, streaming ? "Thinking…" : "Thinking"),
+    ),
+    (open || streaming) && hasContent && h("div", {
+      className: "thinking__content md",
+      dangerouslySetInnerHTML: renderMarkdown(block.text),
+    }),
+  );
+}
+
+function ToolBlock({ block, children }) {
+  const [open, setOpen] = useState(false);
+  const hasBody = Boolean(block.output);
+  return h("div", { className: "tool-row", "data-status": block.status },
+    h("button", {
+      type: "button",
+      className: "tool-row__head",
+      onClick: () => hasBody && setOpen((value) => !value),
+    },
+      h("span", { className: "tool-row__glyph", "data-tone": toolTone(block.name), "data-status": block.status }),
+      h("span", { className: "tool-row__title" }, toolTitle(block)),
+      block.status === "running" && h("span", { className: "tool-row__live" }, "running"),
+      block.status === "error" && h("span", { className: "tool-row__err" }, "error"),
+      hasBody && h("span", { className: "tool-row__caret", "data-open": open ? "true" : "false" }, "›"),
+    ),
+    open && hasBody && h("pre", { className: "tool-row__body" }, block.output),
+    children || null,
+  );
+}
+
+function QuestionPanel({ block, questions, disabled, pending, allowStopQuestions, onSubmit, onReject }) {
   const [selected, setSelected] = useState(() => questions.map(() => new Set()));
   const [custom, setCustom] = useState(() => questions.map(() => ""));
 
   useEffect(() => {
     setSelected(questions.map(() => new Set()));
     setCustom(questions.map(() => ""));
-  }, [block.id, block.argsPretty, questions.length]);
+  }, [block.id, questions.length]);
 
   const answers = questions.map((question, index) => {
     const labels = [...(selected[index] || new Set())]
@@ -452,97 +576,147 @@ function QuestionToolPanel({ block, questions, disabled, pending, allowStopQuest
     });
   }
 
-  return React.createElement("div", { className: "question-card" },
-    React.createElement("div", { className: "question-card__head" },
-      React.createElement("strong", null, "Sinew needs your answer"),
-      React.createElement("span", null, questions.length > 1 ? `${questions.length} questions` : "Question")
-    ),
-    questions.map((question, questionIndex) => React.createElement("fieldset", { key: `${block.id}-${questionIndex}`, className: "question-card__fieldset" },
-      React.createElement("legend", null, question.question),
-      question.options.length > 0 ? React.createElement("div", { className: "question-options" },
-        question.options.map((option) => {
-          const isSelected = selected[questionIndex]?.has(option.id);
-          return React.createElement("button", {
-            key: option.id,
-            type: "button",
-            className: "question-option",
-            "data-selected": isSelected ? "true" : "false",
-            disabled: disabled || pending,
-            onClick: () => toggle(questionIndex, option.id),
-          },
-            React.createElement("span", null, option.label),
-            option.description && React.createElement("small", null, option.description)
-          );
-        })
-      ) : React.createElement("textarea", {
-        value: custom[questionIndex] || "",
-        disabled: disabled || pending,
-        placeholder: "Type your answer…",
-        onChange: (event) => setCustom((current) => current.map((value, index) => index === questionIndex ? event.target.value : value)),
-      }),
-      question.mode === "multiple_choice" && React.createElement("p", { className: "question-card__hint" }, "Choose one or more options.")
+  return h("div", { className: "question" },
+    h("div", { className: "question__kicker" }, "Sinew needs your answer"),
+    questions.map((question, questionIndex) => h("div", { key: `${block.id}-${questionIndex}`, className: "question__group" },
+      h("div", { className: "question__title" }, question.question),
+      question.options.length > 0
+        ? h("div", { className: "question__options" },
+          question.options.map((option) => {
+            const isSelected = selected[questionIndex]?.has(option.id);
+            return h("button", {
+              key: option.id,
+              type: "button",
+              className: "question__option",
+              "data-selected": isSelected ? "true" : "false",
+              disabled: disabled || pending,
+              onClick: () => toggle(questionIndex, option.id),
+            },
+              h("span", { className: "question__option-label" }, option.label),
+              option.description ? h("span", { className: "question__option-desc" }, option.description) : null,
+            );
+          }),
+        )
+        : h("textarea", {
+          className: "question__input",
+          value: custom[questionIndex] || "",
+          disabled: disabled || pending,
+          rows: 3,
+          placeholder: "Type your answer…",
+          onChange: (event) => setCustom((current) => current.map((value, index) => (index === questionIndex ? event.target.value : value))),
+        }),
+      question.mode === "multiple_choice" && h("div", { className: "question__hint" }, "Choose one or more options."),
     )),
-    React.createElement("div", { className: "question-card__actions" },
-      React.createElement("button", { type: "button", className: "ghost", disabled: disabled || pending, onClick: () => onReject(block) }, "Dismiss"),
-      allowStopQuestions && React.createElement("button", { type: "button", className: "ghost", disabled: disabled || pending || !complete, onClick: () => onSubmit(block, answers, true) }, "Answer & stop questions"),
-      React.createElement("button", { type: "button", disabled: disabled || pending || !complete, onClick: () => onSubmit(block, answers, false) }, pending ? "Sending…" : "Send answer")
-    )
+    h("div", { className: "question__actions" },
+      h("button", { type: "button", className: "btn", disabled: disabled || pending, onClick: () => onReject(block) }, "Dismiss"),
+      allowStopQuestions && h("button", {
+        type: "button",
+        className: "btn",
+        disabled: disabled || pending || !complete,
+        onClick: () => onSubmit(block, answers, true),
+      }, "Answer & stop"),
+      h("button", {
+        type: "button",
+        className: "btn btn--primary",
+        disabled: disabled || pending || !complete,
+        onClick: () => onSubmit(block, answers, false),
+      }, pending ? "Sending…" : "Send answer"),
+    ),
   );
 }
 
+/* ── App ───────────────────────────────────────────────────────────────── */
+
 function App() {
-  const initialCode = new URLSearchParams(location.search).get("code") || "";
-  const openConversation = new URLSearchParams(location.search).get("conversation") || null;
+  const params = new URLSearchParams(location.search);
+  const initialCode = params.get("code") || "";
+  const deepLinkConversation = params.get("conversation") || null;
+
   const [session, setSession] = useState(loadSession());
   const [status, setStatus] = useState({ relay: "connecting", pcReachable: false, revoked: false });
   const [pairCode, setPairCode] = useState(initialCode);
   const [pairError, setPairError] = useState(null);
   const [pairing, setPairing] = useState(false);
-  const [bootstrap, setBootstrap] = useState(null);
+
+  const [workspace, setWorkspace] = useState(null);
   const [conversations, setConversations] = useState([]);
-  const [activeConv, setActiveConv] = useState(null);
-  const [liveEventsByConversation, setLiveEventsByConversation] = useState(new Map());
+  const [conv, setConv] = useState(null);
+  const [view, setView] = useState("list");
+  const [liveEvents, setLiveEvents] = useState(new Map());
   const [activeTurns, setActiveTurns] = useState([]);
+  const [synced, setSynced] = useState(false);
+
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState("act");
   const [attachments, setAttachments] = useState([]);
-  const [error, setError] = useState(null);
-  const [pushState, setPushState] = useState("idle");
   const [sendPending, setSendPending] = useState(false);
   const [questionPendingId, setQuestionPendingId] = useState(null);
+  const [error, setError] = useState(null);
+  const [pushState, setPushState] = useState("idle");
+  const [deleteArmed, setDeleteArmed] = useState(null);
   const [installHintDismissed, setInstallHintDismissed] = useState(() => localStorage.getItem(INSTALL_HINT_KEY) === "true");
+
   const clientRef = useRef(null);
+  const convRef = useRef(conv);
   const statusRef = useRef(status);
+  const activeTurnsRef = useRef(activeTurns);
+  const syncedRef = useRef(false);
+  const bodyRef = useRef(null);
+  const inputRef = useRef(null);
+  const stickRef = useRef(true);
 
-  useEffect(() => {
-    statusRef.current = status;
-  }, [status]);
+  useEffect(() => { convRef.current = conv; }, [conv]);
+  useEffect(() => { statusRef.current = status; }, [status]);
+  useEffect(() => { activeTurnsRef.current = activeTurns; }, [activeTurns]);
 
-  const activeConvRef = useRef(activeConv);
-  useEffect(() => {
-    activeConvRef.current = activeConv;
-  }, [activeConv]);
+  const canReachPc = Boolean(status.pcReachable);
 
-  const mergeBootstrap = useCallback((data) => {
-    setBootstrap(data.bootstrap || data);
-    const nextBootstrap = data.bootstrap || data;
-    setConversations(nextBootstrap.conversations || []);
-    const preferred = openConversation && (nextBootstrap.conversations || []).some((c) => c.id === openConversation);
-    const active = preferred ? { ...nextBootstrap.activeConversation, id: openConversation } : nextBootstrap.activeConversation;
-    setActiveConv(active);
-    setMode(modeFromConversation(active));
-    if (Array.isArray(data.activeTurns)) setActiveTurns(data.activeTurns);
-  }, [openConversation]);
+  /* — sync — */
 
-  const refresh = useCallback(async () => {
-    if (!clientRef.current?.session || !statusRef.current.pcReachable) return;
+  const syncList = useCallback(async () => {
+    const client = clientRef.current;
+    if (!client?.session) return;
+    const list = await client.command({ type: "list_conversations" });
+    setConversations(Array.isArray(list) ? list : []);
+  }, []);
+
+  const handleTurnFinished = useCallback(async (conversationId) => {
+    const client = clientRef.current;
+    if (!client?.session) return;
     try {
-      const data = await clientRef.current.command({ type: "bootstrap" });
-      mergeBootstrap(data);
+      const fresh = await client.command({ type: "load_conversation", conversation_id: conversationId });
+      setConv((current) => (current && current.id === conversationId ? fresh : current));
+      setLiveEvents((current) => {
+        const next = new Map(current);
+        next.delete(conversationId);
+        return next;
+      });
+    } catch {
+      // keep live events visible if reload fails
+    }
+    syncList().catch(() => undefined);
+  }, [syncList]);
+
+  const initialSync = useCallback(async () => {
+    const client = clientRef.current;
+    if (!client?.session || !statusRef.current.pcReachable || syncedRef.current) return;
+    try {
+      const data = await client.command({ type: "bootstrap" });
+      const bootstrap = data.bootstrap || data;
+      setWorkspace(bootstrap.workspace || null);
+      setConversations(bootstrap.conversations || []);
+      if (Array.isArray(data.activeTurns)) setActiveTurns(data.activeTurns);
+      syncedRef.current = true;
+      setSynced(true);
+      if (deepLinkConversation && (bootstrap.conversations || []).some((c) => c.id === deepLinkConversation)) {
+        await openConversationById(deepLinkConversation);
+      }
     } catch (err) {
       setError(String(err.message || err));
     }
-  }, [mergeBootstrap]);
+  }, [deepLinkConversation]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* — client lifecycle — */
 
   useEffect(() => {
     const client = new RemoteClient({
@@ -555,58 +729,81 @@ function App() {
         }
         setPairError(null);
         setSession(loadSession());
-        void refresh();
       },
       onPayload: (payload) => {
         if (payload.type === "agent_event") {
-          setLiveEventsByConversation((current) => {
+          setLiveEvents((current) => {
             const next = new Map(current);
             const events = next.get(payload.conversation_id) || [];
             next.set(payload.conversation_id, [...events, payload.event]);
             return next;
           });
-          if (payload.event.type === "turn_finished") void refresh();
+          if (payload.event?.type === "turn_finished") void handleTurnFinished(payload.conversation_id);
         }
         if (payload.type === "active_turns_changed") setActiveTurns(payload.active_turns || []);
         if (payload.type === "device_revoked") {
-          clearSession();
           setSession(null);
-          clearLocalConversationState();
+          setWorkspace(null);
+          setConversations([]);
+          setConv(null);
+          setLiveEvents(new Map());
+          setActiveTurns([]);
+          syncedRef.current = false;
+          setSynced(false);
         }
       },
     });
     clientRef.current = client;
-    void client.start().then(refresh);
+    void client.start();
     return () => {
       client.closed = true;
       client.ws?.close();
     };
-  }, [refresh]);
+  }, [handleTurnFinished]);
 
   useEffect(() => {
-    if (session && status.pcReachable && !bootstrap) void refresh();
-  }, [session, status.pcReachable, bootstrap, refresh]);
+    if (session && status.pcReachable && !synced) void initialSync();
+  }, [session, status.pcReachable, synced, initialSync]);
 
-  const isStreaming = activeTurns.some((turn) => turn.conversationId === activeConv?.id);
-  const liveEvents = activeConv ? liveEventsByConversation.get(activeConv.id) || [] : [];
-  const blocks = useMemo(() => buildBlocks(activeConv?.history || [], liveEvents), [activeConv, liveEvents]);
-  const canReachPc = Boolean(status.pcReachable);
+  useEffect(() => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    navigator.serviceWorker.ready
+      .then((registration) => registration.pushManager.getSubscription())
+      .then((subscription) => {
+        if (subscription) setPushState("enabled");
+      })
+      .catch(() => undefined);
+  }, []);
+
+  /* — derived — */
+
+  const events = conv ? liveEvents.get(conv.id) || [] : [];
+  const blocks = useMemo(() => {
+    if (!conv) return [];
+    return [...blocksFromHistory(conv.history || []), ...blocksFromLiveEvents(events)];
+  }, [conv, events]);
+  const isStreaming = Boolean(conv && activeTurns.some((turn) => turn.conversationId === conv.id));
   const showInstallHint = Boolean(session && !installHintDismissed && !isStandaloneDisplay());
 
-  function clearLocalConversationState() {
-    setBootstrap(null);
-    setConversations([]);
-    setActiveConv(null);
-    setLiveEventsByConversation(new Map());
-    setActiveTurns([]);
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (body && stickRef.current) body.scrollTop = body.scrollHeight;
+  }, [blocks, view]);
+
+  function onBodyScroll() {
+    const body = bodyRef.current;
+    if (!body) return;
+    stickRef.current = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
   }
+
+  /* — actions — */
 
   async function doPair(event) {
     event.preventDefault();
     setPairing(true);
     setPairError(null);
     try {
-      await clientRef.current.pair(pairCode.replace(/\D/g, ""), navigator.userAgent.includes("iPhone") ? "iPhone" : "Phone");
+      await clientRef.current.pair(pairCode.replace(/\D/g, ""), isIosDevice() ? "iPhone" : "Phone");
     } catch (err) {
       setPairing(false);
       setPairError(String(err.message || err));
@@ -614,37 +811,49 @@ function App() {
   }
 
   async function openConversationById(id) {
-    if (!canReachPc) return;
+    if (!statusRef.current.pcReachable) return;
     try {
       const conversation = await clientRef.current.command({ type: "load_conversation", conversation_id: id });
-      setActiveConv(conversation);
+      setConv(conversation);
       setMode(modeFromConversation(conversation));
-      setLiveEventsByConversation((current) => {
-        const next = new Map(current);
-        next.set(id, []);
-        return next;
-      });
-      const turn = activeTurns.find((item) => item.conversationId === id);
-      if (turn) {
-        const replay = await clientRef.current.command({ type: "replay_active_turn_events", conversation_id: id, after_sequence: 0 });
-        setLiveEventsByConversation((current) => {
+      setView("chat");
+      stickRef.current = true;
+      const turnActive = activeTurnsRef.current.some((item) => item.conversationId === id);
+      if (turnActive) {
+        try {
+          const replay = await clientRef.current.command({ type: "replay_active_turn_events", conversation_id: id, after_sequence: 0 });
+          setLiveEvents((current) => {
+            const next = new Map(current);
+            next.set(id, (replay.events || []).map((entry) => entry.event));
+            return next;
+          });
+        } catch {
+          // replay is best-effort
+        }
+      } else {
+        setLiveEvents((current) => {
+          if (!current.has(id)) return current;
           const next = new Map(current);
-          next.set(id, (replay.events || []).map((entry) => entry.event));
+          next.delete(id);
           return next;
         });
       }
     } catch (err) {
-      setError(String(err.message || err));
+      setError(`Open conversation failed: ${String(err.message || err)}`);
     }
   }
 
   async function createConversation() {
     if (!canReachPc) return;
     try {
-      const next = await clientRef.current.command({ type: "create_conversation" });
-      setConversations(next.conversations || []);
-      setActiveConv(next.activeConversation);
-      setMode("act");
+      const bootstrap = await clientRef.current.command({ type: "create_conversation" });
+      setConversations(bootstrap.conversations || []);
+      const active = bootstrap.activeConversation;
+      if (active) {
+        setConv(active);
+        setMode(modeFromConversation(active));
+        setView("chat");
+      }
     } catch (err) {
       setError(String(err.message || err));
     }
@@ -652,12 +861,17 @@ function App() {
 
   async function deleteConversation(id) {
     if (!canReachPc) return;
-    if (!confirm("Delete this conversation?")) return;
+    if (deleteArmed !== id) {
+      setDeleteArmed(id);
+      setTimeout(() => setDeleteArmed((current) => (current === id ? null : current)), 2600);
+      return;
+    }
+    setDeleteArmed(null);
     try {
-      const next = await clientRef.current.command({ type: "delete_conversation", conversation_id: id });
-      setConversations(next.conversations || []);
-      setActiveConv(next.activeConversation);
-      setMode(modeFromConversation(next.activeConversation));
+      await clientRef.current.command({ type: "delete_conversation", conversation_id: id });
+      await syncList();
+      setConv((current) => (current && current.id === id ? null : current));
+      if (convRef.current?.id === id) setView("list");
     } catch (err) {
       setError(String(err.message || err));
     }
@@ -665,33 +879,32 @@ function App() {
 
   async function sendPrompt(event) {
     event.preventDefault();
-    if (!prompt.trim() || !activeConv || sendPending || !canReachPc) return;
-    const files = attachments;
-    const encoded = [];
+    if (!prompt.trim() || !conv || sendPending || !canReachPc) return;
     const text = prompt;
+    const files = attachments;
     setSendPending(true);
     try {
+      const encoded = [];
       for (const file of files) {
         encoded.push({ name: file.name, mediaType: file.type || "application/octet-stream", data: await fileToBase64(file) });
       }
+      const model = conv.modeModelSettings?.[mode] || conv.model;
       await clientRef.current.command({
         type: "send_message",
-        conversation_id: activeConv.id,
+        conversation_id: conv.id,
         text,
         attachments: encoded,
         mode,
-        model: activeConv.modeModelSettings?.[mode] || activeConv.model,
-        thinking: thinkingFromModel(activeConv.modeModelSettings?.[mode] || activeConv.model),
+        model,
+        thinking: thinkingFromModel(model),
       });
       setPrompt("");
       setAttachments([]);
-      setLiveEventsByConversation((current) => {
-        const next = new Map(current);
-        if (!next.has(activeConv.id)) next.set(activeConv.id, [{ type: "turn_started" }]);
-        return next;
-      });
-      setActiveConv((current) => current ? { ...current, history: [...current.history, { role: "user", parts: [{ type: "text", text }] }] } : current);
-      await refresh();
+      if (inputRef.current) inputRef.current.style.height = "auto";
+      stickRef.current = true;
+      setConv((current) => (current && current.id === conv.id
+        ? { ...current, history: [...(current.history || []), { role: "user", parts: [{ type: "text", text }] }] }
+        : current));
     } catch (err) {
       setError(String(err.message || err));
     } finally {
@@ -701,36 +914,41 @@ function App() {
 
   async function setConversationMode(nextMode) {
     setMode(nextMode);
-    if (!activeConv || !canReachPc) return;
+    if (!conv || !canReachPc || isStreaming) return;
     try {
-      const updated = await clientRef.current.command({ type: "set_conversation_mode", conversation_id: activeConv.id, mode: nextMode });
-      setActiveConv(updated);
+      const updated = await clientRef.current.command({ type: "set_conversation_mode", conversation_id: conv.id, mode: nextMode });
+      setConv((current) => (current && current.id === updated.id ? updated : current));
     } catch (err) {
       setError(String(err.message || err));
     }
   }
 
   async function compact() {
-    if (!activeConv || !canReachPc) return;
+    if (!conv || !canReachPc || isStreaming) return;
     try {
       await clientRef.current.command({
         type: "compact_conversation",
-        conversation_id: activeConv.id,
-        model: activeConv.model,
-        thinking: thinkingFromModel(activeConv.model),
+        conversation_id: conv.id,
+        model: conv.model,
+        thinking: thinkingFromModel(conv.model),
       });
-      await refresh();
+      await handleTurnFinished(conv.id);
     } catch (err) {
       setError(String(err.message || err));
     }
   }
 
   async function answerQuestion(block, answers, stopQuestions = false) {
-    if (!activeConv || !canReachPc) return;
+    if (!conv || !canReachPc) return;
     setQuestionPendingId(block.id);
     try {
-      await clientRef.current.command({ type: "answer_question", conversation_id: activeConv.id, tool_call_id: block.id, answers, stop_questions: stopQuestions });
-      await refresh();
+      await clientRef.current.command({
+        type: "answer_question",
+        conversation_id: conv.id,
+        tool_call_id: block.id,
+        answers,
+        stop_questions: stopQuestions,
+      });
     } catch (err) {
       setError(String(err.message || err));
     } finally {
@@ -739,11 +957,10 @@ function App() {
   }
 
   async function rejectQuestion(block) {
-    if (!activeConv || !canReachPc) return;
+    if (!conv || !canReachPc) return;
     setQuestionPendingId(block.id);
     try {
-      await clientRef.current.command({ type: "reject_question", conversation_id: activeConv.id, tool_call_id: block.id });
-      await refresh();
+      await clientRef.current.command({ type: "reject_question", conversation_id: conv.id, tool_call_id: block.id });
     } catch (err) {
       setError(String(err.message || err));
     } finally {
@@ -751,26 +968,21 @@ function App() {
     }
   }
 
-  async function enablePush() {
+  async function togglePush() {
     if (!clientRef.current?.session || !canReachPc || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    if (pushState === "enabled") return;
     try {
       setPushState("requesting");
       const registration = await navigator.serviceWorker.ready;
       const vapid = await fetch("/vapid-public-key", { cache: "no-store" }).then((r) => r.json());
       if (!vapid.publicKey) throw new Error("Push is not configured on the relay.");
       const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToBytes(vapid.publicKey) });
-      const json = subscription.toJSON();
-      await clientRef.current.command({ type: "subscribe_push", subscription: json });
+      await clientRef.current.command({ type: "subscribe_push", subscription: subscription.toJSON() });
       setPushState("enabled");
     } catch (err) {
-      setPushState("error");
+      setPushState("idle");
       setError(String(err.message || err));
     }
-  }
-
-  function dismissInstallHint() {
-    localStorage.setItem(INSTALL_HINT_KEY, "true");
-    setInstallHintDismissed(true);
   }
 
   function retryConnection() {
@@ -778,127 +990,234 @@ function App() {
     const client = clientRef.current;
     if (!client) return;
     const announced = client.announce();
-    if (!announced && client.ws?.readyState !== WebSocket.CONNECTING) {
-      client.connect();
-    }
-    if (statusRef.current.pcReachable) void refresh();
+    if (!announced && client.ws?.readyState !== WebSocket.CONNECTING) client.connect();
   }
 
   function logout() {
     clearSession();
     setSession(null);
-    clearLocalConversationState();
+    setWorkspace(null);
+    setConversations([]);
+    setConv(null);
+    setLiveEvents(new Map());
+    setActiveTurns([]);
+    syncedRef.current = false;
+    setSynced(false);
   }
 
+  function dismissInstallHint() {
+    localStorage.setItem(INSTALL_HINT_KEY, "true");
+    setInstallHintDismissed(true);
+  }
+
+  /* — render: pairing — */
+
   if (!session) {
-    return (
-      React.createElement("main", { className: "pairing-screen" },
-        React.createElement("section", { className: "pairing-card" },
-          React.createElement("div", { className: "brand" }, React.createElement("img", { src: "/icons/icon.svg", alt: "" }), React.createElement("span", null, "Sinew Remote")),
-          React.createElement("h1", null, "Pair your phone"),
-          React.createElement("p", null, "Open Remote on your PC, scan the QR or enter the 6-digit code."),
-          React.createElement("form", { onSubmit: doPair },
-            React.createElement("input", { inputMode: "numeric", pattern: "[0-9]*", maxLength: 6, value: pairCode, onChange: (e) => setPairCode(e.target.value.replace(/\D/g, "").slice(0, 6)), placeholder: "000000", autoFocus: true }),
-            React.createElement("button", { disabled: pairCode.length !== 6 || pairing }, pairing ? "Pairing…" : "Pair")
-          ),
-          pairError && React.createElement("p", { className: "error" }, pairError),
-          React.createElement("p", { className: "small" }, "Traffic is end-to-end encrypted between this phone and your PC.")
-        )
-      )
+    return h("main", { className: "pairing" },
+      h("div", { className: "pairing__inner" },
+        h("div", { className: "pairing__brand" },
+          h("img", { src: "/icons/icon.svg", alt: "" }),
+          h("span", null, "Sinew Remote"),
+        ),
+        h("h1", { className: "pairing__title" }, "Pair this phone"),
+        h("p", { className: "pairing__sub" }, "Open Remote on your PC, then scan the QR code or enter the 6-digit code."),
+        h("form", { className: "pairing__form", onSubmit: doPair },
+          h("input", {
+            className: "pairing__code",
+            inputMode: "numeric",
+            pattern: "[0-9]*",
+            maxLength: 6,
+            value: pairCode,
+            onChange: (e) => setPairCode(e.target.value.replace(/\D/g, "").slice(0, 6)),
+            placeholder: "000000",
+            autoFocus: !initialCode,
+          }),
+          h("button", { className: "btn btn--primary btn--wide", disabled: pairCode.length !== 6 || pairing }, pairing ? "Pairing…" : "Pair"),
+        ),
+        pairError && h("p", { className: "pairing__error" }, pairError),
+        h("p", { className: "pairing__note" }, "End-to-end encrypted between this phone and your PC. The relay never sees your data."),
+      ),
     );
   }
 
-  return (
-    React.createElement("main", { className: "remote-app" },
-      React.createElement("header", { className: "topbar" },
-        React.createElement("div", { className: "topbar__title" },
-          React.createElement("strong", null, bootstrap?.workspace?.name || "Sinew"),
-          React.createElement("span", { className: canReachPc ? "online" : "offline" }, canReachPc ? "PC reachable" : `PC unreachable · relay ${status.relay}`)
+  /* — render: shell — */
+
+  const listView = h("section", { className: "pane pane--list", "data-active": view === "list" ? "true" : "false" },
+    h("header", { className: "pane__head" },
+      h("div", { className: "pane__head-main" },
+        h("div", { className: "pane__title" },
+          h(StatusDot, { on: canReachPc }),
+          h("span", null, workspace?.name || "Sinew"),
         ),
-        React.createElement("div", { className: "topbar__actions" },
-          React.createElement("button", { onClick: enablePush, className: pushState === "enabled" ? "pill ok" : "pill", disabled: !canReachPc || pushState === "requesting" }, pushState === "enabled" ? "Push on" : pushState === "requesting" ? "Enabling…" : "Enable push"),
-          React.createElement("button", { onClick: logout, className: "ghost" }, "Forget")
-        )
+        h("div", { className: "pane__sub" }, canReachPc ? "PC connected" : status.relay === "connected" ? "PC unreachable" : `Relay ${status.relay}`),
       ),
-      error && React.createElement("button", { className: "toast", onClick: () => setError(null) }, error),
-      showInstallHint && React.createElement("section", { className: "install-card" },
-        React.createElement("div", null,
-          React.createElement("h2", null, "Install Sinew Remote"),
-          React.createElement("p", null, isIosDevice()
-            ? "For notifications on iPhone, add this app to your Home Screen first, then enable push from here."
-            : "Install the PWA for a full-screen chat and reliable response-ready notifications."),
-          React.createElement("small", null, "Notification text stays generic; conversation details are decrypted only when you open the app.")
-        ),
-        React.createElement("button", { type: "button", className: "ghost", onClick: dismissInstallHint }, "Got it")
+      h("div", { className: "pane__head-actions" },
+        h("button", {
+          className: "icon-btn",
+          "data-on": pushState === "enabled" ? "true" : "false",
+          disabled: !canReachPc || pushState === "requesting",
+          title: "Notifications",
+          onClick: togglePush,
+        }, pushState === "enabled" ? "Push on" : pushState === "requesting" ? "…" : "Push"),
+        h("button", { className: "icon-btn", onClick: logout, title: "Forget this PC" }, "Forget"),
       ),
-      !canReachPc && React.createElement("section", { className: "offline-panel" },
-        React.createElement("h2", null, "PC unreachable"),
-        React.createElement("p", null, "Keep Sinew open on your PC with Remote enabled. Messages stay on this phone until the PC confirms the request."),
-        React.createElement("button", { onClick: retryConnection }, "Retry connection")
+    ),
+    showInstallHint && h("div", { className: "hint" },
+      h("div", { className: "hint__text" },
+        h("strong", null, "Install Sinew Remote. "),
+        isIosDevice()
+          ? "Add to Home Screen (Share → Add to Home Screen) to enable notifications on iPhone."
+          : "Install the PWA for full-screen chat and notifications.",
       ),
-      React.createElement("div", { className: "mobile-layout" },
-        React.createElement("aside", { className: "conversation-rail" },
-          React.createElement("div", { className: "rail-actions" },
-            React.createElement("button", { onClick: createConversation, disabled: !canReachPc }, "+ New"),
-            React.createElement("button", { onClick: refresh, disabled: !canReachPc }, "Refresh")
+      h("button", { className: "icon-btn", onClick: dismissInstallHint }, "Got it"),
+    ),
+    !canReachPc && h("div", { className: "offline" },
+      h("span", null, "Keep Sinew open on your PC with Remote enabled."),
+      h("button", { className: "icon-btn", onClick: retryConnection }, "Retry"),
+    ),
+    h("div", { className: "convs" },
+      h("button", { className: "conv-new", disabled: !canReachPc, onClick: createConversation }, "+ New conversation"),
+      conversations.length === 0 && h("div", { className: "convs__empty" }, canReachPc ? "No conversations yet." : "Waiting for the PC…"),
+      conversations.map((item) => {
+        const streaming = activeTurns.some((turn) => turn.conversationId === item.id);
+        return h("div", {
+          key: item.id,
+          className: "conv-row",
+          "data-active": conv?.id === item.id ? "true" : "false",
+          role: "button",
+          tabIndex: 0,
+          onClick: () => void openConversationById(item.id),
+          onKeyDown: (e) => { if (e.key === "Enter") void openConversationById(item.id); },
+        },
+          streaming && h("span", { className: "conv-row__pulse" }),
+          h("span", { className: "conv-row__title" }, item.title || "New conversation"),
+          h("span", { className: "conv-row__meta" }, streaming ? "streaming" : relativeDate(item.updatedAtMs)),
+          h("button", {
+            className: "conv-row__delete",
+            "data-armed": deleteArmed === item.id ? "true" : "false",
+            disabled: !canReachPc,
+            onClick: (e) => { e.stopPropagation(); void deleteConversation(item.id); },
+            "aria-label": "Delete conversation",
+          }, deleteArmed === item.id ? "Sure?" : "×"),
+        );
+      }),
+    ),
+  );
+
+  const chatView = h("section", { className: "pane pane--chat", "data-active": view === "chat" ? "true" : "false" },
+    conv ? h(React.Fragment, null,
+      h("header", { className: "pane__head pane__head--chat" },
+        h("button", { className: "chat-back", onClick: () => setView("list"), "aria-label": "Back" }, "‹"),
+        h("div", { className: "pane__head-main" },
+          h("div", { className: "pane__title pane__title--chat" }, conv.title || "Conversation"),
+          h("div", { className: "pane__sub" },
+            isStreaming
+              ? h("span", { className: "shimmer" }, "Streaming…")
+              : sendPending
+                ? "Waiting for PC…"
+                : canReachPc ? "Encrypted" : "PC unreachable",
           ),
-          conversations.length === 0 && React.createElement("p", { className: "rail-empty" }, canReachPc ? "No conversations yet." : "Conversations will load when the PC is reachable."),
-          conversations.map((conversation) => React.createElement("button", { key: conversation.id, disabled: !canReachPc, className: conversation.id === activeConv?.id ? "conv active" : "conv", onClick: () => openConversationById(conversation.id) },
-            React.createElement("span", null, conversation.title || "New conversation"),
-            React.createElement("small", null, activeTurns.some((turn) => turn.conversationId === conversation.id) ? "Streaming" : new Date(conversation.updatedAtMs || Date.now()).toLocaleDateString()),
-            React.createElement("i", { role: "button", "aria-label": "Delete conversation", onClick: (event) => { event.stopPropagation(); void deleteConversation(conversation.id); } }, "×")
-          ))
         ),
-        React.createElement("section", { className: "chat-shell" },
-          activeConv ? React.createElement(React.Fragment, null,
-            React.createElement("div", { className: "chat-head" },
-              React.createElement("div", null,
-                React.createElement("h2", null, activeConv.title || "Conversation"),
-                React.createElement("span", { className: isStreaming ? "streaming" : "chat-head__meta" }, isStreaming ? "Streaming live" : sendPending ? "Waiting for PC confirmation" : "Encrypted remote chat")
-              ),
-              React.createElement("button", { className: "ghost", disabled: !canReachPc || sendPending, onClick: compact }, "Compact"),
-              React.createElement("div", { className: "modes" }, MODES.map((m) => React.createElement("button", { key: m, disabled: !canReachPc, className: mode === m ? "selected" : "", onClick: () => setConversationMode(m) }, modeLabels[m])))
+        h("button", { className: "icon-btn", disabled: !canReachPc || isStreaming, onClick: compact }, "Compact"),
+      ),
+      h("div", { className: "chat-body", ref: bodyRef, onScroll: onBodyScroll },
+        blocks.length === 0 && !isStreaming && h("div", { className: "chat-empty" }, "Send a message to get started."),
+        blocks.map((block, index) => {
+          if (block.kind === "user") {
+            return h("div", { key: index, className: "msg" }, h("div", { className: "user-text" }, block.text));
+          }
+          if (block.kind === "assistant") {
+            return h("div", { key: index, className: "msg" },
+              h("div", { className: "md", dangerouslySetInnerHTML: renderMarkdown(block.text) }),
+            );
+          }
+          if (block.kind === "thinking") {
+            return h(ThinkingBlock, { key: index, block });
+          }
+          if (block.kind === "tool") {
+            const questions = block.name === "question" ? parseQuestionArgs(block.argsPretty || block.args) : [];
+            const canAnswer = questions.length > 0 && block.status === "running";
+            return h(ToolBlock, { key: block.id || index, block },
+              canAnswer ? h(QuestionPanel, {
+                block,
+                questions,
+                disabled: !canReachPc,
+                pending: questionPendingId === block.id,
+                allowStopQuestions: mode === "plan",
+                onSubmit: answerQuestion,
+                onReject: rejectQuestion,
+              }) : null,
+            );
+          }
+          if (block.kind === "subagent") {
+            return h(ToolBlock, { key: block.id || index, block: { ...block, name: "subagent" } });
+          }
+          if (block.kind === "error") {
+            return h("div", { key: index, className: "err-block" }, block.text);
+          }
+          return h("div", { key: index, className: "status-line" }, block.text);
+        }),
+        isStreaming && events.length === 0 && h("div", { className: "status-line shimmer" }, "Working…"),
+      ),
+      h("form", { className: "composer", onSubmit: sendPrompt },
+        attachments.length > 0 && h("div", { className: "composer__chips" },
+          attachments.map((file, index) => h("button", {
+            key: `${file.name}-${index}`,
+            type: "button",
+            className: "chip",
+            onClick: () => setAttachments((current) => current.filter((_, i) => i !== index)),
+          }, `${file.name} ×`)),
+        ),
+        h("div", { className: "composer__box" },
+          h("textarea", {
+            className: "composer__input",
+            ref: inputRef,
+            rows: 1,
+            value: prompt,
+            disabled: !canReachPc || sendPending,
+            placeholder: canReachPc ? "Message Sinew…" : "PC unreachable",
+            onChange: (e) => {
+              setPrompt(e.target.value);
+              e.target.style.height = "auto";
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+            },
+          }),
+          h("div", { className: "composer__row" },
+            h("label", { className: "composer__attach", "data-disabled": !canReachPc || sendPending ? "true" : "false" },
+              "+",
+              h("input", {
+                type: "file",
+                multiple: true,
+                disabled: !canReachPc || sendPending,
+                onChange: (e) => { setAttachments((current) => [...current, ...Array.from(e.target.files || [])]); e.target.value = ""; },
+              }),
             ),
-            React.createElement("div", { className: "messages" },
-              blocks.length === 0 && React.createElement("div", { className: "empty-message" }, "Start the conversation from your phone."),
-              blocks.map((block, index) => {
-                if (block.kind === "user") return React.createElement("article", { key: index, className: "bubble user" }, block.text);
-                if (block.kind === "assistant") return React.createElement("article", { key: index, className: "bubble assistant", dangerouslySetInnerHTML: htmlFromMarkdown(block.text) });
-                if (block.kind === "thinking") return React.createElement("details", { key: index, className: "thinking" }, React.createElement("summary", null, "Thinking"), React.createElement("pre", null, block.text));
-                if (block.kind === "tool") {
-                  const questions = block.name === "question" ? parseQuestionArgs(block.argsPretty || block.args) : [];
-                  const canAnswer = questions.length > 0 && block.status !== "done" && block.status !== "error";
-                  return React.createElement("article", { key: index, className: `tool ${block.status}` },
-                    React.createElement("strong", null, block.summary || block.name || "Tool"),
-                    block.output && React.createElement("pre", null, block.output),
-                    canAnswer && React.createElement(QuestionToolPanel, {
-                      block,
-                      questions,
-                      disabled: !canReachPc,
-                      pending: questionPendingId === block.id,
-                      allowStopQuestions: mode === "plan",
-                      onSubmit: answerQuestion,
-                      onReject: rejectQuestion,
-                    })
-                  );
-                }
-                if (block.kind === "error") return React.createElement("article", { key: index, className: "bubble error" }, block.text);
-                return React.createElement("div", { key: index, className: "status-line" }, block.text);
-              })
+            h("div", { className: "composer__modes" },
+              MODES.map((value) => h("button", {
+                key: value,
+                type: "button",
+                className: "composer__mode",
+                "data-selected": mode === value ? "true" : "false",
+                disabled: !canReachPc,
+                onClick: () => void setConversationMode(value),
+              }, MODE_LABELS[value])),
             ),
-            React.createElement("form", { className: "composer", onSubmit: sendPrompt },
-              attachments.length > 0 && React.createElement("div", { className: "attachments" }, attachments.map((file, index) => React.createElement("span", { key: `${file.name}-${index}` }, file.name))),
-              sendPending && React.createElement("div", { className: "composer__pending" }, "Waiting for the PC to accept this message…"),
-              React.createElement("textarea", { rows: 3, value: prompt, disabled: !canReachPc || sendPending, onChange: (e) => setPrompt(e.target.value), placeholder: canReachPc ? "Message Sinew…" : "PC unreachable" }),
-              React.createElement("label", { className: "attach", "data-disabled": !canReachPc || sendPending ? "true" : "false" }, "Attach", React.createElement("input", { type: "file", multiple: true, disabled: !canReachPc || sendPending, onChange: (e) => setAttachments(Array.from(e.target.files || [])) })),
-              React.createElement("button", { disabled: !prompt.trim() || !canReachPc || sendPending }, sendPending ? "Sending…" : "Send")
-            )
-          ) : React.createElement("div", { className: "empty" },
-            React.createElement("button", { onClick: refresh, disabled: !canReachPc }, canReachPc ? "Load conversations" : "Waiting for PC")
-          )
-        )
-      )
-    )
+            h("button", {
+              className: "composer__send",
+              disabled: !prompt.trim() || !canReachPc || sendPending,
+            }, sendPending ? "Sending…" : "Send"),
+          ),
+        ),
+      ),
+    ) : h("div", { className: "chat-none" },
+      h("span", null, "Select a conversation"),
+    ),
+  );
+
+  return h("main", { className: "app" },
+    error && h("button", { className: "toast", onClick: () => setError(null) }, error),
+    listView,
+    chatView,
   );
 }
 
@@ -906,4 +1225,4 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => undefined);
 }
 
-createRoot(document.getElementById("app")).render(React.createElement(App));
+createRoot(document.getElementById("app")).render(h(App));
