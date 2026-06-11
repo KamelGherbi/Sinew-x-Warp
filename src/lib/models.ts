@@ -183,7 +183,7 @@ export const MODELS: ModelEntry[] = [
   },
 ];
 
-const OPENROUTER_THINKING: readonly ThinkingLevel[] = ["off", "low", "medium", "high"];
+const OPENROUTER_THINKING: readonly ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
 const OPENROUTER_NO_THINKING: readonly ThinkingLevel[] = ["off"];
 
 export function sanitizeOpenRouterName(name: string | null | undefined): string {
@@ -267,9 +267,13 @@ export function thinkingFromRef(
     if (
       model.effort === "low" ||
       model.effort === "medium" ||
-      model.effort === "high"
+      model.effort === "high" ||
+      model.effort === "xhigh"
     ) {
       return model.effort;
+    }
+    if (model.effort === "max") {
+      return "xhigh";
     }
     return "medium";
   }
@@ -319,8 +323,8 @@ export function modelRefWithThinking(
   }
   if (thinking === "off") return { ...model, effort: "none" };
   if (model.provider === "kimi") return { ...model, effort: "high" };
-  if (model.provider === "openrouter" && (thinking === "xhigh" || thinking === "max")) {
-    return { ...model, effort: "high" };
+  if (model.provider === "openrouter" && thinking === "max") {
+    return { ...model, effort: "xhigh" };
   }
   // `minimal` is Gemini-only on the backend. The Google branch above already
   // handled it; for any other provider that ever surfaces it, clamp to low.

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "remote": "node remote/server.mjs",
     "build": "tsc --noEmit && vite build",
     "prepare-sidecars": "node scripts/prepare-sidecars.mjs",
     "preview": "vite preview",
@@ -31,7 +32,9 @@
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",
     "rehype-highlight": "^7.0.1",
-    "remark-gfm": "^4.0.0"
+    "remark-gfm": "^4.0.0",
+    "web-push": "3.6.7",
+    "ws": "8.21.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",

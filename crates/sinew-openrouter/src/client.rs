@@ -226,7 +226,8 @@ fn reasoning_config(
         Effort::None => "none",
         Effort::Low => "low",
         Effort::Medium => "medium",
-        Effort::High | Effort::Xhigh | Effort::Max => "high",
+        Effort::High => "high",
+        Effort::Xhigh | Effort::Max => "xhigh",
     };
     Some(wire::ReasoningConfig {
         effort: Some(effort),

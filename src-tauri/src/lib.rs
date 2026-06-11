@@ -101,6 +101,7 @@ mod git;
 mod models;
 mod platform;
 mod providers;
+mod remote;
 mod state;
 mod swarm;
 mod terminal;
@@ -115,6 +116,7 @@ use context::*;
 use models::*;
 use platform::*;
 use providers::*;
+use remote::*;
 use state::*;
 use swarm::*;
 use turns::*;
@@ -168,15 +170,18 @@ pub fn run() {
         ModelRef::new("google", GOOGLE_MODEL_ID).with_effort(Effort::Medium)
     };
 
+    let remote = RemoteRuntime::from_store(&store);
+
     let state = DesktopState {
         providers: Arc::new(StdMutex::new(providers)),
         store,
         default_model,
         system_prompt: DEFAULT_SYSTEM_PROMPT.into(),
-        max_tool_rounds: 200,
+        max_tool_rounds: 2000,
         active_turns: Arc::new(Mutex::new(HashMap::new())),
         active_turn_details: Arc::new(StdMutex::new(HashMap::new())),
         team_runtime: Arc::new(RwLock::new(TeamRuntime::default())),
+        remote,
         file_watchers: Arc::new(Mutex::new(HashMap::new())),
         terminal_sessions: Arc::new(Mutex::new(HashMap::new())),
         openai_login: Arc::new(Mutex::new(None)),
@@ -224,6 +229,7 @@ pub fn run() {
             {
                 install_desktop_menu(app.handle())?;
             }
+            start_remote_if_enabled(app.handle());
             Ok(())
         })
         .on_menu_event(|app, event| {
@@ -296,6 +302,11 @@ pub fn run() {
             conversations::save_tool_settings,
             conversations::list_sub_agent_settings,
             conversations::save_sub_agent_settings,
+            remote::remote_get_status,
+            remote::remote_set_enabled,
+            remote::remote_start_pairing,
+            remote::remote_stop_pairing,
+            remote::remote_revoke_device,
             providers::list_configured_model_providers,
             providers::get_openai_provider_status,
             providers::start_openai_oauth_login,

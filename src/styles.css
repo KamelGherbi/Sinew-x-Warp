@@ -9042,3 +9042,384 @@ textarea {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* ============================================================================
+   Remote — control Sinew from a paired phone
+   The panel mounts inside .workbench-center as a sibling of .editor-shell.
+   The titlebar entry point lives in .titlebar__btn--remote. Both reuse the
+   shared design tokens so the surface reads as native Sinew chrome.
+   ========================================================================== */
+
+/* ── Titlebar entry point ──────────────────────────────────────────────────
+   The plan asks for a *discreet* indicator on the button itself: instead of a
+   floating status dot, the phone glyph carries the state — it tints to the
+   accent when Remote is enabled, and shifts to a soft mint with a gentle glow
+   while a device is actually connected. */
+.titlebar__btn--remote > svg {
+  color: var(--text-2);
+  transition: color 160ms ease, filter 160ms ease;
+}
+.titlebar__btn--remote:hover > svg {
+  color: var(--text-0);
+}
+.titlebar__btn--remote[data-on="true"] > svg {
+  color: var(--accent-hi);
+}
+.titlebar__btn--remote[data-connected="true"] > svg {
+  color: #4fe0a6;
+  filter: drop-shadow(0 0 5px rgba(79, 224, 166, 0.55));
+  animation: remote-live-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes remote-live-pulse {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(79, 224, 166, 0.35)); }
+  50%      { filter: drop-shadow(0 0 7px rgba(79, 224, 166, 0.7)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .titlebar__btn--remote[data-connected="true"] > svg { animation: none; }
+}
+
+/* ── Shell ─────────────────────────────────────────────────────────────── */
+.remote-shell {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  background: var(--bg-0);
+}
+
+.remote-panel {
+  --remote-col: 760px;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 28px clamp(20px, 5vw, 56px) 56px;
+  color: var(--text-1);
+  font-family: var(--font-ui);
+}
+.remote-panel > * {
+  width: min(100%, var(--remote-col));
+  margin-inline: auto;
+}
+.remote-panel::-webkit-scrollbar { width: 10px; }
+.remote-panel::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: var(--r-pill);
+  border: 3px solid var(--bg-0);
+}
+
+/* ── Hero ──────────────────────────────────────────────────────────────── */
+.remote-panel__hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 26px 28px;
+  border-radius: var(--r-feature);
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(120% 140% at 100% 0%, rgba(79, 224, 166, 0.10), transparent 52%),
+    radial-gradient(120% 160% at 0% 0%, rgba(124, 58, 237, 0.10), transparent 50%),
+    var(--bg-1);
+}
+.remote-panel__hero > div { min-width: 0; }
+.remote-panel__eyebrow {
+  margin: 0 0 10px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.remote-panel__hero h1 {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: 22px;
+  line-height: 1.18;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--text-0);
+}
+.remote-panel__hero p {
+  margin: 0;
+  max-width: 52ch;
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+/* Larger switch variant for the hero toggle. */
+.remote-panel__main-switch {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 25px;
+  margin-top: 2px;
+}
+.remote-panel__main-switch .settings-pane__switch-thumb {
+  top: 3px;
+  left: 3px;
+  width: 19px;
+  height: 19px;
+}
+.remote-panel__main-switch[data-on="true"] {
+  background: #36c98a;
+}
+.remote-panel__main-switch[data-on="true"] .settings-pane__switch-thumb {
+  transform: translateX(19px);
+  background: #06140d;
+}
+
+/* ── Status grid ───────────────────────────────────────────────────────── */
+.remote-panel__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.remote-panel__info {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 15px 16px;
+  border-radius: var(--r-card);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.remote-panel__info > svg { color: var(--text-3); }
+.remote-panel__info > span {
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.remote-panel__info > strong {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remote-panel__info[data-tone="ok"] > svg { color: #4fe0a6; }
+.remote-panel__info[data-tone="ok"] > strong { color: #6fe7b4; }
+
+/* ── Sections ──────────────────────────────────────────────────────────── */
+.remote-panel__section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 22px 22px;
+  border-radius: var(--r-feature);
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+}
+.remote-panel__section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.remote-panel__section-head h2 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-0);
+}
+.remote-panel__section-head p {
+  margin: 0;
+  max-width: 48ch;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.remote-panel__section-head .settings-pane__btn {
+  flex: 0 0 auto;
+  height: 26px;
+}
+
+/* ── Pairing ───────────────────────────────────────────────────────────── */
+.remote-panel__pairing {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 22px;
+  align-items: center;
+  padding: 6px 2px 2px;
+}
+.remote-panel__code {
+  display: flex;
+  gap: 7px;
+}
+.remote-panel__code span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 46px;
+  border-radius: var(--r-small);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-3);
+  font-family: var(--font-mono);
+  font-size: 25px;
+  font-weight: 600;
+  color: var(--text-0);
+  font-variant-numeric: tabular-nums;
+}
+.remote-panel__qr {
+  width: 124px;
+  height: 124px;
+  border-radius: var(--r-small);
+  background: #ffffff;
+  padding: 7px;
+  border: 1px solid var(--line);
+}
+.remote-panel__pairing-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.remote-panel__pairing-copy > span {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.remote-panel__pairing-copy > a {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  color: var(--accent-hi);
+  word-break: break-all;
+  text-decoration: none;
+}
+.remote-panel__pairing-copy > a:hover { text-decoration: underline; }
+.remote-panel__pairing-copy > small {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.remote-panel__empty {
+  padding: 16px;
+  border-radius: var(--r-card);
+  border: 1px dashed var(--line-strong);
+  background: var(--bg-2);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+/* ── Devices ───────────────────────────────────────────────────────────── */
+.remote-panel__devices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.remote-panel__device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 14px;
+  border-radius: var(--r-card);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+}
+.remote-panel__device[data-revoked="true"] { opacity: 0.5; }
+.remote-panel__device-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.remote-panel__device-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: var(--r-med);
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  color: var(--text-2);
+}
+.remote-panel__device[data-connected="true"] .remote-panel__device-icon {
+  border-color: rgba(79, 224, 166, 0.45);
+  color: #4fe0a6;
+}
+.remote-panel__device-text { min-width: 0; }
+.remote-panel__device-text strong {
+  display: block;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remote-panel__device-status {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.remote-panel__device[data-connected="true"] .remote-panel__device-status {
+  color: #6fe7b4;
+}
+.remote-panel__device-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.remote-panel__device-push {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--bg-4);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+.remote-panel__device-push > svg { color: var(--text-3); }
+
+.remote-panel__revoked {
+  margin-top: 6px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 4px;
+}
+.remote-panel__revoked > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 2px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--text-3);
+}
+.remote-panel__revoked > summary::-webkit-details-marker { display: none; }
+.remote-panel__revoked > summary:hover { color: var(--text-2); }
+.remote-panel__revoked[open] > summary { color: var(--text-2); }
+.remote-panel__revoked .remote-panel__device { margin-top: 8px; }
+
+/* ── Error toast ───────────────────────────────────────────────────────── */
+.remote-panel__error {
+  display: block;
+  text-align: left;
+  padding: 11px 14px 11px 13px;
+  border-radius: var(--r-card);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--danger);
+  background: var(--bg-2);
+  color: var(--danger);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+.remote-panel__error:hover { background: var(--bg-3); }
+
+@media (max-width: 720px) {
+  .remote-panel__hero { flex-direction: column; gap: 18px; }
+  .remote-panel__grid { grid-template-columns: 1fr; }
+  .remote-panel__pairing { grid-template-columns: 1fr; justify-items: start; }
+}

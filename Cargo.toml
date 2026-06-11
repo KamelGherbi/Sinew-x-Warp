@@ -49,6 +49,7 @@ uuid = { version = "1", features = ["v4", "fast-rng"] }
 notify = "6.1"
 rand = "0.9"
 sha2 = "0.10"
+ring = "0.17"
 tar = "0.4"
 url = "2.5"
 

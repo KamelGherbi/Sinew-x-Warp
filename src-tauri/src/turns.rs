@@ -892,6 +892,7 @@ pub(super) fn emit_agent_event(
     event: &AgentEvent,
 ) -> Result<()> {
     let sequence = remember_active_turn_event(app, conversation_id, event.clone());
+    remote::forward_agent_event(app, workspace_id, conversation_id, sequence, event);
     app.emit(
         AGENT_EVENT_NAME,
         ConversationEvent {
@@ -944,8 +945,11 @@ pub(super) async fn emit_active_turns_changed(
     };
     let _ = app.emit(
         ACTIVE_TURNS_EVENT_NAME,
-        ActiveTurnsChangedPayload { active_turns },
+        ActiveTurnsChangedPayload {
+            active_turns: active_turns.clone(),
+        },
     );
+    remote::forward_active_turns(app, active_turns);
 }
 
 pub(super) fn active_turn_summaries_from_map(

@@ -30,6 +30,7 @@ pub(super) async fn open_workspace(
         }
     }
     apply_window_title(&window, &bootstrap.workspace.name);
+    update_current_workspace(&window.app_handle(), workspace_id);
     Ok(bootstrap)
 }
 
