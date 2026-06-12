@@ -11,6 +11,7 @@ import type {
   ConversationSummary,
   DictationSettings,
   DictationStatus,
+  RemoteStatus,
   RewriteWorkspaceRestoreCheck,
   FileDocument,
   GitCreateWorktreeOutput,
@@ -709,5 +710,24 @@ export const api = {
   },
   currentAppVersion() {
     return invoke<string>("updater_current_version");
+  },
+  remoteGetStatus() {
+    return invoke<RemoteStatus>("remote_get_status");
+  },
+  remoteSetEnabled(enabled: boolean, relayUrl?: string | null) {
+    return invoke<RemoteStatus>("remote_set_enabled", {
+      input: { enabled, relayUrl },
+    });
+  },
+  remoteStartPairing() {
+    return invoke<RemoteStatus>("remote_start_pairing");
+  },
+  remoteStopPairing() {
+    return invoke<RemoteStatus>("remote_stop_pairing");
+  },
+  remoteRevokeDevice(deviceId: string) {
+    return invoke<RemoteStatus>("remote_revoke_device", {
+      input: { deviceId },
+    });
   },
 };

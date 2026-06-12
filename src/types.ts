@@ -506,6 +506,34 @@ export type WorkspaceSession = {
   bootstrap: WorkspaceBootstrap;
 };
 
+export type RemotePairingStatus = {
+  code: string;
+  expiresAtMs: number;
+  qrUrl: string;
+  attemptsRemaining: number;
+  lockedUntilMs?: number | null;
+};
+
+export type RemoteDevice = {
+  id: string;
+  name: string;
+  pairedAtMs: number;
+  lastSeenAtMs?: number | null;
+  revokedAtMs?: number | null;
+  connected: boolean;
+  pushEnabled: boolean;
+};
+
+export type RemoteStatus = {
+  enabled: boolean;
+  relayUrl: string;
+  pcId: string;
+  relayConnected: boolean;
+  reachable: boolean;
+  pairing?: RemotePairingStatus | null;
+  devices: RemoteDevice[];
+};
+
 export type WorkspaceEntry = {
   name: string;
   relativePath: string;

@@ -8983,6 +8983,9 @@ textarea {
   white-space: nowrap;
   max-width: 40%;
 }
+.mention-popover__name--wide {
+  max-width: 100%;
+}
 .mention-popover__path {
   color: var(--text-3);
   font-family: var(--font-mono);
@@ -10789,4 +10792,352 @@ textarea {
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ============================================================================
+   Remote — control Sinew from a paired phone
+   Borderless, flat surfaces on the deep-black scale. The panel mounts as a
+   closeable tab inside the editor host (same .editor-settings-layer Settings
+   uses); the titlebar entry point is .titlebar__btn--remote. Everything reuses
+   the shared tokens so it reads as native Sinew chrome — no cards-in-cards, no
+   off-palette accents.
+   ========================================================================== */
+
+/* ── Titlebar entry point ──────────────────────────────────────────────────
+   Discreet state on the button itself: the glyph tints to lavender (the same
+   signal used for active chat icons) when Remote is enabled, and a small green
+   dot rides the corner while a device is actually connected. */
+.titlebar__btn--remote > svg {
+  transition: color 150ms ease;
+}
+.titlebar__btn--remote[data-on="true"] > svg {
+  color: var(--accent-2);
+}
+.titlebar__btn-dot {
+  width: 5px;
+  height: 5px;
+  margin-left: 1px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 5px rgba(34, 197, 94, 0.6);
+}
+
+/* ── Shell ─────────────────────────────────────────────────────────────── */
+.remote-panel {
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg-0);
+  color: var(--text-1);
+  font-family: var(--font-ui);
+}
+.remote-panel__inner {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  width: min(100%, 660px);
+  margin-inline: auto;
+  padding: 26px clamp(18px, 4vw, 40px) 48px;
+}
+.remote-panel::-webkit-scrollbar { width: 10px; }
+.remote-panel::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: var(--r-pill);
+  border: 3px solid var(--bg-0);
+}
+
+/* ── Header ────────────────────────────────────────────────────────────── */
+.remote-panel__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.remote-panel__head-text { min-width: 0; }
+.remote-panel__head h1 {
+  margin: 0 0 7px;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.014em;
+  color: var(--text-0);
+}
+.remote-panel__head p {
+  margin: 0;
+  max-width: 50ch;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-3);
+}
+
+/* Master toggle — borderless pill, accent-on. */
+.remote-panel__switch {
+  flex: 0 0 auto;
+  position: relative;
+  width: 40px;
+  height: 23px;
+  margin-top: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--bg-4);
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+.remote-panel__switch[data-on="true"] { background: var(--accent); }
+.remote-panel__switch:disabled { opacity: 0.4; cursor: not-allowed; }
+.remote-panel__switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform 150ms ease, background 150ms ease;
+}
+.remote-panel__switch[data-on="true"] .remote-panel__switch-thumb {
+  transform: translateX(17px);
+  background: #fff;
+}
+
+/* ── Status chips ──────────────────────────────────────────────────────── */
+.remote-panel__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.remote-panel__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 12px 7px 10px;
+  border-radius: var(--r-card);
+  background: var(--bg-2);
+  color: var(--text-2);
+}
+.remote-panel__chip > svg { flex: 0 0 auto; color: var(--text-3); }
+.remote-panel__chip-label {
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+}
+.remote-panel__chip-value {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+.remote-panel__chip[data-tone="ok"] > svg { color: var(--ok); }
+.remote-panel__chip[data-tone="ok"] .remote-panel__chip-value { color: var(--ok); }
+
+/* ── Blocks ────────────────────────────────────────────────────────────── */
+.remote-panel__block {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.remote-panel__block-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.remote-panel__block-head h2 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.008em;
+  color: var(--text-0);
+}
+.remote-panel__block-head p {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.remote-panel__block-head .settings-pane__btn {
+  flex: 0 0 auto;
+  height: 26px;
+}
+
+.remote-panel__hint {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: var(--r-card);
+  background: var(--bg-1);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+/* ── Pairing ───────────────────────────────────────────────────────────── */
+.remote-panel__pairing {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 22px;
+  padding: 18px;
+  border-radius: var(--r-feature);
+  background: var(--bg-1);
+}
+.remote-panel__code {
+  display: flex;
+  gap: 6px;
+}
+.remote-panel__code span {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 44px;
+  border-radius: var(--r-small);
+  background: var(--bg-3);
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-0);
+  font-variant-numeric: tabular-nums;
+}
+.remote-panel__qr {
+  display: grid;
+  place-items: center;
+  width: 128px;
+  height: 128px;
+  border-radius: var(--r-card);
+  background: #fff;
+}
+.remote-panel__qr img { display: block; }
+.remote-panel__pairing-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.remote-panel__pairing-copy > span {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.remote-panel__pairing-copy > a {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-sm);
+  color: var(--accent-hi);
+  word-break: break-all;
+  text-decoration: none;
+}
+.remote-panel__pairing-copy > a:hover { text-decoration: underline; }
+.remote-panel__pairing-copy > small {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* ── Devices ───────────────────────────────────────────────────────────── */
+.remote-panel__devices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.remote-panel__device {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--r-card);
+  background: var(--bg-2);
+}
+.remote-panel__device[data-revoked="true"] { opacity: 0.55; }
+.remote-panel__device-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-med);
+  background: var(--bg-3);
+  color: var(--text-2);
+}
+.remote-panel__device[data-connected="true"] .remote-panel__device-icon {
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--ok);
+}
+.remote-panel__device-text {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.remote-panel__device-text strong {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remote-panel__device-text span {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.remote-panel__device[data-connected="true"] .remote-panel__device-text span {
+  color: var(--ok);
+}
+.remote-panel__device-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.remote-panel__device-push {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--bg-4);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+.remote-panel__device-push > svg { color: var(--text-3); }
+
+.remote-panel__revoked { margin-top: 2px; }
+.remote-panel__revoked > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 2px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--text-3);
+}
+.remote-panel__revoked > summary::-webkit-details-marker { display: none; }
+.remote-panel__revoked > summary:hover { color: var(--text-2); }
+.remote-panel__revoked[open] > summary { color: var(--text-2); }
+.remote-panel__revoked .remote-panel__devices { margin-top: 8px; }
+
+/* ── Error ─────────────────────────────────────────────────────────────── */
+.remote-panel__error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  padding: 11px 14px;
+  border-radius: var(--r-card);
+  border-left: 2px solid var(--danger);
+  background: var(--bg-2);
+  color: var(--danger);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+.remote-panel__error > svg { flex: 0 0 auto; }
+.remote-panel__error:hover { background: var(--bg-3); }
+
+@media (max-width: 720px) {
+  .remote-panel__head { flex-direction: row; }
+  .remote-panel__pairing { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+  .remote-panel__pairing-copy { align-items: center; }
 }

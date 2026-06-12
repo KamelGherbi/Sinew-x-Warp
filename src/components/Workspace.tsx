@@ -24,6 +24,7 @@ import { EditorPane } from "./EditorPane";
 import { SettingsPane } from "./SettingsPane";
 import { SessionSwitcher } from "./SessionSwitcher";
 import { TerminalPanel } from "./TerminalPanel";
+import { RemotePanel } from "./RemotePanel";
 import { SearchPane } from "./SearchPane";
 import { ChatPane, type ExternalDropFeed } from "./chat/ChatPane";
 import { SinewMark } from "./SinewMark";
@@ -43,6 +44,7 @@ import type {
   PlanArtifact,
   PlanControl,
   PlanImplementationOptions,
+  RemoteStatus,
   SavedConversation,
   ServiceTier,
   ThinkingLevel,
@@ -516,7 +518,10 @@ export function Workspace({
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activeTabIndex, setActiveTabIndex] = useState<number>(-1);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [remoteOpen, setRemoteOpen] = useState(false);
+  const [remoteActive, setRemoteActive] = useState(false);
   const [settingsActive, setSettingsActive] = useState(false);
+  const [remoteStatus, setRemoteStatus] = useState<RemoteStatus | null>(null);
   const [fileTreeRefreshToken, setFileTreeRefreshToken] = useState(0);
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
   const [pendingRootCreate, setPendingRootCreate] = useState<
@@ -688,6 +693,7 @@ export function Workspace({
       if (existing >= 0) {
         setActiveTabIndex(existing);
         setSettingsActive(false);
+        setRemoteActive(false);
         queueReveal();
         return;
       }
@@ -706,11 +712,13 @@ export function Workspace({
           if (existingIndex >= 0) {
             setActiveTabIndex(existingIndex);
             setSettingsActive(false);
+            setRemoteActive(false);
             return prev;
           }
           const next = [...prev, newTab];
           setActiveTabIndex(next.length - 1);
           setSettingsActive(false);
+          setRemoteActive(false);
           return next;
         });
         queueReveal();
@@ -724,6 +732,7 @@ export function Workspace({
   const activateFileTab = useCallback((index: number) => {
     setActiveTabIndex(index);
     setSettingsActive(false);
+    setRemoteActive(false);
   }, []);
 
   const openSettings = useCallback((section?: "providers") => {
@@ -732,6 +741,7 @@ export function Workspace({
       setSettingsActive(false);
       return;
     }
+    setRemoteActive(false);
     setSettingsOpen(true);
     setSettingsActive(true);
     setLayoutVisibility((current) => ({ ...current, editor: true }));
@@ -786,6 +796,8 @@ export function Workspace({
       );
       if (existing >= 0) {
         setActiveTabIndex(existing);
+        setSettingsActive(false);
+        setRemoteActive(false);
         queueReveal();
         return;
       }
@@ -804,10 +816,14 @@ export function Workspace({
           );
           if (existingIndex >= 0) {
             setActiveTabIndex(existingIndex);
+            setSettingsActive(false);
+            setRemoteActive(false);
             return prev;
           }
           const next = [...prev, newTab];
           setActiveTabIndex(next.length - 1);
+          setSettingsActive(false);
+          setRemoteActive(false);
           return next;
         });
         queueReveal();
@@ -892,13 +908,22 @@ export function Workspace({
     });
   }, []);
 
+  const closeRemote = useCallback(() => {
+    setRemoteOpen(false);
+    setRemoteActive(false);
+  }, []);
+
   const closeActiveEditorTab = useCallback(() => {
+    if (remoteActive) {
+      closeRemote();
+      return;
+    }
     if (settingsActive) {
       closeSettings();
       return;
     }
     if (activeTabIndex >= 0) closeTab(activeTabIndex);
-  }, [activeTabIndex, closeSettings, closeTab, settingsActive]);
+  }, [activeTabIndex, closeRemote, closeSettings, closeTab, remoteActive, settingsActive]);
 
   const handleTreeEntryRenamed = useCallback(
     (oldRelativePath: string, entry: WorkspaceEntry) => {
@@ -1171,6 +1196,53 @@ export function Workspace({
       if (unlisten) unlisten();
     };
   }, []);
+
+  // Phone-driven changes (Sinew Remote): the backend emits
+  // "conversations-changed" whenever a paired device creates or deletes a
+  // conversation in this workspace. Mirror it here live so the desktop
+  // never needs a workspace reopen to catch up.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | null = null;
+    (async () => {
+      const u = await listen<{ workspaceId: string }>(
+        "conversations-changed",
+        (event) => {
+          if (event.payload.workspaceId !== workspacePathRef.current) return;
+          void (async () => {
+            try {
+              const workspaceAtRequest = workspacePathRef.current;
+              const summaries =
+                await api.listConversations(workspaceAtRequest);
+              if (workspacePathRef.current !== workspaceAtRequest) return;
+              setConversations(summaries);
+              const activeId = activeConvIdRef.current;
+              if (summaries.some((summary) => summary.id === activeId)) {
+                return;
+              }
+              // The conversation we were viewing was deleted remotely.
+              if (summaries.length > 0) {
+                await selectConversation(summaries[0].id);
+              } else {
+                await createConversation();
+              }
+            } catch (err) {
+              console.error(err);
+            }
+          })();
+        },
+      );
+      if (cancelled) {
+        u();
+      } else {
+        unlisten = u;
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [selectConversation, createConversation]);
 
   const subscribeEvents = useCallback(
     (
@@ -1952,6 +2024,8 @@ export function Workspace({
       setActiveTabIndex(-1);
       setSettingsOpen(false);
       setSettingsActive(false);
+      setRemoteOpen(false);
+      setRemoteActive(false);
       setFileSearchOpen(false);
       setPendingRootCreate(null);
       setEditorRevealTarget(null);
@@ -2065,7 +2139,7 @@ export function Workspace({
   );
 
   const activeFilePath =
-    !settingsActive && activeTabIndex >= 0 && tabs[activeTabIndex]
+    !settingsActive && !remoteActive && activeTabIndex >= 0 && tabs[activeTabIndex]
       ? tabs[activeTabIndex].relativePath
       : null;
   const terminalVisible = terminalAvailable && terminalOpen;
@@ -2382,6 +2456,22 @@ export function Workspace({
           data-tauri-drag-region
           style={titlebarActionsStyle}
         >
+          <button
+            className="titlebar__btn titlebar__btn--remote"
+            data-on={remoteActive || remoteStatus?.enabled ? "true" : "false"}
+            onClick={() => {
+              setRemoteOpen(true);
+              setRemoteActive(true);
+              setSettingsActive(false);
+            }}
+            title="Remote access"
+          >
+            <Icon icon="solar:smartphone-2-linear" width={12} height={12} />
+            Remote
+            {remoteStatus?.devices.some((device) => device.connected) && (
+              <span className="titlebar__btn-dot" aria-hidden />
+            )}
+          </button>
           <button
             className="titlebar__btn"
             data-on={terminalVisible ? "true" : "false"}
@@ -2728,8 +2818,24 @@ export function Workspace({
               settingsOpen={settingsOpen}
               settingsActive={settingsActive}
               settingsView={<SettingsPane workspacePath={workspacePath} />}
+              remoteOpen={remoteOpen}
+              remoteActive={remoteActive}
+              remoteView={
+                <RemotePanel
+                  initialStatus={remoteStatus}
+                  onStatusChange={setRemoteStatus}
+                />
+              }
+              onRemoteActivate={() => {
+                setRemoteActive(true);
+                setSettingsActive(false);
+              }}
+              onRemoteClose={closeRemote}
               revealTarget={editorRevealTarget}
-              onSettingsActivate={() => setSettingsActive(true)}
+              onSettingsActivate={() => {
+                setRemoteActive(false);
+                setSettingsActive(true);
+              }}
               onSettingsClose={closeSettings}
             />
           </div>

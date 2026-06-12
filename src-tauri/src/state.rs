@@ -42,6 +42,7 @@ pub(super) struct DesktopState {
     pub(super) active_turns: Arc<Mutex<HashMap<String, TurnCancel>>>,
     pub(super) active_turn_details: Arc<StdMutex<HashMap<String, ActiveTurnRecord>>>,
     pub(super) team_runtime: Arc<RwLock<TeamRuntime>>,
+    pub(super) remote: RemoteRuntime,
     pub(super) file_watchers: Arc<Mutex<HashMap<String, RecommendedWatcher>>>,
     pub(super) terminal_sessions: Arc<Mutex<HashMap<String, TerminalProcess>>>,
     pub(super) openai_login: Arc<Mutex<Option<OpenAiLoginAttempt>>>,

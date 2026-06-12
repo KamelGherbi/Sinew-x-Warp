@@ -2,6 +2,37 @@ Code map:
 - L'agent doit garder à jour cette carte simple des fichiers à chaque création, suppression, renommage, déplacement ou modification.
 
 .
+├── .gitignore
+├── AGENTS.md
+├── Cargo.lock
+├── Cargo.toml
+├── EDIT_FILE_HARNESS_COMPARISON.md
+├── FEATURES.md
+├── GLOB_HARNESS_COMPARISON.md
+├── GREP_HARNESS_COMPARISON.md
+├── index.html
+├── LICENSE
+├── package-lock.json
+├── package.json
+├── README.md
+├── remote
+│   ├── README.md
+│   ├── server.mjs
+│   ├── package.json
+│   └── public
+│       ├── app.js
+│       ├── index.html
+│       ├── manifest.webmanifest
+│       ├── styles.css
+│       ├── sw.js
+│       └── icons
+│           └── icon.svg
+├── test-stop.md
+├── scripts
+│   └── prepare-sidecars.mjs
+├── tsconfig.json
+├── tsconfig.node.json
+├── vite.config.ts
 ├── .github
 │   ├── assets
 │   │   ├── architecture.png
@@ -276,6 +307,7 @@ Code map:
 │   │   ├── models.rs
 │   │   ├── platform.rs
 │   │   ├── providers.rs
+│   │   ├── remote.rs
 │   │   ├── state.rs
 │   │   ├── swarm.rs
 │   │   ├── terminal.rs

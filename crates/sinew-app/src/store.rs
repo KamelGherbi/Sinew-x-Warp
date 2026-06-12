@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use futures_util::StreamExt;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sinew_core::{
     ChatMessage, Effort, ModelRef, Part, Provider, ProviderRequest, Role, ServiceTier, StreamEvent,
@@ -1114,6 +1114,42 @@ impl AppStore {
             params![conversation_id, history_index as i64],
         )
         .context("unable to delete turn checkpoints")?;
+        Ok(())
+    }
+
+    pub fn load_json_setting<T>(&self, key: &str) -> Result<Option<T>>
+    where
+        T: DeserializeOwned,
+    {
+        let conn = self.connection()?;
+        let stored = conn
+            .query_row(
+                "select value_json from app_settings where key = ?1",
+                params![key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .with_context(|| format!("unable to read setting `{key}`"))?;
+        stored
+            .map(|json| serde_json::from_str::<T>(&json))
+            .transpose()
+            .with_context(|| format!("unable to decode setting `{key}`"))
+    }
+
+    pub fn save_json_setting<T>(&self, key: &str, value: &T) -> Result<()>
+    where
+        T: Serialize,
+    {
+        let conn = self.connection()?;
+        conn.execute(
+            "insert into app_settings (key, value_json, updated_at_ms)
+             values (?1, ?2, ?3)
+             on conflict(key) do update set
+                value_json = excluded.value_json,
+                updated_at_ms = excluded.updated_at_ms",
+            params![key, serde_json::to_string(value)?, now_ms()],
+        )
+        .with_context(|| format!("unable to save setting `{key}`"))?;
         Ok(())
     }
 
