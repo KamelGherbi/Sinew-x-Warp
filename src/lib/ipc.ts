@@ -9,6 +9,8 @@ import type {
   ClipboardImageAttachment,
   ContextEstimate,
   ConversationSummary,
+  DictationSettings,
+  DictationStatus,
   RewriteWorkspaceRestoreCheck,
   FileDocument,
   GitCreateWorktreeOutput,
@@ -445,6 +447,17 @@ export const api = {
   },
   getOpenRouterProviderStatus() {
     return invoke<OpenRouterProviderStatus>("get_openrouter_provider_status");
+  },
+  getDictationStatus() {
+    return invoke<DictationStatus>("get_dictation_status");
+  },
+  saveDictationSettings(settings: DictationSettings) {
+    return invoke<DictationStatus>("save_dictation_settings", {
+      input: settings,
+    });
+  },
+  openDictationPermissionSettings() {
+    return invoke<void>("open_dictation_permission_settings");
   },
   validateOpenRouterApiKey(apiKey: string) {
     return invoke<OpenRouterProviderStatus>("validate_openrouter_api_key", {

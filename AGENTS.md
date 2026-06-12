@@ -269,6 +269,7 @@ Code map:
 │   ├── src
 │   │   ├── context.rs
 │   │   ├── conversations.rs
+│   │   ├── dictation.rs
 │   │   ├── git.rs
 │   │   ├── lib.rs
 │   │   ├── main.rs
@@ -286,6 +287,7 @@ Code map:
 │   │   └── workspace.rs
 │   ├── build.rs
 │   ├── Cargo.toml
+│   ├── Info.plist
 │   ├── tauri.conf.json
 │   ├── tauri.sidecars.conf.json
 │   └── tauri.windows.conf.json

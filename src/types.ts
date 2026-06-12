@@ -288,6 +288,40 @@ export type OpenRouterModel = {
 
 export type OpenRouterModelSearchResult = Omit<OpenRouterModel, "addedAtMs">;
 
+export type DictationEngine = "openai" | "google" | "openrouter" | "mistral";
+
+export type DictationSettings = {
+  enabled: boolean;
+  engine: DictationEngine;
+  openaiApiKey: string;
+  openaiModel: string;
+  mistralApiKey: string;
+  mistralModel: string;
+  googleModel: string;
+  openrouterModel: string;
+  language: string;
+  soundFeedback: boolean;
+};
+
+export type DictationStatus = {
+  settings: DictationSettings;
+  supported: boolean;
+  accessibilityTrusted: boolean;
+  googleConnected: boolean;
+  openrouterConnected: boolean;
+};
+
+export type DictationUiState = "idle" | "recording" | "transcribing" | "error";
+
+export type DictationStatePayload = {
+  state: DictationUiState;
+  message?: string | null;
+};
+
+export type DictationTextPayload = {
+  text: string;
+};
+
 export type McpEnvVar = {
   key: string;
   value: string;

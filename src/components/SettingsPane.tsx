@@ -58,6 +58,9 @@ import {
 } from "../lib/modelVisibility";
 import type {
   AnthropicProviderStatus,
+  DictationEngine,
+  DictationSettings,
+  DictationStatus,
   GoogleProviderStatus,
   ImageProvider,
   InstalledSkill,
@@ -102,6 +105,7 @@ type Section =
   | "about"
   | "appearance"
   | "providers"
+  | "dictation"
   | "tools"
   | "mcp"
   | "skills"
@@ -1205,6 +1209,21 @@ export function SettingsPane({ workspacePath }: Props) {
         <button
           type="button"
           className="settings-pane__nav-item"
+          data-active={section === "dictation" ? "true" : "false"}
+          onClick={() => setSection("dictation")}
+        >
+          <Icon
+            icon="solar:microphone-3-linear"
+            width={15}
+            height={15}
+            className="settings-pane__nav-icon"
+          />
+          <span className="settings-pane__nav-label">Dictation</span>
+          <span className="settings-pane__nav-count" />
+        </button>
+        <button
+          type="button"
+          className="settings-pane__nav-item"
           data-active={section === "tools" ? "true" : "false"}
           onClick={() => setSection("tools")}
         >
@@ -1310,6 +1329,8 @@ export function SettingsPane({ workspacePath }: Props) {
             onOpenRouterModelsChange={setOpenRouterModels}
             onOpenRouterChanged={handleOpenRouterChanged}
           />
+        ) : section === "dictation" ? (
+          <DictationSection onNavigate={setSection} />
         ) : section === "tools" ? (
           <ToolsSection
             settings={toolSettings}
@@ -3069,6 +3090,630 @@ function ToolSettingsItem({
         rows={rows}
         onChange={(event) => onUpdate({ description: event.target.value })}
       />
+    </div>
+  );
+}
+
+// ---- Dictation section -------------------------------------------------
+
+const DICTATION_ENGINES: { value: DictationEngine; label: string }[] = [
+  { value: "openai", label: "OpenAI" },
+  { value: "mistral", label: "Mistral" },
+  { value: "google", label: "Google" },
+  { value: "openrouter", label: "OpenRouter" },
+];
+
+const DICTATION_OPENAI_MODELS: { value: string; label: string }[] = [
+  { value: "gpt-4o-mini-transcribe", label: "GPT-4o mini transcribe — fast & cheap" },
+  { value: "gpt-4o-transcribe", label: "GPT-4o transcribe — best quality" },
+  { value: "whisper-1", label: "Whisper v1 — classic" },
+];
+
+const DICTATION_MISTRAL_MODELS: { value: string; label: string }[] = [
+  { value: "voxtral-mini-latest", label: "Voxtral Mini latest — recommended" },
+  { value: "voxtral-mini-2507", label: "Voxtral Mini 2507 — pinned" },
+];
+
+function formatDictationError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string" && err.trim()) return err;
+  return "Something went wrong.";
+}
+
+function DictationSection({
+  onNavigate,
+}: {
+  onNavigate: (section: Section) => void;
+}) {
+  const [status, setStatus] = useState<DictationStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  const [rechecking, setRechecking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // `settingsRef` mirrors the latest edited settings so rapid edits compose
+  // correctly without waiting for a re-render. `pendingRef`/`timerRef` drive a
+  // small debounce so free-text fields don't fire an IPC call per keystroke.
+  const settingsRef = useRef<DictationSettings | null>(null);
+  const pendingRef = useRef<DictationSettings | null>(null);
+  const timerRef = useRef<number | null>(null);
+
+  // After a save we only adopt the server-side *flags* (supported / permission /
+  // connection state). The settings themselves stay client-driven so an echoed
+  // response can never clobber text the user is still typing.
+  const applyFlags = useCallback((next: DictationStatus) => {
+    setStatus((prev) =>
+      prev
+        ? {
+            ...prev,
+            supported: next.supported,
+            accessibilityTrusted: next.accessibilityTrusted,
+            googleConnected: next.googleConnected,
+            openrouterConnected: next.openrouterConnected,
+          }
+        : next,
+    );
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const next = await api.getDictationStatus();
+        if (cancelled) return;
+        setStatus(next);
+        settingsRef.current = next.settings;
+        setError(null);
+      } catch (err) {
+        if (!cancelled) setError(formatDictationError(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persist = useCallback(
+    async (next: DictationSettings) => {
+      setSaving(true);
+      try {
+        const refreshed = await api.saveDictationSettings(next);
+        applyFlags(refreshed);
+        setError(null);
+        setJustSaved(true);
+      } catch (err) {
+        setError(formatDictationError(err));
+      } finally {
+        setSaving(false);
+      }
+    },
+    [applyFlags],
+  );
+
+  useEffect(() => {
+    if (!justSaved) return;
+    const id = window.setTimeout(() => setJustSaved(false), 1600);
+    return () => window.clearTimeout(id);
+  }, [justSaved]);
+
+  // Flush a still-pending debounced save when navigating away from the section.
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+        if (pendingRef.current) void api.saveDictationSettings(pendingRef.current);
+        pendingRef.current = null;
+      }
+    };
+  }, []);
+
+  const update = useCallback(
+    (patch: Partial<DictationSettings>, immediate = false) => {
+      const base = settingsRef.current;
+      if (!base) return;
+      const next = { ...base, ...patch };
+      settingsRef.current = next;
+      setStatus((prev) => (prev ? { ...prev, settings: next } : prev));
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      if (immediate) {
+        pendingRef.current = null;
+        void persist(next);
+      } else {
+        pendingRef.current = next;
+        timerRef.current = window.setTimeout(() => {
+          timerRef.current = null;
+          const pending = pendingRef.current;
+          pendingRef.current = null;
+          if (pending) void persist(pending);
+        }, 350);
+      }
+    },
+    [persist],
+  );
+
+  const recheck = useCallback(async () => {
+    setRechecking(true);
+    try {
+      const refreshed = await api.getDictationStatus();
+      applyFlags(refreshed);
+      setError(null);
+    } catch (err) {
+      setError(formatDictationError(err));
+    } finally {
+      setRechecking(false);
+    }
+  }, [applyFlags]);
+
+  const openAccessibility = useCallback(async () => {
+    try {
+      await api.openDictationPermissionSettings();
+    } catch (err) {
+      setError(formatDictationError(err));
+    }
+  }, []);
+
+  const settings = status?.settings ?? null;
+  const supported = status?.supported ?? false;
+
+  return (
+    <>
+      <header className="settings-pane__header">
+        <div className="settings-pane__header-text">
+          <h1 className="settings-pane__title">Dictation</h1>
+          <p className="settings-pane__subtitle">
+            {loading
+              ? "Loading…"
+              : !supported
+                ? "Available on macOS only"
+                : settings?.enabled
+                  ? "Push-to-talk voice input is on"
+                  : "Push-to-talk voice input"}
+          </p>
+        </div>
+        <div className="settings-pane__actions">
+          {saving ? (
+            <span className="settings-pane__status" data-tone="pending">
+              Saving…
+            </span>
+          ) : justSaved ? (
+            <span className="settings-pane__status" data-tone="ok">
+              Saved
+            </span>
+          ) : null}
+        </div>
+      </header>
+
+      <div className="settings-pane__body settings-pane__body--tools">
+        <div className="settings-pane__tool-settings-list">
+          {error && (
+            <div
+              className="settings-pane__dictation-notice"
+              data-tone="warn"
+              role="alert"
+            >
+              <span className="settings-pane__dictation-notice-icon" aria-hidden>
+                <Icon icon="solar:danger-triangle-linear" width={15} height={15} />
+              </span>
+              <span>{error}</span>
+            </div>
+          )}
+
+          {loading || !status || !settings ? (
+            <div className="settings-pane__empty settings-pane__empty--main">
+              <Icon icon="solar:microphone-3-linear" width={22} height={22} />
+              <span className="settings-pane__empty-title">
+                {loading ? "Loading…" : "Dictation unavailable"}
+              </span>
+            </div>
+          ) : !supported ? (
+            <div className="settings-pane__dictation-notice" role="note">
+              <span className="settings-pane__dictation-notice-icon" aria-hidden>
+                <Icon icon="solar:info-circle-linear" width={15} height={15} />
+              </span>
+              <span>
+                Voice dictation is currently available on macOS only. It relies on a
+                system-wide push-to-talk shortcut that isn&apos;t supported on this
+                platform yet.
+              </span>
+            </div>
+          ) : (
+            <>
+              <section className="settings-pane__tool-group">
+                <SwitchControl
+                  label="Enable dictation"
+                  description="Hold the Fn key anywhere to dictate with push-to-talk."
+                  checked={settings.enabled}
+                  onChange={(enabled) => update({ enabled }, true)}
+                />
+              </section>
+
+              <section className="settings-pane__tool-group">
+                <div className="settings-pane__tool-group-head">
+                  <h2>How it works</h2>
+                </div>
+                <ol className="settings-pane__dictation-steps">
+                  <li>
+                    <span aria-hidden>1</span>
+                    <span>
+                      Hold <kbd>Fn</kbd> anywhere on macOS and start speaking.
+                    </span>
+                  </li>
+                  <li>
+                    <span aria-hidden>2</span>
+                    <span>
+                      Release <kbd>Fn</kbd> — the audio is transcribed by your chosen
+                      engine.
+                    </span>
+                  </li>
+                  <li>
+                    <span aria-hidden>3</span>
+                    <span>
+                      When a Sinew window is focused the text lands in the chat
+                      composer; otherwise it&apos;s pasted into the active app at the
+                      cursor.
+                    </span>
+                  </li>
+                  <li>
+                    <span aria-hidden>4</span>
+                    <span>
+                      The transcript is always copied to your clipboard, and sound
+                      feedback plays on start and success (you can turn it off below).
+                    </span>
+                  </li>
+                </ol>
+              </section>
+
+              <section className="settings-pane__tool-group">
+                <div className="settings-pane__tool-group-head">
+                  <h2>Transcription engine</h2>
+                </div>
+                <div
+                  className="settings-pane__segmented"
+                  role="group"
+                  aria-label="Transcription engine"
+                >
+                  {DICTATION_ENGINES.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className="settings-pane__segment"
+                      data-active={settings.engine === opt.value ? "true" : "false"}
+                      onClick={() => update({ engine: opt.value }, true)}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                {settings.engine === "openai" && (
+                  <>
+                    <ApiKeyField
+                      label="OpenAI API key"
+                      value={settings.openaiApiKey}
+                      placeholder="sk-..."
+                      onChange={(openaiApiKey) => update({ openaiApiKey })}
+                    />
+                    {settings.openaiApiKey.trim() === "" && (
+                      <p
+                        className="settings-pane__dictation-hint"
+                        data-tone="warn"
+                      >
+                        A dedicated OpenAI platform API key is required — the ChatGPT
+                        subscription login can&apos;t transcribe audio.
+                      </p>
+                    )}
+                    <label className="settings-pane__field">
+                      <span>Model</span>
+                      <span className="settings-pane__inline-select">
+                        <select
+                          value={settings.openaiModel}
+                          aria-label="OpenAI transcription model"
+                          onChange={(event) =>
+                            update({ openaiModel: event.target.value }, true)
+                          }
+                        >
+                          {DICTATION_OPENAI_MODELS.map((model) => (
+                            <option key={model.value} value={model.value}>
+                              {model.label}
+                            </option>
+                          ))}
+                          {!DICTATION_OPENAI_MODELS.some(
+                            (model) => model.value === settings.openaiModel,
+                          ) && (
+                            <option value={settings.openaiModel}>
+                              {settings.openaiModel}
+                            </option>
+                          )}
+                        </select>
+                        <Icon
+                          icon="solar:alt-arrow-down-linear"
+                          width={13}
+                          height={13}
+                          aria-hidden
+                        />
+                      </span>
+                    </label>
+                  </>
+                )}
+
+                {settings.engine === "mistral" && (
+                  <>
+                    <ApiKeyField
+                      label="Mistral API key"
+                      value={settings.mistralApiKey}
+                      placeholder="Mistral API key"
+                      onChange={(mistralApiKey) => update({ mistralApiKey })}
+                    />
+                    {settings.mistralApiKey.trim() === "" && (
+                      <p
+                        className="settings-pane__dictation-hint"
+                        data-tone="warn"
+                      >
+                        A Mistral API key is required for Voxtral transcription.
+                        This is stored only in Dictation settings and does not
+                        affect your model provider authentication.
+                      </p>
+                    )}
+                    <label className="settings-pane__field">
+                      <span>Model</span>
+                      <span className="settings-pane__inline-select">
+                        <select
+                          value={settings.mistralModel}
+                          aria-label="Mistral transcription model"
+                          onChange={(event) =>
+                            update({ mistralModel: event.target.value }, true)
+                          }
+                        >
+                          {DICTATION_MISTRAL_MODELS.map((model) => (
+                            <option key={model.value} value={model.value}>
+                              {model.label}
+                            </option>
+                          ))}
+                          {!DICTATION_MISTRAL_MODELS.some(
+                            (model) => model.value === settings.mistralModel,
+                          ) && (
+                            <option value={settings.mistralModel}>
+                              {settings.mistralModel}
+                            </option>
+                          )}
+                        </select>
+                        <Icon
+                          icon="solar:alt-arrow-down-linear"
+                          width={13}
+                          height={13}
+                          aria-hidden
+                        />
+                      </span>
+                    </label>
+                  </>
+                )}
+
+                {settings.engine === "google" && (
+                  <>
+                    <DictationConnectionRow
+                      connected={status.googleConnected}
+                      connectedLabel="Google provider connected"
+                      disconnectedLabel="Google provider not connected"
+                      connectedHint="Dictation reuses your connected Google subscription — no extra key needed."
+                      onOpenProviders={() => onNavigate("providers")}
+                    />
+                    <label className="settings-pane__field">
+                      <span>Model</span>
+                      <input
+                        type="text"
+                        value={settings.googleModel}
+                        placeholder="gemini-3-flash"
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(event) =>
+                          update({ googleModel: event.target.value })
+                        }
+                      />
+                    </label>
+                  </>
+                )}
+
+                {settings.engine === "openrouter" && (
+                  <>
+                    <DictationConnectionRow
+                      connected={status.openrouterConnected}
+                      connectedLabel="OpenRouter connected"
+                      disconnectedLabel="OpenRouter not connected"
+                      connectedHint="Dictation reuses your connected OpenRouter API key. Choose a model that accepts audio input."
+                      onOpenProviders={() => onNavigate("providers")}
+                    />
+                    <label className="settings-pane__field">
+                      <span>Model</span>
+                      <input
+                        type="text"
+                        value={settings.openrouterModel}
+                        placeholder="google/gemini-2.5-flash"
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(event) =>
+                          update({ openrouterModel: event.target.value })
+                        }
+                      />
+                    </label>
+                  </>
+                )}
+              </section>
+
+              <section className="settings-pane__tool-group">
+                <div className="settings-pane__tool-group-head">
+                  <h2>Options</h2>
+                </div>
+                <label className="settings-pane__field">
+                  <span>Language hint</span>
+                  <input
+                    type="text"
+                    value={settings.language}
+                    placeholder="Auto-detect (e.g. en, fr)"
+                    spellCheck={false}
+                    autoComplete="off"
+                    maxLength={8}
+                    onChange={(event) => update({ language: event.target.value })}
+                  />
+                </label>
+                <SwitchControl
+                  label="Sound feedback"
+                  description="Play a short sound when recording starts and when a transcript is ready."
+                  checked={settings.soundFeedback}
+                  onChange={(soundFeedback) => update({ soundFeedback }, true)}
+                />
+              </section>
+
+              <section className="settings-pane__tool-group">
+                <div className="settings-pane__tool-group-head">
+                  <h2>Permissions</h2>
+                </div>
+
+                <div className="settings-pane__tool-config" data-on="true">
+                  <div className="settings-pane__tool-config-head">
+                    <span className="settings-pane__tool-config-name">
+                      <span className="settings-pane__tool-config-glyph" aria-hidden>
+                        <Icon
+                          icon="solar:shield-warning-linear"
+                          width={15}
+                          height={15}
+                        />
+                      </span>
+                      <span className="settings-pane__tool-config-label">
+                        Accessibility access
+                      </span>
+                    </span>
+                    <div className="settings-pane__tool-config-actions">
+                      <span
+                        className="settings-pane__chip"
+                        data-tone={status.accessibilityTrusted ? "ok" : "error"}
+                      >
+                        <span className="settings-pane__chip-dot" />
+                        {status.accessibilityTrusted ? "Granted" : "Not granted"}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="settings-pane__tool-config-help">
+                    Required for the global Fn key monitor and for pasting transcripts
+                    into other apps via synthetic Cmd+V. After granting access, fully
+                    restart Sinew so the Fn monitor starts delivering key events.
+                  </p>
+                  <div className="settings-pane__dictation-actions">
+                    {!status.accessibilityTrusted && (
+                      <button
+                        type="button"
+                        className="settings-pane__btn"
+                        data-primary="true"
+                        onClick={() => void openAccessibility()}
+                      >
+                        <Icon icon="solar:settings-linear" width={13} height={13} />
+                        <span>Open System Settings</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="settings-pane__btn"
+                      onClick={() => void recheck()}
+                      disabled={rechecking}
+                    >
+                      <Icon
+                        icon="solar:refresh-linear"
+                        width={13}
+                        height={13}
+                        className={
+                          rechecking ? "settings-pane__spin" : undefined
+                        }
+                      />
+                      <span>{rechecking ? "Rechecking…" : "Recheck"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="settings-pane__tool-config" data-on="true">
+                  <div className="settings-pane__tool-config-head">
+                    <span className="settings-pane__tool-config-name">
+                      <span className="settings-pane__tool-config-glyph" aria-hidden>
+                        <Icon
+                          icon="solar:microphone-3-linear"
+                          width={15}
+                          height={15}
+                        />
+                      </span>
+                      <span className="settings-pane__tool-config-label">
+                        Microphone
+                      </span>
+                    </span>
+                    <div className="settings-pane__tool-config-actions">
+                      <span className="settings-pane__chip" data-tone="off">
+                        <span className="settings-pane__chip-dot" />
+                        Asked on first use
+                      </span>
+                    </div>
+                  </div>
+                  <p className="settings-pane__tool-config-help">
+                    macOS prompts for microphone access the first time you record. You
+                    can manage it later in System Settings → Privacy &amp; Security →
+                    Microphone.
+                  </p>
+                </div>
+              </section>
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function DictationConnectionRow({
+  connected,
+  connectedLabel,
+  disconnectedLabel,
+  connectedHint,
+  onOpenProviders,
+}: {
+  connected: boolean;
+  connectedLabel: string;
+  disconnectedLabel: string;
+  connectedHint: string;
+  onOpenProviders: () => void;
+}) {
+  return (
+    <div
+      className="settings-pane__tool-toggle-row"
+      data-disabled={connected ? "false" : "true"}
+    >
+      <div className="settings-pane__tool-toggle-text">
+        <span className="settings-pane__tool-toggle-label">
+          {connected ? connectedLabel : disconnectedLabel}
+        </span>
+        <span className="settings-pane__tool-toggle-hint">
+          {connected
+            ? connectedHint
+            : "Connect it in Settings → Providers to use this engine."}
+        </span>
+      </div>
+      {connected ? (
+        <span className="settings-pane__chip" data-tone="ok">
+          <span className="settings-pane__chip-dot" />
+          Connected
+        </span>
+      ) : (
+        <button
+          type="button"
+          className="settings-pane__btn"
+          onClick={onOpenProviders}
+        >
+          <Icon icon="solar:cloud-check-linear" width={13} height={13} />
+          <span>Providers</span>
+        </button>
+      )}
     </div>
   );
 }

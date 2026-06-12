@@ -13,6 +13,7 @@ import {
 import { Icon } from "@iconify/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { open } from "@tauri-apps/plugin-dialog";
 import { AIThinkingBlock } from "./AIThinkingBlock";
 import { FileChangeBlock } from "./FileChangeBlock";
@@ -63,6 +64,8 @@ import type {
   AttachmentInput,
   ChatMessage,
   ContextEstimate,
+  DictationStatePayload,
+  DictationTextPayload,
   FileChange,
   GoalWorkflowState,
   MessageVisibility,
@@ -547,6 +550,9 @@ export function ChatPane({
   const thinkingRef = useRef<HTMLDivElement | null>(null);
   const modeRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
+  // Transient push-to-talk dictation indicator shown around the composer.
+  const [dictationState, setDictationState] =
+    useState<DictationStatePayload | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [composerHeight, setComposerHeight] = useState<number | null>(null);
   const composerResizeStateRef = useRef<
@@ -1200,6 +1206,103 @@ export function ChatPane({
       if (unlisten) unlisten();
     };
   }, [invalidateMentionFiles, workspacePath]);
+
+  // Voice dictation: the backend emits `dictation-text` to the focused window
+  // only (window-scoped emit_to), so listen on the current webview window.
+  // Insert the transcript at the caret position of the visible composer
+  // (hidden panes ignore the event).
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | null = null;
+
+    (async () => {
+      try {
+        const nextUnlisten = await getCurrentWebviewWindow().listen<DictationTextPayload>(
+          "dictation-text",
+          (event) => {
+            const incoming = event.payload?.text?.trim();
+            if (!incoming) return;
+            const ta = textareaRef.current;
+            if (!ta || ta.offsetParent === null) return;
+            const start = ta.selectionStart ?? ta.value.length;
+            const end = ta.selectionEnd ?? start;
+            const before = ta.value.slice(0, start);
+            const after = ta.value.slice(end);
+            const glueBefore =
+              before.length > 0 && !/\s$/.test(before) ? " " : "";
+            const glueAfter = after.length > 0 && !/^\s/.test(after) ? " " : "";
+            const caret = before.length + glueBefore.length + incoming.length;
+            setText(before + glueBefore + incoming + glueAfter + after);
+            window.requestAnimationFrame(() => {
+              const el = textareaRef.current;
+              if (!el) return;
+              el.focus();
+              el.setSelectionRange(caret, caret);
+            });
+          },
+        );
+        if (cancelled) {
+          nextUnlisten();
+        } else {
+          unlisten = nextUnlisten;
+        }
+      } catch (err) {
+        if (!cancelled) console.warn("dictation listener unavailable", err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  // Voice dictation lifecycle: show a transient indicator around the composer
+  // while the user is recording (push-to-talk) or the transcript is processing.
+  // Errors surface briefly and then auto-dismiss.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | null = null;
+
+    (async () => {
+      try {
+        const nextUnlisten = await listen<DictationStatePayload>(
+          "dictation-state",
+          (event) => {
+            const payload = event.payload;
+            if (!payload) return;
+            if (payload.state === "idle") {
+              setDictationState(null);
+            } else {
+              setDictationState({
+                state: payload.state,
+                message: payload.message ?? null,
+              });
+            }
+          },
+        );
+        if (cancelled) {
+          nextUnlisten();
+        } else {
+          unlisten = nextUnlisten;
+        }
+      } catch (err) {
+        if (!cancelled) console.warn("dictation state listener unavailable", err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  // Keep an error on screen long enough to read, then clear it.
+  useEffect(() => {
+    if (dictationState?.state !== "error") return;
+    const id = window.setTimeout(() => setDictationState(null), 5000);
+    return () => window.clearTimeout(id);
+  }, [dictationState]);
 
   useEffect(() => {
     const refreshIfVisible = () => {
@@ -3477,6 +3580,39 @@ export function ChatPane({
             className={`composer${selectorLocked ? " composer--selector-locked" : ""}`}
             ref={composerRef}
           >
+            {dictationState && (
+              <div
+                className="composer__dictation"
+                data-state={dictationState.state}
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                <span className="composer__dictation-icon" aria-hidden>
+                  {dictationState.state === "recording" ? (
+                    <Icon icon="solar:microphone-3-bold" width={13} height={13} />
+                  ) : dictationState.state === "transcribing" ? (
+                    <span className="composer__dictation-spinner" />
+                  ) : (
+                    <Icon icon="solar:danger-triangle-bold" width={13} height={13} />
+                  )}
+                </span>
+                <span
+                  className="composer__dictation-label"
+                  title={
+                    dictationState.state === "error"
+                      ? dictationState.message ?? undefined
+                      : undefined
+                  }
+                >
+                  {dictationState.state === "recording"
+                    ? "Listening…"
+                    : dictationState.state === "transcribing"
+                      ? "Transcribing…"
+                      : dictationState.message?.trim() || "Dictation failed"}
+                </span>
+              </div>
+            )}
             {showRewindChangesPreview && rewriteState && (
               <RewindChangesPreview
                 changes={rewindFileChanges}

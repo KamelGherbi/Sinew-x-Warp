@@ -98,6 +98,7 @@ use tokio::{
 
 mod context;
 mod conversations;
+mod dictation;
 mod git;
 mod models;
 mod platform;
@@ -222,6 +223,8 @@ pub fn run() {
                 install_macos_dock_menu(app.handle());
             }
 
+            dictation::init(app.handle());
+
             #[cfg(not(target_os = "windows"))]
             {
                 install_desktop_menu(app.handle())?;
@@ -253,6 +256,7 @@ pub fn run() {
             }
         })
         .manage(state)
+        .manage(dictation::DictationState::new())
         .manage(updater::UpdaterState::new())
         .invoke_handler(tauri::generate_handler![
             workspace::open_workspace,
@@ -302,6 +306,9 @@ pub fn run() {
             conversations::list_sub_agent_settings,
             conversations::save_sub_agent_settings,
             providers::list_configured_model_providers,
+            dictation::get_dictation_status,
+            dictation::save_dictation_settings,
+            dictation::open_dictation_permission_settings,
             providers::get_openai_provider_status,
             providers::start_openai_oauth_login,
             providers::cancel_openai_oauth_login,
