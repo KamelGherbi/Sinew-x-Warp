@@ -25,6 +25,8 @@ pub struct SubAgentConfig {
     pub description: String,
     pub prompt: String,
     pub model: ModelRef,
+    #[serde(default)]
+    pub hide_for_same_model: bool,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 }
@@ -83,6 +85,7 @@ pub fn aiblueprint_default_sub_agents() -> Vec<SubAgentConfig> {
             description: description.to_string(),
             prompt: prompt.trim().to_string(),
             model: model(),
+            hide_for_same_model: false,
             enabled: true,
         }
     }
@@ -192,6 +195,7 @@ pub struct SubAgentTool {
     workspace_root: PathBuf,
     system_prompt: String,
     providers: HashMap<String, Arc<dyn Provider>>,
+    caller_model: ModelRef,
     settings: SubAgentSettings,
     mcp_settings: McpSettings,
     tool_settings: ToolSettings,
@@ -206,6 +210,7 @@ impl SubAgentTool {
         workspace_root: PathBuf,
         system_prompt: String,
         providers: HashMap<String, Arc<dyn Provider>>,
+        caller_model: ModelRef,
         settings: SubAgentSettings,
         mcp_settings: McpSettings,
         tool_settings: ToolSettings,
@@ -218,6 +223,7 @@ impl SubAgentTool {
             workspace_root,
             system_prompt,
             providers,
+            caller_model,
             settings: settings.normalized(),
             mcp_settings,
             tool_settings,
@@ -232,7 +238,7 @@ impl SubAgentTool {
         self.settings
             .agents
             .iter()
-            .filter(|agent| agent.enabled)
+            .filter(|agent| self.agent_is_visible(agent))
             .map(|agent| ToolDescriptor {
                 name: tool_name_for_agent(agent),
                 description: descriptor_description(agent),
@@ -255,8 +261,12 @@ impl SubAgentTool {
         self.settings
             .agents
             .iter()
-            .find(|agent| agent.enabled && tool_name_for_agent(agent) == name)
+            .find(|agent| self.agent_is_visible(agent) && tool_name_for_agent(agent) == name)
             .map(|agent| format!("Sub-agent · {}", agent.name))
+    }
+
+    fn agent_is_visible(&self, agent: &SubAgentConfig) -> bool {
+        agent.enabled && !agent.hidden_for_model(&self.caller_model)
     }
 
     pub async fn run(
@@ -271,7 +281,7 @@ impl SubAgentTool {
             .settings
             .agents
             .iter()
-            .find(|agent| agent.enabled && tool_name_for_agent(agent) == name)?
+            .find(|agent| self.agent_is_visible(agent) && tool_name_for_agent(agent) == name)?
             .clone();
 
         Some(
@@ -404,6 +414,12 @@ impl SubAgentTool {
     }
 }
 
+impl SubAgentConfig {
+    pub fn hidden_for_model(&self, caller_model: &ModelRef) -> bool {
+        self.hide_for_same_model && same_model_identity(&self.model, caller_model)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct SubAgentInput {
     prompt: String,
@@ -506,6 +522,10 @@ fn escape_attr(value: &str) -> String {
         .replace('"', "&quot;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+fn same_model_identity(left: &ModelRef, right: &ModelRef) -> bool {
+    left.provider.trim() == right.provider.trim() && left.name.trim() == right.name.trim()
 }
 
 fn default_enabled() -> bool {

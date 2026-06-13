@@ -118,7 +118,7 @@ impl Provider for KimiProvider {
         if model.provider != "kimi" {
             return None;
         }
-        model_info::capabilities(model)
+        Some(model_info::capabilities(model))
     }
 
     async fn estimate_tokens(&self, request: ProviderRequest) -> Result<TokenEstimate> {
@@ -142,10 +142,9 @@ impl Provider for KimiProvider {
             )));
         }
 
-        let caps = model_info::capabilities(&request.model).ok_or_else(|| {
-            AppError::Unsupported(format!("unsupported kimi model {}", request.model.name))
-        })?;
-        let (reasoning_effort, thinking) = effort_to_thinking(request.effective_effort());
+        let caps = model_info::capabilities(&request.model);
+        let (reasoning_effort, thinking) =
+            effort_to_thinking(&request.model.name, request.effective_effort());
         let body = wire::ChatCompletionsRequest {
             model: &request.model.name,
             messages: to_wire_messages(&request)?,
@@ -171,8 +170,13 @@ impl Provider for KimiProvider {
 }
 
 fn effort_to_thinking(
+    model_id: &str,
     effort: Option<Effort>,
 ) -> (Option<&'static str>, Option<wire::ThinkingConfig>) {
+    if model_info::is_thinking_only(model_id) {
+        return (Some("high"), Some(wire::ThinkingConfig { kind: "enabled" }));
+    }
+
     match effort.unwrap_or(Effort::High) {
         Effort::None => (None, Some(wire::ThinkingConfig { kind: "disabled" })),
         Effort::Low => (Some("low"), Some(wire::ThinkingConfig { kind: "enabled" })),
