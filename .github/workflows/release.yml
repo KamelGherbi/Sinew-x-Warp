@@ -7,7 +7,7 @@ name: Release
 # Trigger: push a semver tag like `v0.2.0`. The workflow creates a *draft*
 # release first; once all platforms upload their bundles, you can review and
 # publish it from the GitHub UI. The in-app updater fetches
-# `https://github.com/Paseru/sinew/releases/latest/download/latest.json`,
+# `https://github.com/KamelGherbi/Sinew-x-Warp/releases/latest/download/latest.json`,
 # so the release must be marked "latest" (which is the default once published).
 #
 # Required repository secrets:
