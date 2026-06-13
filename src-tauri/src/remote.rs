@@ -649,6 +649,13 @@ impl RemoteRuntime {
     ) -> Result<Value> {
         let state = app.state::<DesktopState>();
         let (current_workspace, mut open_workspaces) = self.workspace_view().await;
+        for active_workspace in active_turn_workspaces(&state) {
+            if !open_workspaces.iter().any(|id| id == &active_workspace) {
+                open_workspaces.push(active_workspace);
+            }
+        }
+        open_workspaces.sort();
+        open_workspaces.dedup();
         let workspace_path = match envelope.workspace.as_deref() {
             Some(requested) if !requested.is_empty() => {
                 if open_workspaces.iter().any(|id| id == requested)
@@ -1590,6 +1597,19 @@ enum RemotePcPayload {
         active_turns: Vec<ActiveTurnSummary>,
     },
     DeviceRevoked,
+}
+
+fn active_turn_workspaces(state: &DesktopState) -> Vec<String> {
+    let Ok(active) = state.active_turn_details.lock() else {
+        return Vec::new();
+    };
+    let mut workspaces = active
+        .values()
+        .map(|record| record.workspace_id.clone())
+        .collect::<Vec<_>>();
+    workspaces.sort();
+    workspaces.dedup();
+    workspaces
 }
 
 fn remote_bootstrap(state: &DesktopState, workspace_path: &str) -> Result<WorkspaceBootstrap> {
