@@ -7,6 +7,7 @@
     "dev": "vite",
     "remote": "node remote/server.mjs",
     "build": "tsc --noEmit && vite build",
+    "build:desktop": "node scripts/tauri-cli.mjs build",
     "prepare-sidecars": "node scripts/prepare-sidecars.mjs",
     "preview": "vite preview",
     "tauri": "node scripts/tauri-cli.mjs"

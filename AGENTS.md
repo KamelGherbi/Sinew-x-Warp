@@ -19,6 +19,7 @@ Code map:
 │   ├── README.md
 │   ├── server.mjs
 │   ├── package.json
+│   ├── railway.json
 │   └── public
 │       ├── app.js
 │       ├── index.html
@@ -29,7 +30,8 @@ Code map:
 │           └── icon.svg
 ├── test-stop.md
 ├── scripts
-│   └── prepare-sidecars.mjs
+│   ├── prepare-sidecars.mjs
+│   └── tauri-cli.mjs
 ├── tsconfig.json
 ├── tsconfig.node.json
 ├── vite.config.ts
@@ -191,6 +193,7 @@ Code map:
 │   │   ├── FileTree.tsx
 │   │   ├── GitPanel.tsx
 │   │   ├── ImageContextMenu.tsx
+│   │   ├── RemotePanel.tsx
 │   │   ├── SearchPane.tsx
 │   │   ├── SessionSwitcher.tsx
 │   │   ├── SettingsPane.tsx
@@ -282,6 +285,7 @@ Code map:
 │   │   ├── 128x128@2x.png
 │   │   ├── 32x32.png
 │   │   ├── 64x64.png
+│   │   ├── dictation-history-template.png
 │   │   ├── icon.icns
 │   │   ├── icon.ico
 │   │   ├── icon.png

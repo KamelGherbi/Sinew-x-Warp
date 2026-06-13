@@ -112,7 +112,7 @@ export function RemotePanel({ initialStatus = null, onStatusChange }: Props) {
           <div className="remote-panel__head-text">
             <h1>Remote</h1>
             <p>
-              Drive Sinew chat from a paired phone over remote.sinew-ide.com.
+              Drive Sinew chat from a paired phone over the configured Remote relay.
               Messages stay end-to-end encrypted between this PC and your devices.
             </p>
           </div>

@@ -206,7 +206,9 @@ pub(super) struct ActiveTurnReplayInput {
 #[serde(rename_all = "camelCase")]
 pub(super) struct ActiveTurnSummary {
     pub(super) workspace_id: String,
+    pub(super) workspace_name: String,
     pub(super) conversation_id: String,
+    pub(super) conversation_title: Option<String>,
     pub(super) started_at_ms: i64,
     pub(super) latest_sequence: u64,
 }

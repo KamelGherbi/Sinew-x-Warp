@@ -23,6 +23,7 @@ const args = process.argv.slice(2);
 // sign this", then fails (`security import` / "Missing comment in secret key").
 // Drop blank signing vars so unsigned builds succeed when no secrets are set.
 sanitizeSigningEnv();
+setDefaultRemoteRelayEnv();
 
 if (shouldUseMacosDmgWorkaround(args)) {
   await buildMacosAppThenDmg(args);
@@ -156,6 +157,13 @@ async function detachStaleSinewDmgs(...dirs) {
   } finally {
     await fs.rm(plistPath, { force: true }).catch(() => undefined);
   }
+}
+
+function setDefaultRemoteRelayEnv() {
+  // Fork default: keep Rust source generic, but make local/GitHub builds of this
+  // fork point at the dedicated Railway Remote relay unless explicitly overridden.
+  if ((process.env.SINEW_REMOTE_RELAY_URL ?? "").trim()) return;
+  process.env.SINEW_REMOTE_RELAY_URL = "https://sinew-x-warp-production.up.railway.app";
 }
 
 function run(args) {

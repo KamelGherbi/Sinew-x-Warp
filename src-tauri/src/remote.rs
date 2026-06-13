@@ -13,7 +13,8 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 const REMOTE_SETTINGS_KEY: &str = "remote_settings_v1";
 pub(super) const REMOTE_STATUS_EVENT_NAME: &str = "remote-status-changed";
 pub(super) const CONVERSATIONS_CHANGED_EVENT_NAME: &str = "conversations-changed";
-const DEFAULT_RELAY_WS_URL: &str = "wss://remote.sinew-ide.com/ws";
+const OFFICIAL_RELAY_WS_URL: &str = "wss://remote.sinew-ide.com/ws";
+const BUILD_RELAY_WS_URL: Option<&str> = option_env!("SINEW_REMOTE_RELAY_URL");
 const PAIRING_CODE_TTL_MS: i64 = 5 * 60 * 1000;
 const PAIRING_MAX_ATTEMPTS: u32 = 5;
 const PAIRING_LOCK_MS: i64 = 60 * 1000;
@@ -41,7 +42,7 @@ impl Default for RemoteSettings {
         Self {
             enabled: false,
             pc_id: random_id("pc", 18),
-            relay_url: DEFAULT_RELAY_WS_URL.to_string(),
+            relay_url: default_relay_ws_url(),
             devices: Vec::new(),
         }
     }
@@ -1127,7 +1128,16 @@ impl RemoteSettings {
         if self.pc_id.trim().is_empty() {
             self.pc_id = random_id("pc", 18);
         }
-        self.relay_url = normalize_relay_url(&self.relay_url);
+        let relay_url = normalize_relay_url(&self.relay_url);
+        let default_relay_url = default_relay_ws_url();
+        let official_relay_url =
+            normalize_relay_url_with_fallback(OFFICIAL_RELAY_WS_URL, OFFICIAL_RELAY_WS_URL);
+        self.relay_url =
+            if relay_url == official_relay_url && default_relay_url != official_relay_url {
+                default_relay_url
+            } else {
+                relay_url
+            };
         self.devices.retain(|device| {
             !device.id.trim().is_empty()
                 && !device.secret_b64.trim().is_empty()
@@ -1790,10 +1800,22 @@ fn sanitize_device_name(value: &str) -> String {
     }
 }
 
+fn default_relay_ws_url() -> String {
+    normalize_relay_url_with_fallback(
+        BUILD_RELAY_WS_URL.unwrap_or_default(),
+        OFFICIAL_RELAY_WS_URL,
+    )
+}
+
 fn normalize_relay_url(value: &str) -> String {
+    let default_relay_url = default_relay_ws_url();
+    normalize_relay_url_with_fallback(value, &default_relay_url)
+}
+
+fn normalize_relay_url_with_fallback(value: &str, fallback: &str) -> String {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return DEFAULT_RELAY_WS_URL.to_string();
+        return fallback.to_string();
     }
     if trimmed.starts_with("ws://") || trimmed.starts_with("wss://") {
         return trimmed.to_string();

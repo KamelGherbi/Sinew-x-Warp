@@ -711,7 +711,9 @@ export type SequencedAgentEvent = {
 
 export type ActiveTurnSummary = {
   workspaceId: string;
+  workspaceName?: string;
   conversationId: string;
+  conversationTitle?: string | null;
   startedAtMs: number;
   latestSequence: number;
 };

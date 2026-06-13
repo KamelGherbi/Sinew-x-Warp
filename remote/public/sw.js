@@ -1,4 +1,4 @@
-const CACHE_NAME = "sinew-remote-v2";
+const CACHE_NAME = "sinew-remote-v3";
 const APP_SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/manifest.webmanifest", "/icons/icon.svg"];
 
 self.addEventListener("install", (event) => {

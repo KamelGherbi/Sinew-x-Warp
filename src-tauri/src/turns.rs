@@ -821,7 +821,7 @@ pub(super) async fn list_active_turns(
         .active_turn_details
         .lock()
         .map_err(|_| "active turn state is unavailable".to_string())?;
-    Ok(active_turn_summaries_from_map(&active))
+    Ok(active_turn_summaries_from_map(&active, Some(&state.store)))
 }
 
 #[tauri::command]
@@ -1006,12 +1006,15 @@ pub(super) async fn emit_active_turns_changed(
     app: &AppHandle,
     active_turn_details: &Arc<StdMutex<HashMap<String, ActiveTurnRecord>>>,
 ) {
+    let store = app
+        .try_state::<DesktopState>()
+        .map(|state| state.store.clone());
     let active_turns = {
         let active = match active_turn_details.lock() {
             Ok(active) => active,
             Err(_) => return,
         };
-        active_turn_summaries_from_map(&active)
+        active_turn_summaries_from_map(&active, store.as_ref())
     };
     let _ = app.emit(
         ACTIVE_TURNS_EVENT_NAME,
@@ -1024,12 +1027,19 @@ pub(super) async fn emit_active_turns_changed(
 
 pub(super) fn active_turn_summaries_from_map(
     active: &HashMap<String, ActiveTurnRecord>,
+    store: Option<&AppStore>,
 ) -> Vec<ActiveTurnSummary> {
     let mut summaries = active
         .values()
         .map(|record| ActiveTurnSummary {
             workspace_id: record.workspace_id.clone(),
+            workspace_name: active_turn_workspace_name(&record.workspace_id),
             conversation_id: record.conversation_id.clone(),
+            conversation_title: active_turn_conversation_title(
+                store,
+                &record.workspace_id,
+                &record.conversation_id,
+            ),
             started_at_ms: record.started_at_ms,
             latest_sequence: record.latest_sequence(),
         })
@@ -1041,6 +1051,29 @@ pub(super) fn active_turn_summaries_from_map(
             .then_with(|| a.conversation_id.cmp(&b.conversation_id))
     });
     summaries
+}
+
+fn active_turn_workspace_name(workspace_id: &str) -> String {
+    Path::new(workspace_id)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| workspace_id.to_string())
+}
+
+fn active_turn_conversation_title(
+    store: Option<&AppStore>,
+    workspace_id: &str,
+    conversation_id: &str,
+) -> Option<String> {
+    store
+        .and_then(|store| {
+            store
+                .conversation_title(workspace_id, conversation_id)
+                .ok()
+                .flatten()
+        })
+        .filter(|title| !title.trim().is_empty())
 }
 
 fn remember_active_turn_event(

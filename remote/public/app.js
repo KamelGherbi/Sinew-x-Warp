@@ -243,6 +243,13 @@ function relativeDate(ms) {
   return new Date(ms).toLocaleDateString();
 }
 
+function workspaceLabelFromId(id) {
+  const raw = String(id || "").trim();
+  if (!raw) return "Workspace";
+  const segments = raw.split(/[\\/]+/).filter(Boolean);
+  return segments[segments.length - 1] || raw;
+}
+
 const TOOL_TONES = [
   [/^(read|glob|list)/i, "read"],
   [/^(grep|search|web)/i, "grep"],
@@ -749,6 +756,21 @@ function App() {
     return client.command(command, workspaceOverride || workspacePathRef.current || undefined);
   }, []);
 
+  // Applies a bootstrap response to the selected-workspace state. Shared by the
+  // initial sync, the workspace switcher, and opening a live conversation that
+  // lives in another workspace. Returns the resolved workspace path.
+  const applyWorkspaceBootstrap = useCallback((data, fallbackPath) => {
+    const bootstrap = data.bootstrap || data;
+    const resolvedPath = data.workspacePath || bootstrap.workspace?.path || fallbackPath || null;
+    workspacePathRef.current = resolvedPath;
+    setWorkspacePath(resolvedPath);
+    setWorkspaces(Array.isArray(data.workspaces) ? data.workspaces : []);
+    setWorkspace(bootstrap.workspace || null);
+    setConversations(bootstrap.conversations || []);
+    if (Array.isArray(data.activeTurns)) setActiveTurns(data.activeTurns);
+    return resolvedPath;
+  }, []);
+
   const canReachPc = Boolean(status.pcReachable);
 
   /* — sync — */
@@ -785,13 +807,7 @@ function App() {
     try {
       const data = await client.command({ type: "bootstrap" });
       const bootstrap = data.bootstrap || data;
-      const resolvedPath = data.workspacePath || bootstrap.workspace?.path || null;
-      workspacePathRef.current = resolvedPath;
-      setWorkspacePath(resolvedPath);
-      setWorkspaces(Array.isArray(data.workspaces) ? data.workspaces : []);
-      setWorkspace(bootstrap.workspace || null);
-      setConversations(bootstrap.conversations || []);
-      if (Array.isArray(data.activeTurns)) setActiveTurns(data.activeTurns);
+      applyWorkspaceBootstrap(data);
       syncedRef.current = true;
       setSynced(true);
       if (deepLinkConversation && (bootstrap.conversations || []).some((c) => c.id === deepLinkConversation)) {
@@ -824,7 +840,21 @@ function App() {
             next.set(payload.conversation_id, [...events, payload.event]);
             return next;
           });
-          if (payload.event?.type === "turn_finished") void handleTurnFinished(payload.conversation_id, payload.workspace_id);
+          const event = payload.event;
+          if (event?.type === "conversation_title_updated") {
+            const nextTitle = (event.title || "").trim();
+            if (nextTitle) {
+              const convId = payload.conversation_id;
+              setActiveTurns((current) => current.map((turn) => (
+                turn.conversationId === convId ? { ...turn, conversationTitle: nextTitle } : turn
+              )));
+              setConversations((current) => current.map((item) => (
+                item.id === convId ? { ...item, title: nextTitle } : item
+              )));
+              setConv((current) => (current && current.id === convId ? { ...current, title: nextTitle } : current));
+            }
+          }
+          if (event?.type === "turn_finished") void handleTurnFinished(payload.conversation_id, payload.workspace_id);
         }
         if (payload.type === "active_turns_changed") setActiveTurns(payload.active_turns || []);
         if (payload.type === "device_revoked") {
@@ -877,6 +907,13 @@ function App() {
     return [...blocksFromHistory(conv.history || []), ...blocksFromLiveEvents(events)];
   }, [conv, events]);
   const isStreaming = Boolean(conv && activeTurns.some((turn) => turn.conversationId === conv.id));
+  // Live turns running in other open workspaces. Conversations active in the
+  // current workspace already appear in the list below with a streaming pulse,
+  // so they are excluded here to avoid listing them twice.
+  const liveElsewhere = useMemo(
+    () => activeTurns.filter((turn) => turn.workspaceId && turn.workspaceId !== workspacePath),
+    [activeTurns, workspacePath],
+  );
   const showInstallHint = Boolean(session && !installHintDismissed && !isStandaloneDisplay());
   const currentModel = conv ? conv.modeModelSettings?.[mode] || conv.model : null;
   const modelEntries = useMemo(
@@ -916,14 +953,7 @@ function App() {
     if (!path || path === workspacePathRef.current || !statusRef.current.pcReachable) return;
     try {
       const data = await clientRef.current.command({ type: "bootstrap" }, path);
-      const bootstrap = data.bootstrap || data;
-      const resolvedPath = data.workspacePath || path;
-      workspacePathRef.current = resolvedPath;
-      setWorkspacePath(resolvedPath);
-      setWorkspaces(Array.isArray(data.workspaces) ? data.workspaces : []);
-      setWorkspace(bootstrap.workspace || null);
-      setConversations(bootstrap.conversations || []);
-      if (Array.isArray(data.activeTurns)) setActiveTurns(data.activeTurns);
+      applyWorkspaceBootstrap(data, path);
       setConv(null);
       setView("list");
     } catch (err) {
@@ -931,10 +961,11 @@ function App() {
     }
   }
 
-  async function openConversationById(id) {
+  async function openConversationById(id, workspaceOverride) {
     if (!statusRef.current.pcReachable) return;
+    const ws = workspaceOverride || workspacePathRef.current || undefined;
     try {
-      const conversation = await cmd({ type: "load_conversation", conversation_id: id });
+      const conversation = await cmd({ type: "load_conversation", conversation_id: id }, ws);
       setConv(conversation);
       setMode(modeFromConversation(conversation));
       setView("chat");
@@ -942,7 +973,7 @@ function App() {
       const turnActive = activeTurnsRef.current.some((item) => item.conversationId === id);
       if (turnActive) {
         try {
-          const replay = await cmd({ type: "replay_active_turn_events", conversation_id: id, after_sequence: 0 });
+          const replay = await cmd({ type: "replay_active_turn_events", conversation_id: id, after_sequence: 0 }, ws);
           setLiveEvents((current) => {
             const next = new Map(current);
             next.set(id, (replay.events || []).map((entry) => entry.event));
@@ -959,6 +990,24 @@ function App() {
           return next;
         });
       }
+    } catch (err) {
+      setError(`Open conversation failed: ${String(err.message || err)}`);
+    }
+  }
+
+  // Opens a conversation that is live in another workspace: switch the selected
+  // workspace state to its owner first, then load + replay against that same
+  // workspace so the replay (which is workspace-scoped) returns its events.
+  async function openLiveConversation(turn) {
+    if (!turn?.conversationId || !statusRef.current.pcReachable) return;
+    const targetWorkspace = turn.workspaceId || workspacePathRef.current;
+    try {
+      let resolvedPath = workspacePathRef.current;
+      if (targetWorkspace && targetWorkspace !== workspacePathRef.current) {
+        const data = await clientRef.current.command({ type: "bootstrap" }, targetWorkspace);
+        resolvedPath = applyWorkspaceBootstrap(data, targetWorkspace);
+      }
+      await openConversationById(turn.conversationId, resolvedPath);
     } catch (err) {
       setError(`Open conversation failed: ${String(err.message || err)}`);
     }
@@ -1266,6 +1315,24 @@ function App() {
     ),
     h("div", { className: "convs" },
       h("button", { className: "conv-new", disabled: !canReachPc, onClick: createConversation }, "+ New conversation"),
+      liveElsewhere.length > 0 && h("div", { className: "live-elsewhere" },
+        h("div", { className: "live-elsewhere__kicker" }, "Live in other workspaces"),
+        liveElsewhere.map((turn) => h("div", {
+          key: `${turn.workspaceId}:${turn.conversationId}`,
+          className: "conv-row conv-row--live",
+          role: "button",
+          tabIndex: 0,
+          onClick: () => void openLiveConversation(turn),
+          onKeyDown: (e) => { if (e.key === "Enter") void openLiveConversation(turn); },
+        },
+          h("span", { className: "conv-row__pulse" }),
+          h("span", { className: "conv-row__stack" },
+            h("span", { className: "conv-row__title" }, turn.conversationTitle || "Active conversation"),
+            h("span", { className: "conv-row__ws" }, turn.workspaceName || workspaceLabelFromId(turn.workspaceId)),
+          ),
+          h("span", { className: "conv-row__meta conv-row__meta--live" }, "streaming"),
+        )),
+      ),
       conversations.length === 0 && h("div", { className: "convs__empty" }, canReachPc ? "No conversations yet." : "Waiting for the PC…"),
       conversations.map((item) => {
         const streaming = activeTurns.some((turn) => turn.conversationId === item.id);
