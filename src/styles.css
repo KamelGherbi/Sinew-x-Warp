@@ -979,10 +979,19 @@ textarea {
   display: flex;
   align-items: center;
   padding: 0;
-  background: var(--bg-1);
+  /* Premium shell: faint top sheen fading into the bar color for depth,   */
+  /* plus a hairline bottom border that crisply separates it from panels.  */
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-2) 55%, var(--bg-1)) 0%,
+      var(--bg-1) 100%
+    );
+  border-bottom: 1px solid var(--line);
   -webkit-app-region: drag;
   user-select: none;
   position: relative;
+  z-index: 5;
 }
 .titlebar button {
   -webkit-app-region: no-drag;
@@ -1005,9 +1014,12 @@ textarea {
   justify-content: center;
   width: 18px;
   height: 18px;
-  border-radius: 5px;
-  background: var(--bg-3);
-  color: var(--text-1);
+  border-radius: 6px;
+  background: linear-gradient(180deg, var(--bg-4), var(--bg-2));
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: var(--text-0);
 }
 .titlebar__brand-name {
   font-family: var(--font-display);
@@ -1021,36 +1033,73 @@ textarea {
   top: 50%;
   transform: translateY(-50%);
   display: flex;
-  gap: 4px;
+  gap: 5px;
   align-items: center;
   justify-content: center;
 }
+.titlebar__sep {
+  width: 1px;
+  height: 15px;
+  flex: 0 0 auto;
+  margin: 0 2px;
+  background: var(--divider);
+}
+/* Toolbar pills — refined island buttons: faint fill, hairline border, a   */
+/* dimmer glyph than the label, and an accent (signal) tinted active state. */
 .titlebar__btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 7px;
+  gap: 5px;
+  height: 23px;
+  padding: 0 9px;
   border-radius: var(--r-med);
   color: var(--text-1);
-  background: var(--bg-3);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--line);
   font-family: var(--font-ui);
   font-size: var(--fs-xs);
   font-weight: 500;
   letter-spacing: -0.005em;
-  transition: color 150ms ease, background 150ms ease;
+  transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+.titlebar__btn > svg {
+  color: var(--text-2);
+  transition: color 150ms ease;
 }
 .titlebar__btn:hover {
-  color: var(--hover-shift);
+  color: var(--text-0);
+  background: var(--bg-3);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.titlebar__btn:hover > svg {
+  color: var(--text-1);
+}
+.titlebar__btn:active {
   background: var(--bg-4);
+}
+.titlebar__btn:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--line-strong),
+    0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 .titlebar__btn[data-on="true"] {
   color: var(--text-0);
-  background: var(--bg-5);
+  background: var(--accent-2-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-2) 32%, transparent);
+}
+.titlebar__btn[data-on="true"] > svg {
+  color: var(--accent-2);
 }
 .titlebar__btn[data-on="true"]:hover {
-  color: #ffffff;
-  background: #2a2c33;
+  color: var(--text-0);
+  background: color-mix(in srgb, var(--accent-2) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-2) 46%, transparent);
+}
+.titlebar__btn[data-on="true"]:focus-visible {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-2) 46%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 .titlebar__settings-right {
   position: absolute;
@@ -1414,11 +1463,22 @@ textarea {
 .gutter-h::after {
   content: "";
   position: absolute;
-  background: transparent;
-  transition: background 150ms ease;
+  /* Faint always-on seam keeps panel separation crisp; brightens to the */
+  /* accent on hover and glows while actively dragging.                  */
+  background: var(--line-soft);
+  transition: background 150ms ease, box-shadow 150ms ease;
 }
 .gutter::after  { inset: 0; width: 1px; }
 .gutter-h::after { inset: 0; height: 1px; }
+.gutter:hover::after,
+.gutter-h:hover::after {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.gutter[data-dragging="true"]::after,
+.gutter-h[data-dragging="true"]::after {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft), 0 0 8px var(--accent-glow);
+}
 
 /* ------------------------------------------------------------------
    Sidebar
@@ -3650,6 +3710,18 @@ textarea {
 .tab[data-active="true"] {
   color: var(--text-0);
   background: var(--bg-0);
+}
+/* Active document gets a crisp accent cap up top, echoing the resize-gutter */
+/* accent so "focus" reads the same everywhere in the shell.                 */
+.tab[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0.9;
 }
 .tab__icon {
   width: 14px;
@@ -9471,20 +9543,17 @@ textarea {
   50%      { opacity: 1; }
 }
 
-/* Local subscription-usage estimate bar (sits left of the compaction button) */
-.usage-meter {
-  --usage-color: var(--accent);
-  --usage-fill: 0%;
+/* Token usage + estimated cost indicator (sits left of the compaction button) */
+.token-usage {
   position: relative;
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  /* Keep the bar visually detached from the compaction button. */
   margin-right: 4px;
   padding-right: 11px;
   outline: none;
 }
-.usage-meter::after {
+.token-usage::after {
   content: "";
   position: absolute;
   right: 0;
@@ -9494,44 +9563,48 @@ textarea {
   transform: translateY(-50%);
   background: var(--divider);
 }
-.usage-meter[data-status="warn"] {
-  --usage-color: #f4c95d;
-}
-.usage-meter[data-status="danger"] {
-  --usage-color: var(--danger);
-}
-.usage-meter__track {
-  display: block;
-  width: 46px;
-  height: 6px;
+.token-usage__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 7px;
   border-radius: 999px;
   background: var(--bg-4);
-  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  transition: color 160ms ease, background 160ms ease;
 }
-.usage-meter__fill {
-  display: block;
-  height: 100%;
-  width: var(--usage-fill);
-  border-radius: inherit;
-  background: var(--usage-color);
-  transition: width 220ms ease, background 200ms ease;
+.token-usage:hover .token-usage__chip,
+.token-usage:focus-visible .token-usage__chip,
+.token-usage:focus-within .token-usage__chip {
+  color: var(--text-0);
 }
-.usage-meter:focus-visible .usage-meter__track {
-  outline: 2px solid var(--usage-color);
+.token-usage[data-empty="true"] .token-usage__chip {
+  color: var(--text-3);
+}
+.token-usage:focus-visible .token-usage__chip {
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.usage-meter__popover {
+.token-usage__chip-value {
+  font-weight: 600;
+}
+.token-usage__popover {
   position: absolute;
   right: 0;
   bottom: calc(100% + 8px);
-  min-width: 264px;
+  min-width: 272px;
   max-width: 340px;
+  max-height: 60vh;
+  overflow-y: auto;
   padding: 0;
   border: 0;
   border-radius: var(--r-card);
   background: var(--bg-2);
   box-shadow: var(--shadow-focus);
-  overflow: hidden;
   color: var(--text-1);
   font-family: var(--font-ui);
   font-size: var(--fs-xs);
@@ -9543,96 +9616,542 @@ textarea {
   transition: opacity 140ms ease, transform 140ms ease;
   z-index: 40;
 }
-.usage-meter:hover .usage-meter__popover,
-.usage-meter:focus-visible .usage-meter__popover,
-.usage-meter:focus-within .usage-meter__popover {
+.token-usage:hover .token-usage__popover,
+.token-usage:focus-visible .token-usage__popover,
+.token-usage:focus-within .token-usage__popover {
   opacity: 1;
   transform: translateY(0);
+  pointer-events: auto;
 }
-.usage-meter__head {
+.token-usage__scope {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px 10px;
+}
+.token-usage__scope + .token-usage__scope {
+  border-top: 1px solid var(--divider);
+}
+.token-usage__scope-head {
+  display: flex;
+  align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 11px 4px;
 }
-.usage-meter__title {
+.token-usage__scope-title {
   color: var(--text-0);
   font-size: var(--fs-xs);
   font-weight: 600;
 }
-.usage-meter__provider {
-  color: var(--text-2);
-  font-size: var(--fs-xs);
+.token-usage__scope-cost {
+  color: var(--text-1);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
-.usage-meter__model {
-  padding: 0 11px 8px;
+.token-usage__scope-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   color: var(--text-3);
-  font-size: var(--fs-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
-.usage-meter__rows {
+.token-usage__scope-empty {
+  color: var(--text-3);
+}
+.token-usage__providers {
   display: grid;
-  gap: 10px;
-  padding: 9px 11px 10px;
+  gap: 8px;
+  margin-top: 2px;
+  padding: 8px 9px 9px;
+  border-radius: var(--r-card);
   background: #0d0e11;
 }
-.usage-window {
-  --usage-window-color: var(--accent);
+.token-usage__provider {
   display: grid;
-  gap: 5px;
+  gap: 4px;
 }
-.usage-window[data-status="warn"] {
-  --usage-window-color: #f4c95d;
-}
-.usage-window[data-status="danger"] {
-  --usage-window-color: var(--danger);
-}
-.usage-window__head {
+.token-usage__provider-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
 }
-.usage-window__label {
+.token-usage__provider-name {
   color: var(--text-1);
   font-weight: 600;
 }
-.usage-window__meta {
+.token-usage__provider-meta {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.token-usage__models {
+  display: grid;
+  gap: 3px;
+  padding-left: 8px;
+  border-left: 1px solid var(--divider);
+}
+.token-usage__model {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  color: var(--text-3);
+}
+.token-usage__model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.token-usage__model-meta {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.token-usage__note {
+  padding: 7px 11px 8px;
+  border-top: 1px solid var(--divider);
+  color: var(--text-3);
+  background: var(--bg-2);
+  font-size: var(--fs-xs);
+}
+.token-usage__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 11px 11px;
+}
+.token-usage__empty-title {
+  color: var(--text-1);
+  font-weight: 600;
+}
+.token-usage__empty-sub {
+  color: var(--text-3);
+}
+
+/* ── Shell status widget (titlebar usage + provider status overview) ──── */
+/* CodexBar-like affordance: a compact pill in the titlebar that opens a    */
+/* popover with token usage + estimated cost and per-provider connection    */
+/* status. The popover drops downward since the widget lives at the top.    */
+.status-widget {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  -webkit-app-region: no-drag;
+}
+.status-widget__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 23px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--r-med);
+  color: var(--text-1);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+.status-widget__trigger:hover {
+  color: var(--text-0);
+  background: var(--bg-3);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.status-widget__trigger:active {
+  background: var(--bg-4);
+}
+.status-widget__trigger:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--line-strong),
+    0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.status-widget__glyph {
+  color: var(--text-2);
+  transition: color 150ms ease;
+}
+.status-widget__trigger:hover .status-widget__glyph {
+  color: var(--text-1);
+}
+.status-widget__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 0%, transparent);
+}
+.status-widget__dot[data-tone="ok"] {
+  background: var(--ok);
+}
+.status-widget__dot[data-tone="error"] {
+  background: var(--danger);
+}
+.status-widget__dot[data-tone="pending"] {
+  background: var(--accent-2);
+}
+.status-widget__dot[data-tone="off"] {
+  background: var(--text-3);
+}
+.status-widget__value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.status-widget__value-unit {
+  color: var(--text-2);
+  font-weight: 500;
+}
+.status-widget__cost {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.status-widget__trigger:hover .status-widget__cost {
+  color: var(--text-1);
+}
+
+/* Popover — hidden until hover/focus, mirrors the token-usage popover but   */
+/* anchored below the titlebar.                                             */
+.status-widget__popover {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  min-width: 288px;
+  max-width: 340px;
+  max-height: min(70vh, 540px);
+  overflow-y: auto;
+  border-radius: var(--r-card);
+  background: var(--bg-2);
+  box-shadow: var(--shadow-focus);
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  opacity: 0;
+  transform: translateY(-2px);
+  pointer-events: none;
+  transition: opacity 140ms ease, transform 140ms ease;
+  z-index: 40;
+}
+/* Transparent bridge across the 8px gap so the popover stays open while the */
+/* pointer travels from the trigger down into it.                           */
+.status-widget__popover::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  height: 8px;
+}
+.status-widget:hover .status-widget__popover,
+.status-widget:focus-within .status-widget__popover {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.status-widget__section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px 11px;
+}
+.status-widget__section + .status-widget__section {
+  border-top: 1px solid var(--divider);
+}
+.status-widget__section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.status-widget__section-title {
+  color: var(--text-0);
+  font-weight: 600;
+}
+.status-widget__section-meta {
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-.usage-window__track {
-  display: block;
-  width: 100%;
-  height: 5px;
-  border-radius: 999px;
-  background: var(--bg-4);
+.status-widget__scopes {
+  display: grid;
+  gap: 8px;
+}
+.status-widget__scope {
+  display: grid;
+  gap: 3px;
+  padding: 7px 9px 8px;
+  border-radius: var(--r-card);
+  background: var(--bg-1);
+}
+.status-widget__scope-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.status-widget__scope-label {
+  color: var(--text-1);
+  font-weight: 600;
+}
+.status-widget__scope-cost {
+  color: var(--text-0);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.status-widget__scope-sub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.status-widget__empty {
+  color: var(--text-3);
+}
+.status-widget__providers {
+  display: grid;
+  gap: 6px;
+}
+.status-widget__provider {
+  display: grid;
+  gap: 6px;
+  padding: 7px 9px 8px;
+  border-radius: var(--r-card);
+  background: var(--bg-1);
+}
+.status-widget__provider[data-configured="false"] {
+  opacity: 0.72;
+}
+.status-widget__provider-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.status-widget__provider-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  color: var(--text-1);
+}
+.status-widget__provider-name {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-0);
+  font-weight: 600;
 }
-.usage-window__fill {
-  display: block;
-  height: 100%;
-  width: var(--usage-window-fill, 0%);
-  border-radius: inherit;
-  background: var(--usage-window-color);
+.status-widget__provider-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-weight: 500;
 }
-.usage-window__values {
+.status-widget__provider-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.status-widget__provider-status[data-tone="ok"] {
+  color: var(--ok);
+}
+.status-widget__provider-status[data-tone="error"] {
+  color: var(--danger);
+}
+.status-widget__provider-status[data-tone="pending"] {
+  color: var(--text-2);
+}
+.status-widget__provider-status[data-tone="off"] {
+  color: var(--text-3);
+}
+.status-widget__provider-usage {
+  display: grid;
+  gap: 3px;
+}
+.status-widget__provider-metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.status-widget__provider-scope {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+.status-widget__provider-figures {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.status-widget__provider-tokens {
+  color: var(--text-2);
+}
+.status-widget__provider-cost {
+  color: var(--text-1);
+  font-weight: 600;
+}
+.status-widget__provider-idle {
+  color: var(--text-3);
+}
+
+/* Provider-side quota (primary): exact windows, balances and spend.         */
+.status-widget__quota {
+  display: grid;
+  gap: 6px;
+}
+.status-widget__quota-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+.status-widget__quota-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-1);
+  font-weight: 600;
+}
+.status-widget__quota-flag {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--ok);
+}
+.status-widget__quota-flag[data-tone="muted"] {
+  background: color-mix(in srgb, var(--text-3) 18%, transparent);
+  color: var(--text-3);
+}
+.status-widget__quota-flag[data-tone="error"] {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+.status-widget__quota-note {
+  color: var(--text-3);
+}
+.status-widget__quota[data-state="error"] .status-widget__quota-note {
+  color: color-mix(in srgb, var(--danger) 78%, var(--text-2));
+}
+.status-widget__quota-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.status-widget__quota-line-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-2);
+}
+.status-widget__quota-line-value {
+  flex: 0 0 auto;
+  color: var(--text-0);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.usage-meter__note {
-  padding: 7px 11px 8px;
+
+/* One quota window: headline figure + headroom bar + detail line.           */
+.status-widget__window {
+  display: grid;
+  gap: 4px;
+}
+.status-widget__window-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.status-widget__window-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-1);
+}
+.status-widget__window-value {
+  flex: 0 0 auto;
+  color: var(--text-0);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.status-widget__window-sub {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.status-widget__bar {
+  position: relative;
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-3) 22%, transparent);
+  overflow: hidden;
+}
+.status-widget__bar-fill {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 220ms ease;
+}
+.status-widget__bar[data-tone="ok"] .status-widget__bar-fill {
+  background: var(--ok);
+}
+.status-widget__bar[data-tone="warn"] .status-widget__bar-fill {
+  background: #f59e0b;
+}
+.status-widget__bar[data-tone="low"] .status-widget__bar-fill {
+  background: var(--danger);
+}
+.status-widget__bar[data-tone="unknown"] .status-widget__bar-fill {
+  background: var(--text-3);
+}
+
+/* Local token estimate (secondary): faded, clearly an approximation.        */
+.status-widget__local {
+  display: grid;
+  gap: 3px;
+  padding-top: 6px;
+  border-top: 1px solid var(--divider);
+}
+.status-widget__local-label {
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.status-widget__note {
+  padding: 8px 12px 9px;
+  border-top: 1px solid var(--divider);
   color: var(--text-3);
   background: var(--bg-2);
-  font-size: var(--fs-xs);
 }
 
 .team-agent-rail {

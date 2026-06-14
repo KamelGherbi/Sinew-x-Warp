@@ -276,6 +276,52 @@ export type OpenRouterProviderStatus = {
   error?: string | null;
 };
 
+export type ProviderUsageState = "available" | "unavailable" | "error";
+
+export type ProviderUsageWindow = {
+  id: string;
+  label: string;
+  usedPercent?: number | null;
+  remainingPercent?: number | null;
+  used?: number | null;
+  limit?: number | null;
+  remaining?: number | null;
+  unit?: string | null;
+  resetAtMs?: number | null;
+  resetAt?: string | null;
+};
+
+export type ProviderUsageBalance = {
+  label: string;
+  amount: number;
+  unit?: string | null;
+  currency?: string | null;
+};
+
+export type ProviderUsageSpend = {
+  today?: number | null;
+  week?: number | null;
+  month?: number | null;
+  currency?: string | null;
+};
+
+export type ProviderUsageStatus = {
+  provider: string;
+  source: string;
+  state: ProviderUsageState;
+  exact: boolean;
+  label?: string | null;
+  windows: ProviderUsageWindow[];
+  balance?: ProviderUsageBalance | null;
+  spend?: ProviderUsageSpend | null;
+  error?: string | null;
+};
+
+export type ProviderUsageSummary = {
+  updatedAtMs: number;
+  providers: ProviderUsageStatus[];
+};
+
 export type OpenRouterModel = {
   id: string;
   name: string;
@@ -704,6 +750,40 @@ export type StreamTokenUsage = {
   reasoning_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
+};
+
+// Mirrors `TokenUsageSummary` emitted by the Rust `token_usage_summary`
+// command. All numeric fields are serialized with serde `camelCase`.
+export type TokenUsageTotals = {
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+};
+
+export type TokenUsageModelSummary = {
+  provider: string;
+  model: string;
+  totals: TokenUsageTotals;
+};
+
+export type TokenUsageProviderSummary = {
+  provider: string;
+  totals: TokenUsageTotals;
+  models: TokenUsageModelSummary[];
+};
+
+export type TokenUsageScopeSummary = {
+  totals: TokenUsageTotals;
+  providers: TokenUsageProviderSummary[];
+};
+
+export type TokenUsageSummary = {
+  conversation: TokenUsageScopeSummary;
+  global: TokenUsageScopeSummary;
 };
 
 export type ConversationEventPayload = {

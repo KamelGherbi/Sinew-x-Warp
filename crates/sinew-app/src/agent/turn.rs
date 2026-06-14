@@ -126,10 +126,10 @@ pub async fn run_turn(ctx: TurnContext) -> TurnOutput {
         if let Some(descriptor) = skill.descriptor() {
             tool_descriptors.push(descriptor);
         }
+        tool_descriptors.push(create_image.descriptor());
         if mode != AgentMode::Plan {
             tool_descriptors.insert(4, edit_file.descriptor());
             tool_descriptors.insert(5, write_file.descriptor());
-            tool_descriptors.push(create_image.descriptor());
         }
         if mode == AgentMode::Goal {
             tool_descriptors.push(update_goal_descriptor());

@@ -79,9 +79,6 @@ pub(super) async fn run_tool(
         }
         write_file.run(input, read_fingerprints).await
     } else if canonical_name == tool_names::CREATE_IMAGE {
-        if mode == AgentMode::Plan {
-            return ToolRunResult::err("create_image is unavailable in Plan mode", Vec::new());
-        }
         create_image.run(input).await
     } else if canonical_name == tool_names::TODO_LIST {
         let Some(todo_list_tool) = todo_list_tool else {

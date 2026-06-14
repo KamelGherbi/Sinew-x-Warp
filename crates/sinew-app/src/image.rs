@@ -91,7 +91,7 @@ impl CreateImageTool {
         match self.image_provider {
             ImageProvider::GptImage2 => ToolDescriptor {
                 name: tool_names::CREATE_IMAGE.into(),
-                description: "Use this when the user asks to generate or create a new image. Returns the generated image visually.".into(),
+                description: "Use this directly when the user asks to generate or create an image, logo, icon, illustration, or visual asset. Uses GPT Image 2. If OpenAI subscription mode is enabled, or no OpenAI API key is configured, it authenticates through the connected ChatGPT/OpenAI subscription automatically. Returns the generated image visually and saves it in the workspace.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -212,7 +212,7 @@ impl CreateImageTool {
         let background = normalize_background(parsed.background.as_deref())?;
         let moderation = normalize_moderation(parsed.moderation.as_deref())?;
 
-        if self.openai_image_use_subscription {
+        if self.openai_image_use_subscription || self.openai_api_key.is_none() {
             return self
                 .create_gpt_image_with_subscription(
                     prompt,

@@ -31,6 +31,7 @@ import type {
   OpenRouterModel,
   OpenRouterModelSearchResult,
   OpenRouterProviderStatus,
+  ProviderUsageSummary,
   PlanControl,
   PlanImplementationOptions,
   QuestionAnswer,
@@ -48,6 +49,7 @@ import type {
   TerminalSpawnResult,
   ThinkingLevel,
   ToolSettings,
+  TokenUsageSummary,
   UpdateInfo,
   WorkspaceBootstrap,
   WorkspaceDeletedEntry,
@@ -326,6 +328,11 @@ export const api = {
       input: { workspacePath, conversationId },
     });
   },
+  tokenUsageSummary(workspacePath: string, conversationId: string) {
+    return invoke<TokenUsageSummary>("token_usage_summary", {
+      input: { workspacePath, conversationId },
+    });
+  },
   renameConversation(
     workspacePath: string,
     conversationId: string,
@@ -449,6 +456,9 @@ export const api = {
   },
   getOpenRouterProviderStatus() {
     return invoke<OpenRouterProviderStatus>("get_openrouter_provider_status");
+  },
+  providerUsageSummary() {
+    return invoke<ProviderUsageSummary>("provider_usage_summary");
   },
   getDictationStatus() {
     return invoke<DictationStatus>("get_dictation_status");

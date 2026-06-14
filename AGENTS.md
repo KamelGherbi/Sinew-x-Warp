@@ -199,6 +199,7 @@ Code map:
 │   │   ├── SettingsPane.tsx
 │   │   ├── SinewMark.tsx
 │   │   ├── Splitter.tsx
+│   │   ├── StatusWidget.tsx
 │   │   ├── TerminalPanel.tsx
 │   │   ├── UpdateBadge.tsx
 │   │   ├── UpdaterLockScreen.tsx
@@ -215,7 +216,7 @@ Code map:
 │   │   ├── modelVisibility.ts
 │   │   ├── recents.ts
 │   │   ├── sessions.ts
-│   │   ├── subscriptionUsage.ts
+│   │   ├── tokenUsage.ts
 │   │   └── tools.ts
 │   ├── App.tsx
 │   ├── main.tsx
@@ -311,6 +312,7 @@ Code map:
 │   │   ├── models.rs
 │   │   ├── platform.rs
 │   │   ├── providers.rs
+│   │   ├── provider_usage.rs
 │   │   ├── remote.rs
 │   │   ├── state.rs
 │   │   ├── swarm.rs

@@ -28,6 +28,7 @@ import { RemotePanel } from "./RemotePanel";
 import { SearchPane } from "./SearchPane";
 import { ChatPane, type ExternalDropFeed } from "./chat/ChatPane";
 import { SinewMark } from "./SinewMark";
+import { StatusWidget } from "./StatusWidget";
 import { UpdateBadge } from "./UpdateBadge";
 import { WindowControls, isWindowsPlatform } from "./WindowControls";
 import type {
@@ -2456,6 +2457,11 @@ export function Workspace({
           data-tauri-drag-region
           style={titlebarActionsStyle}
         >
+          <StatusWidget
+            workspacePath={workspacePath}
+            conversationId={activeConv.id}
+          />
+          <span className="titlebar__sep" aria-hidden />
           <button
             className="titlebar__btn titlebar__btn--remote"
             data-on={remoteActive || remoteStatus?.enabled ? "true" : "false"}

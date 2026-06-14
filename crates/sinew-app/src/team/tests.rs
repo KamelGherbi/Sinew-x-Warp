@@ -300,6 +300,7 @@ fn team_agent_profiles_keep_current_chat_model_by_default() {
                 description: "Architecture profile".to_string(),
                 prompt: "Think like an architect".to_string(),
                 model: profile_model,
+                hide_for_same_model: false,
                 enabled: true,
             }],
         },

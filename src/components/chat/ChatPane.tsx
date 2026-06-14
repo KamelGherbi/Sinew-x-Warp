@@ -54,11 +54,15 @@ import {
   watchModelVisibility,
 } from "../../lib/modelVisibility";
 import {
-  appendSubscriptionUsageFromEvent,
-  isSubscriptionTrackedProvider,
-  readSubscriptionUsageSnapshot,
-  type SubscriptionUsageSnapshot,
-} from "../../lib/subscriptionUsage";
+  addLiveUsage,
+  buildTokenUsageView,
+  formatCostUsd,
+  formatTokenCount,
+  type LiveUsageMap,
+  type ProviderUsageView,
+  type ScopeUsageView,
+  type TokenUsageView,
+} from "../../lib/tokenUsage";
 import type {
   AgentMode,
   AttachmentInput,
@@ -82,6 +86,7 @@ import type {
   ServiceTier,
   StreamTokenUsage,
   ThinkingLevel,
+  TokenUsageSummary,
   WorkspaceEntry,
   WorkspaceFileChangedPayload,
 } from "../../types";
@@ -782,26 +787,38 @@ export function ChatPane({
     availableModels,
     fastServiceTierEnabled,
   );
-  const subscriptionUsageModel = useMemo(() => modelRefFromId(model), [model]);
-  const [subscriptionUsage, setSubscriptionUsage] =
-    useState<SubscriptionUsageSnapshot>(() =>
-      readSubscriptionUsageSnapshot(activeModel),
-    );
-  const pendingSubscriptionUsageEventsRef = useRef<Map<string, TokenUsageEvent>>(
-    new Map(),
+  const [tokenUsageSummary, setTokenUsageSummary] =
+    useState<TokenUsageSummary | null>(null);
+  // Live overlay keyed by conversation id. Holds the in-flight turn's
+  // `token_usage` events so the indicator moves before the next backend reload.
+  const [liveUsageByConversation, setLiveUsageByConversation] = useState<
+    Record<string, LiveUsageMap>
+  >({});
+
+  const loadTokenUsageSummary = useCallback(async () => {
+    try {
+      const summary = await api.tokenUsageSummary(workspacePath, conversationId);
+      setTokenUsageSummary(summary);
+      return true;
+    } catch {
+      // Best-effort: the live overlay still drives the indicator on failure.
+      return false;
+    }
+  }, [workspacePath, conversationId]);
+
+  useEffect(() => {
+    void loadTokenUsageSummary();
+  }, [loadTokenUsageSummary]);
+
+  const tokenUsageView = useMemo(
+    () =>
+      buildTokenUsageView(
+        tokenUsageSummary,
+        liveUsageByConversation,
+        conversationId,
+      ),
+    [tokenUsageSummary, liveUsageByConversation, conversationId],
   );
-  const refreshSubscriptionUsage = useCallback(() => {
-    setSubscriptionUsage(readSubscriptionUsageSnapshot(subscriptionUsageModel));
-  }, [subscriptionUsageModel]);
-
-  useEffect(() => {
-    refreshSubscriptionUsage();
-  }, [refreshSubscriptionUsage]);
-
-  useEffect(() => {
-    const timer = window.setInterval(refreshSubscriptionUsage, 60_000);
-    return () => window.clearInterval(timer);
-  }, [refreshSubscriptionUsage]);
   // Surface a clear "connect a provider" affordance when nothing is wired up
   // yet. The selectors stay hidden in that case — there's nothing meaningful
   // to pick from until the user signs into at least one provider.
@@ -1684,29 +1701,19 @@ export function ChatPane({
 
   const applyTokenUsageEvent = useCallback(
     (cid: string, event: AgentEvent) => {
-      const flushSubscriptionUsage = (key: string) => {
-        const pending = pendingSubscriptionUsageEventsRef.current.get(key);
-        if (!pending) return;
-        pendingSubscriptionUsageEventsRef.current.delete(key);
-        const snapshot = appendSubscriptionUsageFromEvent(pending);
-        if (
-          snapshot &&
-          snapshot.provider === subscriptionUsageModel.provider &&
-          snapshot.model === subscriptionUsageModel.name
-        ) {
-          setSubscriptionUsage(snapshot);
-          return;
-        }
-        refreshSubscriptionUsage();
+      const addLive = (
+        provider: string,
+        model: string,
+        usage: StreamTokenUsage,
+      ) => {
+        setLiveUsageByConversation((prev) => ({
+          ...prev,
+          [cid]: addLiveUsage(prev[cid] ?? {}, provider, model, usage),
+        }));
       };
 
-      if (event.type === "turn_started") {
-        pendingSubscriptionUsageEventsRef.current.delete(cid);
-        return;
-      }
-
       if (event.type === "token_usage") {
-        pendingSubscriptionUsageEventsRef.current.set(cid, event);
+        addLive(event.provider, event.model, event.usage);
         const estimate = contextEstimateFromTokenUsageEvent(event);
         if (cid === contextEstimateConversationIdRef.current) {
           setContextEstimate({ conversationId: cid, status: "ready", estimate });
@@ -1714,24 +1721,30 @@ export function ChatPane({
         return;
       }
 
-      if (
-        event.type === "turn_finished" ||
-        event.type === "interrupted" ||
-        event.type === "error"
-      ) {
-        flushSubscriptionUsage(cid);
+      if (event.type === "turn_finished") {
+        // The backend persists the turn (token_usage meta included) before it
+        // emits turn_finished, so reloading now returns authoritative totals.
+        // Drop this conversation's live overlay only once the fresh summary
+        // lands so the just-finished turn is never double counted (and never
+        // lost if the reload fails).
+        void loadTokenUsageSummary().then((ok) => {
+          if (!ok) return;
+          setLiveUsageByConversation((prev) => {
+            if (!prev[cid]) return prev;
+            const next = { ...prev };
+            delete next[cid];
+            return next;
+          });
+        });
         return;
       }
 
       if (event.type !== "sub_agent_event") return;
       const inner = event.event;
-      const subAgentKey = `${cid}:sub:${event.agent_id}:${event.id}`;
-      if (inner.type === "turn_started") {
-        pendingSubscriptionUsageEventsRef.current.delete(subAgentKey);
-        return;
-      }
       if (inner.type === "token_usage") {
-        pendingSubscriptionUsageEventsRef.current.set(subAgentKey, inner);
+        // Sub-agent usage is persisted under the parent conversation, so fold it
+        // into the same conversation overlay (it also feeds the global scope).
+        addLive(inner.provider, inner.model, inner.usage);
         if (cid !== contextEstimateConversationIdRef.current) return;
         if (!subAgentEventMatchesActiveView(event, activeSubAgentIdRef.current)) {
           return;
@@ -1740,17 +1753,9 @@ export function ChatPane({
           status: "ready",
           estimate: contextEstimateFromTokenUsageEvent(inner),
         });
-        return;
-      }
-      if (
-        inner.type === "turn_finished" ||
-        inner.type === "interrupted" ||
-        inner.type === "error"
-      ) {
-        flushSubscriptionUsage(subAgentKey);
       }
     },
-    [refreshSubscriptionUsage, subscriptionUsageModel],
+    [loadTokenUsageSummary],
   );
 
   const applyEventToConversationView = useCallback(
@@ -4283,7 +4288,7 @@ export function ChatPane({
               )}
             </div>
             <div className="composer__actions-right">
-              <SubscriptionUsageMeter snapshot={subscriptionUsage} />
+              <TokenUsageIndicator view={tokenUsageView} />
               <button
                 type="button"
                 className="composer__iconbtn composer__compact"
@@ -4531,125 +4536,127 @@ function ContextMeter({ state }: { state: ContextEstimateState }) {
   );
 }
 
-function SubscriptionUsageMeter({
-  snapshot,
-}: {
-  snapshot: SubscriptionUsageSnapshot;
-}) {
-  // Inert for providers we don't locally track (OpenAI + Anthropic show).
-  if (!isSubscriptionTrackedProvider(snapshot.provider)) return null;
-
-  const providerLabel =
-    PROVIDERS.find((entry) => entry.value === snapshot.provider)?.label ??
-    snapshot.provider;
-  const displayPercent = Math.round(clampRatio(snapshot.displayRatio) * 100);
-  const status =
-    snapshot.displayRatio >= 0.95
-      ? "danger"
-      : snapshot.displayRatio >= 0.8
-        ? "warn"
-        : "ok";
-  const windowReset = formatUsageReset(snapshot.nextWindowResetAtMs);
-  const weeklyReset = formatUsageReset(snapshot.weeklyResetAtMs);
-
+function TokenUsageIndicator({ view }: { view: TokenUsageView }) {
+  const { conversation, global, hasAny } = view;
+  const someUnpriced =
+    (global.totals.totalTokens > 0 && !global.totals.costKnown) ||
+    (conversation.totals.totalTokens > 0 && !conversation.totals.costKnown);
   return (
     <div
-      className="usage-meter"
-      data-status={status}
-      style={
-        {
-          "--usage-fill": `${clampRatio(snapshot.displayRatio) * 100}%`,
-        } as CSSProperties
-      }
+      className="token-usage"
+      data-empty={hasAny ? "false" : "true"}
       tabIndex={0}
-      aria-label={`Subscription usage ${displayPercent}% (local estimate)`}
+      aria-label={
+        hasAny
+          ? `Token usage ${formatTokenCount(global.totals.totalTokens)} tokens, estimated ${formatCostUsd(global.totals.costUsd)}`
+          : "Token usage"
+      }
     >
-      <span className="usage-meter__track" aria-hidden="true">
-        <span className="usage-meter__fill" />
+      <span className="token-usage__chip" aria-hidden="true">
+        <Icon icon="solar:chart-2-linear" width={13} height={13} />
+        <span className="token-usage__chip-value">
+          {hasAny ? formatTokenCount(global.totals.totalTokens) : "0"}
+        </span>
       </span>
-      <div className="usage-meter__popover" role="tooltip">
-        <div className="usage-meter__head">
-          <span className="usage-meter__title">Subscription usage</span>
-          <span className="usage-meter__provider">{providerLabel}</span>
-        </div>
-        <div className="usage-meter__model">{snapshot.model}</div>
-        <div className="usage-meter__rows">
-          <UsageWindowRow
-            label="5h window"
-            ratio={snapshot.windowRatio}
-            remainingRatio={1 - snapshot.windowRatio}
-            reset={windowReset}
-          />
-          <UsageWindowRow
-            label="Weekly"
-            ratio={snapshot.weeklyRatio}
-            remainingRatio={1 - snapshot.weeklyRatio}
-            reset={weeklyReset}
-          />
-        </div>
-        <div className="usage-meter__note">Local Sinew estimate</div>
+      <div className="token-usage__popover" role="tooltip">
+        {hasAny ? (
+          <>
+            <TokenUsageScopeBlock title="This conversation" scope={conversation} />
+            <TokenUsageScopeBlock title="All conversations" scope={global} />
+            <div className="token-usage__note">
+              Estimated cost{someUnpriced ? " \u00b7 some models have no known price" : ""}
+            </div>
+          </>
+        ) : (
+          <div className="token-usage__empty">
+            <span className="token-usage__empty-title">No token usage yet</span>
+            <span className="token-usage__empty-sub">
+              Tokens and estimated cost appear here once a model responds.
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function UsageWindowRow({
-  label,
-  ratio,
-  remainingRatio,
-  reset,
+function TokenUsageScopeBlock({
+  title,
+  scope,
 }: {
-  label: string;
-  ratio: number;
-  remainingRatio: number;
-  reset: string | null;
+  title: string;
+  scope: ScopeUsageView;
 }) {
-  const clamped = clampRatio(ratio);
-  const percent = Math.round(clamped * 100);
-  const remainingPercent = Math.max(0, Math.round(clampRatio(remainingRatio) * 100));
-  const status = ratio >= 0.95 ? "danger" : ratio >= 0.8 ? "warn" : "ok";
+  const { totals } = scope;
+  const empty = totals.totalTokens <= 0;
   return (
-    <div className="usage-window" data-status={status}>
-      <div className="usage-window__head">
-        <span className="usage-window__label">{label}</span>
-        <span className="usage-window__meta">
-          {percent}%{reset ? ` \u00b7 resets in ${reset}` : ""}
+    <section className="token-usage__scope">
+      <div className="token-usage__scope-head">
+        <span className="token-usage__scope-title">{title}</span>
+        <span className="token-usage__scope-cost">
+          {tokenCostLabel(totals.costUsd, totals.costKnown, totals.totalTokens)}
         </span>
       </div>
-      <span className="usage-window__track" aria-hidden="true">
-        <span
-          className="usage-window__fill"
-          style={{ "--usage-window-fill": `${clamped * 100}%` } as CSSProperties}
-        />
-      </span>
-      <div className="usage-window__values">
-        <span>{percent}% used</span>
-        <span>{remainingPercent}% left</span>
-        <span>calibrated estimate</span>
+      <div className="token-usage__scope-summary">
+        <span>{formatTokenCount(totals.totalTokens)} tokens</span>
+        <span>
+          {totals.requests} {totals.requests === 1 ? "request" : "requests"}
+        </span>
+      </div>
+      {empty ? (
+        <div className="token-usage__scope-empty">No tokens yet</div>
+      ) : (
+        <div className="token-usage__providers">
+          {scope.providers.map((provider) => (
+            <TokenUsageProviderRow key={provider.provider} provider={provider} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TokenUsageProviderRow({ provider }: { provider: ProviderUsageView }) {
+  const label =
+    PROVIDERS.find((entry) => entry.value === provider.provider)?.label ??
+    provider.provider;
+  return (
+    <div className="token-usage__provider">
+      <div className="token-usage__provider-head">
+        <span className="token-usage__provider-name">{label}</span>
+        <span className="token-usage__provider-meta">
+          {formatTokenCount(provider.totals.totalTokens)}
+          {" \u00b7 "}
+          {tokenCostLabel(
+            provider.totals.costUsd,
+            provider.totals.costKnown,
+            provider.totals.totalTokens,
+          )}
+        </span>
+      </div>
+      <div className="token-usage__models">
+        {provider.models.map((model) => (
+          <div className="token-usage__model" key={model.model}>
+            <span className="token-usage__model-name" title={model.model}>
+              {model.model}
+            </span>
+            <span className="token-usage__model-meta">
+              {formatTokenCount(model.totals.totalTokens)}
+              {" \u00b7 "}
+              {model.totals.costKnown
+                ? `\u2248 ${formatCostUsd(model.totals.costUsd)}`
+                : "cost n/a"}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-function clampRatio(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(1, value));
-}
-
-function formatUsageReset(atMs: number | null, nowMs = Date.now()): string | null {
-  if (atMs === null || !Number.isFinite(atMs)) return null;
-  const deltaMs = atMs - nowMs;
-  if (deltaMs <= 0) return "now";
-  const minutes = Math.round(deltaMs / 60_000);
-  if (minutes < 60) return `${Math.max(1, minutes)}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    const mins = minutes % 60;
-    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
-  }
-  const days = Math.floor(hours / 24);
-  const remHours = hours % 24;
-  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+function tokenCostLabel(usd: number, known: boolean, tokens: number): string {
+  if (tokens > 0 && !known && usd <= 0) return "cost n/a";
+  return `\u2248 ${formatCostUsd(usd)}`;
 }
 
 function autoCompactWindow(estimate: ContextEstimate): number {

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -49,7 +49,7 @@ pub const DEFAULT_PLAN_MODE_PROMPT: &str = r#"You are in Plan mode.
 
 Rules:
 - Build understanding by reading/searching/running diagnostic shell commands as needed.
-- Do not edit workspace files.
+- Do not edit workspace files, except using `create_image` when the user explicitly asks to generate an image, logo, icon, illustration, or visual asset.
 - You must keep the user in a Question loop until the user explicitly clicks "Send and stop questions".
 - If the user message does not contain <plan_mode_control action="stop_questions">, your turn must end by calling the Question tool. Do not write the final plan yet.
 - After each normal answer to a Question, inspect/explore more if needed, then ask the next Question.
@@ -88,6 +88,48 @@ pub struct SessionSummary {
     pub updated_at_ms: i64,
     pub message_count: i64,
     pub archived_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsageSummary {
+    pub conversation: TokenUsageScopeSummary,
+    pub global: TokenUsageScopeSummary,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsageScopeSummary {
+    pub totals: TokenUsageTotals,
+    pub providers: Vec<TokenUsageProviderSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsageProviderSummary {
+    pub provider: String,
+    pub totals: TokenUsageTotals,
+    pub models: Vec<TokenUsageModelSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsageModelSummary {
+    pub provider: String,
+    pub model: String,
+    pub totals: TokenUsageTotals,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsageTotals {
+    pub requests: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub reasoning_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -224,7 +266,7 @@ pub struct WorkspaceBootstrap {
     pub mode_model_settings: ModeModelSettings,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolSettings {
     #[serde(default)]
@@ -233,7 +275,7 @@ pub struct ToolSettings {
     pub plan_mode_prompt: String,
     #[serde(default)]
     pub image_provider: ImageProvider,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub openai_image_use_subscription: bool,
     #[serde(default)]
     pub openai_image_api_key: String,
@@ -243,6 +285,21 @@ pub struct ToolSettings {
     pub web_search_provider: WebSearchProvider,
     #[serde(default)]
     pub linkup_api_key: String,
+}
+
+impl Default for ToolSettings {
+    fn default() -> Self {
+        Self {
+            tools: Vec::new(),
+            plan_mode_prompt: String::new(),
+            image_provider: ImageProvider::default(),
+            openai_image_use_subscription: true,
+            openai_image_api_key: String::new(),
+            nano_banana_api_key: String::new(),
+            web_search_provider: WebSearchProvider::default(),
+            linkup_api_key: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -756,6 +813,79 @@ impl AppStore {
             sessions.push(row.context("bad session row")?);
         }
         Ok(sessions)
+    }
+
+    pub fn token_usage_summary(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+    ) -> Result<TokenUsageSummary> {
+        let conn = self.connection()?;
+        let mut statement = conn
+            .prepare(
+                "select c.workspace_id, c.id, m.message_json
+                 from messages m
+                 join conversations c on c.id = m.conversation_id
+                 order by c.updated_at_ms desc, c.id asc, m.ordinal asc",
+            )
+            .context("unable to prepare token usage summary query")?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .context("unable to read token usage summary rows")?;
+
+        let mut conversation = TokenUsageAccumulator::default();
+        let mut conversation_nested = BTreeMap::<String, Vec<ChatMessage>>::new();
+        let mut global = TokenUsageAccumulator::default();
+        let mut global_nested = BTreeMap::<String, Vec<ChatMessage>>::new();
+        for row in rows {
+            let (row_workspace_id, row_conversation_id, message_json) =
+                row.context("bad token usage summary row")?;
+            let message = serde_json::from_str::<ChatMessage>(&message_json)
+                .context("unable to parse stored message for token usage summary")?;
+            let mut usages = Vec::new();
+            let mut nested = Vec::new();
+            collect_message_token_usage(&message, &mut usages, &mut nested);
+            let is_current_conversation =
+                row_workspace_id == workspace_id && row_conversation_id == conversation_id;
+            for usage in usages {
+                global.add(usage.clone());
+                if is_current_conversation {
+                    conversation.add(usage);
+                }
+            }
+            for history in nested {
+                keep_longest_nested_history(
+                    &mut global_nested,
+                    format!("{}:{}", row_conversation_id, history.key),
+                    history.history.clone(),
+                );
+                if is_current_conversation {
+                    keep_longest_nested_history(
+                        &mut conversation_nested,
+                        history.key,
+                        history.history,
+                    );
+                }
+            }
+        }
+
+        for history in global_nested.into_values() {
+            collect_history_token_usage(&history, &mut global);
+        }
+        for history in conversation_nested.into_values() {
+            collect_history_token_usage(&history, &mut conversation);
+        }
+
+        Ok(TokenUsageSummary {
+            conversation: conversation.into_summary(),
+            global: global.into_summary(),
+        })
     }
 
     pub fn load_conversation(
@@ -1528,7 +1658,7 @@ impl AppStore {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap_or(0);
 
-        if version >= 9 {
+        if version >= 10 {
             return Ok(());
         }
 
@@ -1583,7 +1713,10 @@ impl AppStore {
             conn.execute("delete from turn_checkpoints", [])
                 .context("unable to clear legacy turn checkpoints")?;
         }
-        conn.pragma_update(None, "user_version", 9)
+        if version < 10 {
+            migrate_tool_settings_create_image_default_enabled(&conn)?;
+        }
+        conn.pragma_update(None, "user_version", 10)
             .context("unable to set sqlite schema version")?;
         Ok(())
     }
@@ -1727,6 +1860,59 @@ fn ensure_turn_checkpoints_table(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_tool_settings_create_image_default_enabled(conn: &Connection) -> Result<()> {
+    let stored = conn
+        .query_row(
+            "select value_json from app_settings where key = ?1",
+            params![TOOL_SETTINGS_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .context("unable to read tool settings for migration")?;
+    let Some(json) = stored else {
+        return Ok(());
+    };
+    let Ok(mut value) = serde_json::from_str::<Value>(&json) else {
+        return Ok(());
+    };
+
+    let mut changed = false;
+    if let Some(tools) = value.get_mut("tools").and_then(Value::as_array_mut) {
+        for tool in tools {
+            let Some(name) = tool.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            if !tool_names::is_tool_name(name, tool_names::CREATE_IMAGE) {
+                continue;
+            }
+            if tool.get("enabled").and_then(Value::as_bool) == Some(false) {
+                if let Some(object) = tool.as_object_mut() {
+                    object.insert("enabled".into(), Value::Bool(true));
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    if changed {
+        conn.execute(
+            "insert into app_settings (key, value_json, updated_at_ms)
+             values (?1, ?2, ?3)
+             on conflict(key) do update set
+                value_json = excluded.value_json,
+                updated_at_ms = excluded.updated_at_ms",
+            params![TOOL_SETTINGS_KEY, serde_json::to_string(&value)?, now_ms()],
+        )
+        .context("unable to migrate create_image tool setting")?;
+    }
+
+    Ok(())
+}
+
+fn default_true() -> bool {
+    true
+}
+
 fn default_enabled() -> bool {
     true
 }
@@ -1736,7 +1922,7 @@ fn is_false(value: &bool) -> bool {
 }
 
 fn default_tool_enabled(name: &str) -> bool {
-    !matches!(name, tool_names::CREATE_IMAGE | tool_names::WEB_SEARCH)
+    !matches!(name, tool_names::WEB_SEARCH)
 }
 
 fn normalize_openrouter_models(models: Vec<OpenRouterModelRecord>) -> Vec<OpenRouterModelRecord> {
@@ -2151,6 +2337,292 @@ fn title_hidden_text(meta: &Option<Value>) -> bool {
         || meta.get("plan_control").and_then(Value::as_str).is_some()
 }
 
+#[derive(Debug, Clone)]
+struct StoredTokenUsage {
+    provider: String,
+    model: String,
+    totals: TokenUsageTotals,
+}
+
+#[derive(Debug, Clone)]
+struct NestedTokenUsageHistory {
+    key: String,
+    history: Vec<ChatMessage>,
+}
+
+#[derive(Default)]
+struct TokenUsageAccumulator {
+    totals: TokenUsageTotals,
+    by_provider: BTreeMap<String, TokenUsageTotals>,
+    by_model: BTreeMap<(String, String), TokenUsageTotals>,
+}
+
+impl TokenUsageAccumulator {
+    fn add(&mut self, usage: StoredTokenUsage) {
+        self.totals.add(usage.totals);
+        self.by_provider
+            .entry(usage.provider.clone())
+            .or_default()
+            .add(usage.totals);
+        self.by_model
+            .entry((usage.provider, usage.model))
+            .or_default()
+            .add(usage.totals);
+    }
+
+    fn into_summary(self) -> TokenUsageScopeSummary {
+        let mut providers = self
+            .by_provider
+            .into_iter()
+            .map(|(provider, totals)| {
+                let mut models = self
+                    .by_model
+                    .iter()
+                    .filter_map(|((model_provider, model), model_totals)| {
+                        (model_provider == &provider).then(|| TokenUsageModelSummary {
+                            provider: model_provider.clone(),
+                            model: model.clone(),
+                            totals: *model_totals,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                sort_model_summaries(&mut models);
+                TokenUsageProviderSummary {
+                    provider,
+                    totals,
+                    models,
+                }
+            })
+            .collect::<Vec<_>>();
+        sort_provider_summaries(&mut providers);
+        TokenUsageScopeSummary {
+            totals: self.totals,
+            providers,
+        }
+    }
+}
+
+impl TokenUsageTotals {
+    fn add(&mut self, other: TokenUsageTotals) {
+        self.requests = self.requests.saturating_add(other.requests);
+        self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
+        self.total_tokens = self.total_tokens.saturating_add(other.total_tokens);
+        self.reasoning_tokens = self.reasoning_tokens.saturating_add(other.reasoning_tokens);
+        self.cache_read_tokens = self
+            .cache_read_tokens
+            .saturating_add(other.cache_read_tokens);
+        self.cache_creation_tokens = self
+            .cache_creation_tokens
+            .saturating_add(other.cache_creation_tokens);
+    }
+}
+
+fn sort_provider_summaries(items: &mut [TokenUsageProviderSummary]) {
+    items.sort_by(|left, right| {
+        right
+            .totals
+            .total_tokens
+            .cmp(&left.totals.total_tokens)
+            .then_with(|| left.provider.cmp(&right.provider))
+    });
+}
+
+fn sort_model_summaries(items: &mut [TokenUsageModelSummary]) {
+    items.sort_by(|left, right| {
+        right
+            .totals
+            .total_tokens
+            .cmp(&left.totals.total_tokens)
+            .then_with(|| left.model.cmp(&right.model))
+    });
+}
+
+fn collect_history_token_usage(history: &[ChatMessage], accumulator: &mut TokenUsageAccumulator) {
+    let mut nested_histories = BTreeMap::<String, Vec<ChatMessage>>::new();
+    for message in history {
+        let mut usages = Vec::new();
+        let mut nested = Vec::new();
+        collect_message_token_usage(message, &mut usages, &mut nested);
+        for usage in usages {
+            accumulator.add(usage);
+        }
+        for history in nested {
+            keep_longest_nested_history(&mut nested_histories, history.key, history.history);
+        }
+    }
+
+    for history in nested_histories.into_values() {
+        collect_history_token_usage(&history, accumulator);
+    }
+}
+
+fn collect_message_token_usage(
+    message: &ChatMessage,
+    usages: &mut Vec<StoredTokenUsage>,
+    nested_histories: &mut Vec<NestedTokenUsageHistory>,
+) {
+    for part in &message.parts {
+        let meta = part_meta(part);
+        if let Some(usage) = meta
+            .and_then(|meta| meta.get("token_usage"))
+            .and_then(stored_token_usage_from_meta)
+        {
+            usages.push(usage);
+        }
+        collect_nested_token_histories(
+            meta,
+            nested_key_for_part(part).as_deref(),
+            nested_histories,
+        );
+    }
+}
+
+fn stored_token_usage_from_meta(value: &Value) -> Option<StoredTokenUsage> {
+    let object = value.as_object()?;
+    if let Some(source) = object.get("source").and_then(Value::as_str) {
+        if source != "stream" {
+            return None;
+        }
+    }
+    let provider = object.get("provider")?.as_str()?.trim();
+    let model = object.get("model")?.as_str()?.trim();
+    if provider.is_empty() || model.is_empty() {
+        return None;
+    }
+
+    let input_tokens = token_usage_number(value, "input_tokens", "inputTokens");
+    let output_tokens = token_usage_number(value, "output_tokens", "outputTokens");
+    let reasoning_tokens = token_usage_number(value, "reasoning_tokens", "reasoningTokens");
+    let cache_read_tokens = token_usage_number(value, "cache_read_tokens", "cacheReadTokens");
+    let cache_creation_tokens =
+        token_usage_number(value, "cache_creation_tokens", "cacheCreationTokens");
+    let explicit_total = token_usage_number(value, "total_tokens", "totalTokens");
+    let summed_total = input_tokens
+        .saturating_add(output_tokens)
+        .saturating_add(reasoning_tokens)
+        .saturating_add(cache_read_tokens)
+        .saturating_add(cache_creation_tokens);
+    let total_tokens = if explicit_total > 0 {
+        explicit_total
+    } else {
+        summed_total
+    };
+    if total_tokens == 0 && summed_total == 0 {
+        return None;
+    }
+
+    Some(StoredTokenUsage {
+        provider: provider.to_string(),
+        model: model.to_string(),
+        totals: TokenUsageTotals {
+            requests: 1,
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            reasoning_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
+        },
+    })
+}
+
+fn token_usage_number(value: &Value, snake_key: &str, camel_key: &str) -> u64 {
+    value
+        .get(snake_key)
+        .or_else(|| value.get(camel_key))
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
+
+fn collect_nested_token_histories(
+    meta: Option<&Value>,
+    part_key: Option<&str>,
+    nested_histories: &mut Vec<NestedTokenUsageHistory>,
+) {
+    let Some(Value::Object(meta)) = meta else {
+        return;
+    };
+
+    if let Some(history) = meta.get("subagent").and_then(|record| {
+        let fallback_key = part_key
+            .map(|key| format!("subagent:{key}"))
+            .unwrap_or_else(|| "subagent".to_string());
+        nested_history_from_record(&fallback_key, record)
+    }) {
+        nested_histories.push(history);
+    }
+
+    if let Some(subagents) = meta.get("subagents").and_then(Value::as_array) {
+        let team_key = meta
+            .get("team")
+            .and_then(|team| team.get("name"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("team");
+        for (index, record) in subagents.iter().enumerate() {
+            let fallback_key = format!("team:{team_key}:subagent:{index}");
+            if let Some(history) = nested_history_from_record(&fallback_key, record) {
+                nested_histories.push(history);
+            }
+        }
+    }
+}
+
+fn nested_history_from_record(
+    fallback_key: &str,
+    value: &Value,
+) -> Option<NestedTokenUsageHistory> {
+    let record = value.as_object()?;
+    let history_value = record.get("history")?;
+    let history = serde_json::from_value::<Vec<ChatMessage>>(history_value.clone()).ok()?;
+    if history.is_empty() {
+        return None;
+    }
+    let key = record
+        .get("id")
+        .and_then(Value::as_str)
+        .or_else(|| record.get("name").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("{fallback_key}:{value}"))
+        .unwrap_or_else(|| fallback_key.to_string());
+    Some(NestedTokenUsageHistory { key, history })
+}
+
+fn keep_longest_nested_history(
+    histories: &mut BTreeMap<String, Vec<ChatMessage>>,
+    key: String,
+    history: Vec<ChatMessage>,
+) {
+    let should_replace = histories
+        .get(&key)
+        .map(|current| history.len() > current.len())
+        .unwrap_or(true);
+    if should_replace {
+        histories.insert(key, history);
+    }
+}
+
+fn nested_key_for_part(part: &Part) -> Option<String> {
+    match part {
+        Part::ToolResult { tool_call_id, .. } => Some(tool_call_id.clone()),
+        Part::ToolCall { id, .. } => Some(id.clone()),
+        _ => None,
+    }
+}
+
+fn part_meta(part: &Part) -> Option<&Value> {
+    match part {
+        Part::Text { meta, .. }
+        | Part::Image { meta, .. }
+        | Part::Thinking { meta, .. }
+        | Part::ToolCall { meta, .. }
+        | Part::ToolResult { meta, .. } => meta.as_ref(),
+    }
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2378,6 +2850,47 @@ mod tests {
             description: description.to_string(),
             input_schema: json!({ "type": "object" }),
         }
+    }
+
+    #[test]
+    fn migration_reenables_create_image_from_legacy_default() -> Result<()> {
+        let path = std::env::temp_dir().join(format!(
+            "sinew-store-tool-settings-test-{}.sqlite3",
+            Uuid::new_v4()
+        ));
+        let store = AppStore { path: path.clone() };
+        let result = (|| -> Result<()> {
+            store.migrate()?;
+            {
+                let conn = Connection::open(&path).context("open temp db")?;
+                conn.pragma_update(None, "user_version", 9)?;
+                let legacy = json!({
+                    "tools": [{
+                        "name": "create_image",
+                        "description": "legacy default",
+                        "defaultDescription": "legacy default",
+                        "enabled": false
+                    }],
+                    "imageProvider": "gptImage2",
+                    "openaiImageUseSubscription": false
+                });
+                conn.execute(
+                    "insert into app_settings (key, value_json, updated_at_ms)
+                     values (?1, ?2, ?3)
+                     on conflict(key) do update set
+                        value_json = excluded.value_json,
+                        updated_at_ms = excluded.updated_at_ms",
+                    params![TOOL_SETTINGS_KEY, serde_json::to_string(&legacy)?, now_ms()],
+                )?;
+            }
+
+            store.migrate()?;
+            let settings = store.load_tool_settings()?;
+            assert!(settings.is_enabled(tool_names::CREATE_IMAGE));
+            Ok(())
+        })();
+        let _ = fs::remove_file(path);
+        result
     }
 
     #[test]

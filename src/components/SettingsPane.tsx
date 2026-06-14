@@ -88,7 +88,7 @@ const FALLBACK_TOOL_SETTINGS: ToolSettings = {
   planModePrompt: "",
   defaultPlanModePrompt: "",
   imageProvider: "gptImage2",
-  openaiImageUseSubscription: false,
+  openaiImageUseSubscription: true,
   openaiImageApiKey: "",
   nanoBananaApiKey: "",
   webSearchProvider: "classic",

@@ -44,15 +44,14 @@ use sinew_app::{
     summarized_conversation_title, system_prompt_for_mode_with_plan_prompt,
     system_prompt_with_todo, todo_list_from_history, tool_settings_view, trash_workspace_entry,
     validate_turn_checkpoints_restorable, write_workspace_file, AgentEvent, AgentMode, AppStore,
-    BashTool, ConversationEvent,
-    ConversationSummary, CreateImageTool, EditFileTool, GlobTool, GoalWorkflowState, GrepTool,
-    ImportedEntry, InstalledSkill, McpSettings, McpToolRegistry, ModeModelSettings,
-    OpenRouterModelRecord, PlanArtifactState, PlanWorkflowState, QuestionTool, ReadTool,
-    SavedConversation, SessionSummary, SkillSettings, SkillTool, SubAgentConfig, SubAgentSettings,
-    SubAgentTool, TeamRuntime, TeamTool, TerminalPathResolution, ToDoListTool, TodoListState,
-    ToolSettings, ToolSettingsView, TurnCancel, TurnContext, WebFetchTool, WebSearchTool,
-    WorkspaceBootstrap, WorkspaceCopyOperation, WorkspaceDeletedEntry, WorkspaceFileChangeEvent,
-    WorkspaceSearchResult, WriteFileTool,
+    BashTool, ConversationEvent, ConversationSummary, CreateImageTool, EditFileTool, GlobTool,
+    GoalWorkflowState, GrepTool, ImportedEntry, InstalledSkill, McpSettings, McpToolRegistry,
+    ModeModelSettings, OpenRouterModelRecord, PlanArtifactState, PlanWorkflowState, QuestionTool,
+    ReadTool, SavedConversation, SessionSummary, SkillSettings, SkillTool, SubAgentConfig,
+    SubAgentSettings, SubAgentTool, TeamRuntime, TeamTool, TerminalPathResolution, ToDoListTool,
+    TodoListState, TokenUsageSummary, ToolSettings, ToolSettingsView, TurnCancel, TurnContext,
+    WebFetchTool, WebSearchTool, WorkspaceBootstrap, WorkspaceCopyOperation, WorkspaceDeletedEntry,
+    WorkspaceFileChangeEvent, WorkspaceSearchResult, WriteFileTool,
 };
 use sinew_core::{
     ChatMessage, Effort, ModelCapabilities, ModelRef, Part, Provider, ProviderRequest, Role,
@@ -102,6 +101,7 @@ mod dictation;
 mod git;
 mod models;
 mod platform;
+mod provider_usage;
 mod providers;
 mod remote;
 mod state;
@@ -308,6 +308,7 @@ pub fn run() {
             conversations::list_sessions,
             conversations::create_conversation,
             conversations::load_conversation,
+            conversations::token_usage_summary,
             conversations::rename_conversation,
             conversations::delete_conversation,
             conversations::archive_conversation,
@@ -327,6 +328,7 @@ pub fn run() {
             remote::remote_revoke_device,
             remote::remote_set_open_conversations,
             providers::list_configured_model_providers,
+            provider_usage::provider_usage_summary,
             dictation::get_dictation_status,
             dictation::save_dictation_settings,
             dictation::open_dictation_permission_settings,

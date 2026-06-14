@@ -1679,8 +1679,8 @@ pub(super) fn tool_descriptors_for_workspace(
     if mode != AgentMode::Plan {
         tools.insert(4, EditFileTool::new(workspace_root).descriptor());
         tools.insert(5, WriteFileTool::new(workspace_root).descriptor());
-        tools.push(CreateImageTool::new(workspace_root).descriptor());
     }
+    tools.push(CreateImageTool::new(workspace_root).descriptor());
     tools
 }
 

@@ -17,6 +17,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{
+    image::Image,
     menu::{Menu, MenuEvent, MenuItemBuilder, PredefinedMenuItem},
     tray::{TrayIcon, TrayIconBuilder},
     AppHandle, Emitter, Manager, State, Wry,
@@ -430,7 +431,11 @@ fn run_ptt_loop(app: AppHandle, events: std::sync::mpsc::Receiver<macos::PttEven
                     continue;
                 }
                 let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-                if state.recorder.send(macos::RecorderCmd::Start(reply_tx)).is_err() {
+                if state
+                    .recorder
+                    .send(macos::RecorderCmd::Start(reply_tx))
+                    .is_err()
+                {
                     emit_state(&app, "error", Some("audio recorder is unavailable".into()));
                     continue;
                 }
@@ -466,7 +471,11 @@ fn run_ptt_loop(app: AppHandle, events: std::sync::mpsc::Receiver<macos::PttEven
                     continue;
                 };
                 let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-                if state.recorder.send(macos::RecorderCmd::Stop(reply_tx)).is_err() {
+                if state
+                    .recorder
+                    .send(macos::RecorderCmd::Stop(reply_tx))
+                    .is_err()
+                {
                     emit_state(&app, "error", Some("audio recorder is unavailable".into()));
                     continue;
                 }
@@ -645,6 +654,12 @@ fn clear_history(app: &AppHandle) {
     refresh_history_tray(app);
 }
 
+fn dictation_tray_icon() -> Result<Image<'static>, String> {
+    Image::from_bytes(include_bytes!("../icons/dictation-history-template.png"))
+        .map(|image| image.to_owned())
+        .map_err(|err| format!("unable to load dictation tray icon: {err}"))
+}
+
 fn install_history_tray(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<DictationState>();
     let entries = state.history_snapshot();
@@ -664,11 +679,7 @@ fn install_history_tray(app: &AppHandle) -> Result<(), String> {
             }
         });
 
-    if let Some(icon) = app.default_window_icon().cloned() {
-        builder = builder.icon(icon).icon_as_template(true);
-    } else {
-        builder = builder.title("S");
-    }
+    builder = builder.icon(dictation_tray_icon()?).icon_as_template(true);
 
     let tray = builder.build(app).map_err(|err| err.to_string())?;
     let mut guard = state
@@ -1267,8 +1278,7 @@ mod macos {
             cpal::SampleFormat::I16 => device.build_input_stream(
                 &config.into(),
                 move |data: &[i16], _| {
-                    let converted: Vec<f32> =
-                        data.iter().map(|s| *s as f32 / 32_768.0).collect();
+                    let converted: Vec<f32> = data.iter().map(|s| *s as f32 / 32_768.0).collect();
                     push_frames(&converted);
                 },
                 err_fn,

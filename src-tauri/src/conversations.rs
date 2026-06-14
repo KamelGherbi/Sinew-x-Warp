@@ -67,6 +67,22 @@ pub(super) async fn load_conversation(
 }
 
 #[tauri::command]
+pub(super) async fn token_usage_summary(
+    state: State<'_, DesktopState>,
+    input: ConversationInput,
+) -> std::result::Result<TokenUsageSummary, String> {
+    let workspace_root =
+        normalize_workspace_root(&input.workspace_path).map_err(error_to_string)?;
+    state
+        .store
+        .token_usage_summary(
+            &workspace_root.display().to_string(),
+            &input.conversation_id,
+        )
+        .map_err(error_to_string)
+}
+
+#[tauri::command]
 pub(super) async fn rename_conversation(
     state: State<'_, DesktopState>,
     input: RenameConversationInput,
