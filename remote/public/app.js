@@ -315,6 +315,10 @@ function workspaceLabelFromId(id) {
   return segments[segments.length - 1] || raw;
 }
 
+function activeTurnKey(turn) {
+  return `${turn?.workspaceId || ""}:${turn?.conversationId || ""}`;
+}
+
 const TOOL_TONES = [
   [/^(read|glob|list)/i, "read"],
   [/^(grep|search|web)/i, "grep"],
@@ -805,6 +809,7 @@ function App() {
   const statusRef = useRef(status);
   const activeTurnsRef = useRef(activeTurns);
   const workspacePathRef = useRef(null);
+  const liveSyncKeyRef = useRef("");
   const syncedRef = useRef(false);
   const bodyRef = useRef(null);
   const inputRef = useRef(null);
@@ -846,6 +851,23 @@ function App() {
     const list = await cmd({ type: "list_conversations" });
     setConversations(Array.isArray(list) ? list : []);
   }, [cmd]);
+
+  useEffect(() => {
+    if (!session || !canReachPc || !workspacePath) return;
+    const missingCurrentLiveKey = activeTurns
+      .filter((turn) => turn?.conversationId && (!turn.workspaceId || turn.workspaceId === workspacePath))
+      .filter((turn) => !conversations.some((item) => item.id === turn.conversationId))
+      .map(activeTurnKey)
+      .sort()
+      .join("|");
+    if (!missingCurrentLiveKey) {
+      liveSyncKeyRef.current = "";
+      return;
+    }
+    if (missingCurrentLiveKey === liveSyncKeyRef.current) return;
+    liveSyncKeyRef.current = missingCurrentLiveKey;
+    syncList().catch(() => undefined);
+  }, [activeTurns, canReachPc, conversations, session, syncList, workspacePath]);
 
   const handleTurnFinished = useCallback(async (conversationId, workspaceId) => {
     const client = clientRef.current;
@@ -972,12 +994,17 @@ function App() {
     return [...blocksFromHistory(conv.history || []), ...blocksFromLiveEvents(events)];
   }, [conv, events]);
   const isStreaming = Boolean(conv && activeTurns.some((turn) => turn.conversationId === conv.id));
-  // Live turns running in other open workspaces. Conversations active in the
-  // current workspace already appear in the list below with a streaming pulse,
-  // so they are excluded here to avoid listing them twice.
-  const liveElsewhere = useMemo(
-    () => activeTurns.filter((turn) => turn.workspaceId && turn.workspaceId !== workspacePath),
-    [activeTurns, workspacePath],
+  const conversationIds = useMemo(() => new Set(conversations.map((item) => item.id)), [conversations]);
+  // Active turns are always shown somewhere. Current-workspace turns are hidden
+  // only when their conversation is already in the local list; otherwise they
+  // stay visible as live shortcuts until the list catches up.
+  const liveShortcuts = useMemo(
+    () => activeTurns.filter((turn) => {
+      if (!turn?.conversationId) return false;
+      const isCurrentWorkspace = !turn.workspaceId || turn.workspaceId === workspacePath;
+      return !isCurrentWorkspace || !conversationIds.has(turn.conversationId);
+    }),
+    [activeTurns, conversationIds, workspacePath],
   );
   const showInstallHint = Boolean(session && !installHintDismissed && !isStandaloneDisplay());
   const currentModel = conv ? conv.modeModelSettings?.[mode] || conv.model : null;
@@ -1380,10 +1407,10 @@ function App() {
     ),
     h("div", { className: "convs" },
       h("button", { className: "conv-new", disabled: !canReachPc, onClick: createConversation }, "+ New conversation"),
-      liveElsewhere.length > 0 && h("div", { className: "live-elsewhere" },
-        h("div", { className: "live-elsewhere__kicker" }, "Live in other workspaces"),
-        liveElsewhere.map((turn) => h("div", {
-          key: `${turn.workspaceId}:${turn.conversationId}`,
+      liveShortcuts.length > 0 && h("div", { className: "live-elsewhere" },
+        h("div", { className: "live-elsewhere__kicker" }, "Live conversations"),
+        liveShortcuts.map((turn) => h("div", {
+          key: activeTurnKey(turn),
           className: "conv-row conv-row--live",
           role: "button",
           tabIndex: 0,

@@ -34,6 +34,15 @@ const MIME = new Map([
   [".ico", "image/x-icon"],
 ]);
 
+function cacheControlFor(filePath) {
+  const ext = path.extname(filePath);
+  const base = path.basename(filePath);
+  if (base === "index.html" || base === "sw.js" || ext === ".js" || ext === ".css" || ext === ".webmanifest") {
+    return "no-cache";
+  }
+  return "public, max-age=86400";
+}
+
 function nowMs() {
   return Date.now();
 }
@@ -280,7 +289,7 @@ const server = http.createServer(async (req, res) => {
     const ext = path.extname(filePath);
     res.writeHead(200, {
       "content-type": MIME.get(ext) || "application/octet-stream",
-      "cache-control": ext === ".html" ? "no-store" : "public, max-age=3600",
+      "cache-control": cacheControlFor(filePath),
       "x-content-type-options": "nosniff",
     });
     res.end(body);
