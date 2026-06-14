@@ -21,6 +21,7 @@ const PAIRING_LOCK_MS: i64 = 60 * 1000;
 const REMOTE_PROTOCOL_VERSION: u32 = 1;
 const REMOTE_AEAD_AAD: &[u8] = b"sinew-remote-v1";
 const REMOTE_ATTACHMENT_MAX_BYTES: usize = 15 * 1024 * 1024;
+const REMOTE_KNOWN_WORKSPACE_MAX: usize = 64;
 
 #[derive(Clone)]
 pub(super) struct RemoteRuntime {
@@ -93,6 +94,7 @@ struct RemoteRuntimeInner {
     pairing: Option<PairingWindow>,
     current_workspace: Option<String>,
     open_workspaces: HashMap<String, String>,
+    known_workspaces: HashSet<String>,
     connect_generation: u64,
 }
 
@@ -113,6 +115,7 @@ impl RemoteRuntime {
                 pairing: None,
                 current_workspace: None,
                 open_workspaces: HashMap::new(),
+                known_workspaces: HashSet::new(),
                 connect_generation: 0,
             })),
             relay_tx: Arc::new(Mutex::new(None)),
@@ -1096,6 +1099,7 @@ impl RemoteRuntime {
 
     pub(super) async fn set_window_workspace(&self, window_label: String, workspace_id: String) {
         let mut inner = self.inner.lock().await;
+        remember_known_workspace(&mut inner, &workspace_id);
         inner
             .open_workspaces
             .insert(window_label, workspace_id.clone());
@@ -1121,9 +1125,15 @@ impl RemoteRuntime {
         }
     }
 
+    pub(super) async fn remember_workspace(&self, workspace_id: &str) {
+        let mut inner = self.inner.lock().await;
+        remember_known_workspace(&mut inner, workspace_id);
+    }
+
     async fn workspace_view(&self) -> (Option<String>, Vec<String>) {
         let inner = self.inner.lock().await;
         let mut list: Vec<String> = inner.open_workspaces.values().cloned().collect();
+        list.extend(inner.known_workspaces.iter().cloned());
         list.sort();
         list.dedup();
         (inner.current_workspace.clone(), list)
@@ -1332,6 +1342,7 @@ pub(super) fn forward_agent_event(
     let conversation_id = conversation_id.to_string();
     let event = event.clone();
     tauri::async_runtime::spawn(async move {
+        runtime.remember_workspace(&workspace_id).await;
         let payload = RemotePcPayload::AgentEvent {
             workspace_id,
             conversation_id: conversation_id.clone(),
@@ -1351,10 +1362,28 @@ pub(super) fn forward_active_turns(app: &AppHandle, active_turns: Vec<ActiveTurn
     };
     let runtime = state.remote.clone();
     tauri::async_runtime::spawn(async move {
+        for turn in &active_turns {
+            runtime.remember_workspace(&turn.workspace_id).await;
+        }
         let _ = runtime
             .broadcast_payload(&RemotePcPayload::ActiveTurnsChanged { active_turns })
             .await;
     });
+}
+
+fn remember_known_workspace(inner: &mut RemoteRuntimeInner, workspace_id: &str) {
+    let workspace = workspace_id.trim();
+    if workspace.is_empty() {
+        return;
+    }
+    if inner.known_workspaces.len() >= REMOTE_KNOWN_WORKSPACE_MAX
+        && !inner.known_workspaces.contains(workspace)
+    {
+        if let Some(first) = inner.known_workspaces.iter().next().cloned() {
+            inner.known_workspaces.remove(&first);
+        }
+    }
+    inner.known_workspaces.insert(workspace.to_string());
 }
 
 fn status_from_inner(inner: &RemoteRuntimeInner) -> RemoteStatus {
