@@ -319,6 +319,148 @@ function activeTurnKey(turn) {
   return `${turn?.workspaceId || ""}:${turn?.conversationId || ""}`;
 }
 
+/* ── Cross-workspace live / recent conversations ───────────────────────────
+   Remote can observe conversations from other open workspaces through
+   `active_turns_changed` and `agent_event`. We keep them in a stable local map
+   keyed by `workspaceId:conversationId` so a project stays listed once it has
+   streamed at least once, instead of flashing in and out with `active_turns`.
+   A turn that finishes flips to "idle" (recently active) but is NOT removed, so
+   it stays reachable in its project until the user opens it. Entries hold
+   { workspaceId, workspaceName, conversationId, title, updatedAtMs, status }. */
+function liveConvKey(workspaceId, conversationId) {
+  return `${workspaceId || ""}:${conversationId || ""}`;
+}
+
+function liveEntriesEqual(a, b) {
+  if (!a || !b) return false;
+  return a.workspaceId === b.workspaceId
+    && a.conversationId === b.conversationId
+    && (a.workspaceName || "") === (b.workspaceName || "")
+    && (a.title || "") === (b.title || "")
+    && a.updatedAtMs === b.updatedAtMs
+    && a.status === b.status;
+}
+
+// Reconciles the map against the authoritative active-turns snapshot: present
+// turns become "streaming"; entries that dropped out of the snapshot are demoted
+// to "idle" (kept, not deleted). Returns the same reference when nothing changed
+// so React can bail out of the re-render.
+function reconcileLiveFromActiveTurns(prev, turns) {
+  let next = null;
+  const ensure = () => next || (next = new Map(prev));
+  const activeKeys = new Set();
+  for (const turn of turns || []) {
+    if (!turn?.conversationId || !turn?.workspaceId) continue;
+    const key = liveConvKey(turn.workspaceId, turn.conversationId);
+    activeKeys.add(key);
+    const prevEntry = prev.get(key);
+    const merged = {
+      workspaceId: turn.workspaceId,
+      workspaceName: turn.workspaceName || prevEntry?.workspaceName || "",
+      conversationId: turn.conversationId,
+      title: (turn.conversationTitle || "").trim() || prevEntry?.title || "",
+      updatedAtMs: turn.startedAtMs || prevEntry?.updatedAtMs || Date.now(),
+      status: "streaming",
+    };
+    if (!liveEntriesEqual(prevEntry, merged)) ensure().set(key, merged);
+  }
+  for (const [key, entry] of prev) {
+    if (activeKeys.has(key) || entry.status === "idle") continue;
+    ensure().set(key, { ...entry, status: "idle", updatedAtMs: Date.now() });
+  }
+  return next || prev;
+}
+
+// Folds a single agent event into the map. Acts as a fast, immediate signal and
+// the only title source for conversations we never observe in active_turns.
+// Only rewrites the entry when a meaningful field changes, so the flood of
+// streaming text chunks does not churn the list.
+function applyLiveAgentEvent(prev, workspaceId, conversationId, event) {
+  if (!workspaceId || !conversationId) return prev;
+  const key = liveConvKey(workspaceId, conversationId);
+  const prevEntry = prev.get(key);
+  const type = event?.type;
+  const finished = type === "turn_finished";
+  let title = prevEntry?.title || "";
+  if (type === "conversation_title_updated") {
+    const nextTitle = (event.title || "").trim();
+    if (nextTitle) title = nextTitle;
+  }
+  const status = finished
+    ? "idle"
+    : type === "turn_started"
+      ? "streaming"
+      : prevEntry?.status || "streaming";
+  const changed = !prevEntry || prevEntry.status !== status || (prevEntry.title || "") !== title;
+  if (!changed) return prev;
+  const next = new Map(prev);
+  next.set(key, {
+    workspaceId,
+    workspaceName: prevEntry?.workspaceName || "",
+    conversationId,
+    title,
+    updatedAtMs: finished || !prevEntry ? Date.now() : prevEntry.updatedAtMs,
+    status,
+  });
+  return next;
+}
+
+// Enriches already-known entries of one workspace with fresh titles/timestamps
+// from a bootstrap/list response. Never adds or removes rows, so a known list
+// can complete a project without erasing recently-active conversations from
+// other workspaces.
+function enrichLiveFromList(prev, workspaceId, conversations) {
+  if (!workspaceId || !Array.isArray(conversations) || conversations.length === 0) return prev;
+  let next = null;
+  const ensure = () => next || (next = new Map(prev));
+  for (const item of conversations) {
+    if (!item?.id) continue;
+    const key = liveConvKey(workspaceId, item.id);
+    const prevEntry = prev.get(key);
+    if (!prevEntry) continue;
+    const title = (item.title || "").trim() || prevEntry.title || "";
+    const updatedAtMs = item.updatedAtMs || prevEntry.updatedAtMs;
+    if ((prevEntry.title || "") === title && prevEntry.updatedAtMs === updatedAtMs) continue;
+    ensure().set(key, { ...prevEntry, title, updatedAtMs });
+  }
+  return next || prev;
+}
+
+// Groups the live/recent map into projects for rendering. Drops anything that
+// belongs to the currently-selected workspace (shown in the normal list) or is
+// already present there, so no row is ever duplicated. Streaming rows/projects
+// sort to the top; everything else falls back to recency.
+function buildLiveProjects(liveConvs, currentWorkspace, currentConversationIds, workspaces) {
+  const nameByPath = new Map((workspaces || []).map((ws) => [ws.path, ws.name]));
+  const groups = new Map();
+  for (const entry of liveConvs.values()) {
+    if (!entry?.conversationId || !entry?.workspaceId) continue;
+    if (entry.workspaceId === currentWorkspace) continue;
+    if (currentConversationIds.has(entry.conversationId)) continue;
+    let group = groups.get(entry.workspaceId);
+    if (!group) {
+      group = {
+        workspaceId: entry.workspaceId,
+        workspaceName: entry.workspaceName || nameByPath.get(entry.workspaceId) || workspaceLabelFromId(entry.workspaceId),
+        items: [],
+        streaming: false,
+        latest: 0,
+      };
+      groups.set(entry.workspaceId, group);
+    }
+    group.items.push(entry);
+    if (entry.status === "streaming") group.streaming = true;
+    if ((entry.updatedAtMs || 0) > group.latest) group.latest = entry.updatedAtMs || 0;
+  }
+  const rank = (entry) => (entry.status === "streaming" ? 0 : 1);
+  for (const group of groups.values()) {
+    group.items.sort((a, b) => rank(a) - rank(b) || (b.updatedAtMs || 0) - (a.updatedAtMs || 0));
+  }
+  return [...groups.values()].sort(
+    (a, b) => Number(b.streaming) - Number(a.streaming) || b.latest - a.latest,
+  );
+}
+
 const TOOL_TONES = [
   [/^(read|glob|list)/i, "read"],
   [/^(grep|search|web)/i, "grep"],
@@ -789,6 +931,9 @@ function App() {
   const [view, setView] = useState("list");
   const [liveEvents, setLiveEvents] = useState(new Map());
   const [activeTurns, setActiveTurns] = useState([]);
+  // Cross-workspace conversations observed live or recently active, keyed by
+  // `workspaceId:conversationId`. Stable across turns (see helpers above).
+  const [liveConvs, setLiveConvs] = useState(() => new Map());
   const [synced, setSynced] = useState(false);
 
   const [prompt, setPrompt] = useState("");
@@ -819,6 +964,11 @@ function App() {
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { activeTurnsRef.current = activeTurns; }, [activeTurns]);
   useEffect(() => { workspacePathRef.current = workspacePath; }, [workspacePath]);
+  // Keep the cross-workspace map in sync with the authoritative active-turns
+  // snapshot. Turns that drop out flip to "idle" but stay listed in their project.
+  useEffect(() => {
+    setLiveConvs((current) => reconcileLiveFromActiveTurns(current, activeTurns));
+  }, [activeTurns]);
 
   const cmd = useCallback((command, workspaceOverride) => {
     const client = clientRef.current;
@@ -838,6 +988,8 @@ function App() {
     setWorkspace(bootstrap.workspace || null);
     setConversations(bootstrap.conversations || []);
     if (Array.isArray(data.activeTurns)) setActiveTurns(data.activeTurns);
+    // A known list completes (never erases) this project's tracked entries.
+    setLiveConvs((current) => enrichLiveFromList(current, resolvedPath, bootstrap.conversations || []));
     return resolvedPath;
   }, []);
 
@@ -850,6 +1002,9 @@ function App() {
     if (!client?.session) return;
     const list = await cmd({ type: "list_conversations" });
     setConversations(Array.isArray(list) ? list : []);
+    if (Array.isArray(list)) {
+      setLiveConvs((current) => enrichLiveFromList(current, workspacePathRef.current, list));
+    }
   }, [cmd]);
 
   useEffect(() => {
@@ -928,6 +1083,8 @@ function App() {
             return next;
           });
           const event = payload.event;
+          // Track this conversation in its project (idle on finish, never dropped).
+          setLiveConvs((current) => applyLiveAgentEvent(current, payload.workspace_id, payload.conversation_id, event));
           if (event?.type === "conversation_title_updated") {
             const nextTitle = (event.title || "").trim();
             if (nextTitle) {
@@ -953,6 +1110,7 @@ function App() {
           setConv(null);
           setLiveEvents(new Map());
           setActiveTurns([]);
+          setLiveConvs(new Map());
           syncedRef.current = false;
           setSynced(false);
         }
@@ -995,16 +1153,12 @@ function App() {
   }, [conv, events]);
   const isStreaming = Boolean(conv && activeTurns.some((turn) => turn.conversationId === conv.id));
   const conversationIds = useMemo(() => new Set(conversations.map((item) => item.id)), [conversations]);
-  // Active turns are always shown somewhere. Current-workspace turns are hidden
-  // only when their conversation is already in the local list; otherwise they
-  // stay visible as live shortcuts until the list catches up.
-  const liveShortcuts = useMemo(
-    () => activeTurns.filter((turn) => {
-      if (!turn?.conversationId) return false;
-      const isCurrentWorkspace = !turn.workspaceId || turn.workspaceId === workspacePath;
-      return !isCurrentWorkspace || !conversationIds.has(turn.conversationId);
-    }),
-    [activeTurns, conversationIds, workspacePath],
+  // Conversations observed in other workspaces, grouped by project. They stay
+  // listed once seen (streaming → idle on finish) and never duplicate a row that
+  // already lives in the current workspace's list.
+  const liveProjects = useMemo(
+    () => buildLiveProjects(liveConvs, workspacePath, conversationIds, workspaces),
+    [liveConvs, workspacePath, conversationIds, workspaces],
   );
   const showInstallHint = Boolean(session && !installHintDismissed && !isStandaloneDisplay());
   const currentModel = conv ? conv.modeModelSettings?.[mode] || conv.model : null;
@@ -1087,19 +1241,19 @@ function App() {
     }
   }
 
-  // Opens a conversation that is live in another workspace: switch the selected
+  // Opens a conversation tracked in another workspace: switch the selected
   // workspace state to its owner first, then load + replay against that same
   // workspace so the replay (which is workspace-scoped) returns its events.
-  async function openLiveConversation(turn) {
-    if (!turn?.conversationId || !statusRef.current.pcReachable) return;
-    const targetWorkspace = turn.workspaceId || workspacePathRef.current;
+  async function openLiveConversation(entry) {
+    if (!entry?.conversationId || !statusRef.current.pcReachable) return;
+    const targetWorkspace = entry.workspaceId || workspacePathRef.current;
     try {
       let resolvedPath = workspacePathRef.current;
       if (targetWorkspace && targetWorkspace !== workspacePathRef.current) {
         const data = await clientRef.current.command({ type: "bootstrap" }, targetWorkspace);
         resolvedPath = applyWorkspaceBootstrap(data, targetWorkspace);
       }
-      await openConversationById(turn.conversationId, resolvedPath);
+      await openConversationById(entry.conversationId, resolvedPath);
     } catch (err) {
       setError(`Open conversation failed: ${String(err.message || err)}`);
     }
@@ -1132,6 +1286,13 @@ function App() {
     try {
       await cmd({ type: "delete_conversation", conversation_id: id });
       await syncList();
+      setLiveConvs((current) => {
+        const key = liveConvKey(workspacePathRef.current, id);
+        if (!current.has(key)) return current;
+        const next = new Map(current);
+        next.delete(key);
+        return next;
+      });
       setConv((current) => (current && current.id === id ? null : current));
       if (convRef.current?.id === id) setView("list");
     } catch (err) {
@@ -1407,22 +1568,26 @@ function App() {
     ),
     h("div", { className: "convs" },
       h("button", { className: "conv-new", disabled: !canReachPc, onClick: createConversation }, "+ New conversation"),
-      liveShortcuts.length > 0 && h("div", { className: "live-elsewhere" },
-        h("div", { className: "live-elsewhere__kicker" }, "Live conversations"),
-        liveShortcuts.map((turn) => h("div", {
-          key: activeTurnKey(turn),
-          className: "conv-row conv-row--live",
-          role: "button",
-          tabIndex: 0,
-          onClick: () => void openLiveConversation(turn),
-          onKeyDown: (e) => { if (e.key === "Enter") void openLiveConversation(turn); },
-        },
-          h("span", { className: "conv-row__pulse" }),
-          h("span", { className: "conv-row__stack" },
-            h("span", { className: "conv-row__title" }, turn.conversationTitle || "Active conversation"),
-            h("span", { className: "conv-row__ws" }, turn.workspaceName || workspaceLabelFromId(turn.workspaceId)),
+      liveProjects.length > 0 && h("div", { className: "live-elsewhere" },
+        h("div", { className: "live-elsewhere__kicker" }, "Other workspaces"),
+        liveProjects.map((project) => h("div", { key: project.workspaceId, className: "live-project" },
+          h("div", { className: "live-project__head" },
+            project.streaming && h("span", { className: "conv-row__pulse" }),
+            h("span", { className: "live-project__name" }, project.workspaceName),
           ),
-          h("span", { className: "conv-row__meta conv-row__meta--live" }, "streaming"),
+          project.items.map((entry) => h("div", {
+            key: liveConvKey(entry.workspaceId, entry.conversationId),
+            className: "conv-row conv-row--live",
+            role: "button",
+            tabIndex: 0,
+            onClick: () => void openLiveConversation(entry),
+            onKeyDown: (e) => { if (e.key === "Enter") void openLiveConversation(entry); },
+          },
+            entry.status === "streaming" && h("span", { className: "conv-row__pulse" }),
+            h("span", { className: "conv-row__title" }, entry.title || "New conversation"),
+            h("span", { className: entry.status === "streaming" ? "conv-row__meta conv-row__meta--live" : "conv-row__meta" },
+              entry.status === "streaming" ? "streaming" : relativeDate(entry.updatedAtMs)),
+          )),
         )),
       ),
       conversations.length === 0 && h("div", { className: "convs__empty" }, canReachPc ? "No conversations yet." : "Waiting for the PC…"),
