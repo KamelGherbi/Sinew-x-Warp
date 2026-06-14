@@ -4537,28 +4537,63 @@ function ContextMeter({ state }: { state: ContextEstimateState }) {
 }
 
 function TokenUsageIndicator({ view }: { view: TokenUsageView }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const { conversation, global, hasAny } = view;
   const someUnpriced =
     (global.totals.totalTokens > 0 && !global.totals.costKnown) ||
     (conversation.totals.totalTokens > 0 && !conversation.totals.costKnown);
+  const ariaLabel = hasAny
+    ? `Token usage ${formatTokenCount(global.totals.totalTokens)} tokens, estimated ${formatCostUsd(global.totals.costUsd)}`
+    : "Token usage";
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && rootRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
   return (
     <div
+      ref={rootRef}
       className="token-usage"
       data-empty={hasAny ? "false" : "true"}
-      tabIndex={0}
-      aria-label={
-        hasAny
-          ? `Token usage ${formatTokenCount(global.totals.totalTokens)} tokens, estimated ${formatCostUsd(global.totals.costUsd)}`
-          : "Token usage"
-      }
+      data-open={open ? "true" : "false"}
     >
-      <span className="token-usage__chip" aria-hidden="true">
+      <button
+        type="button"
+        className="token-usage__chip"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls="token-usage-popover"
+        aria-label={ariaLabel}
+        onClick={() => setOpen((value) => !value)}
+      >
         <Icon icon="solar:chart-2-linear" width={13} height={13} />
         <span className="token-usage__chip-value">
           {hasAny ? formatTokenCount(global.totals.totalTokens) : "0"}
         </span>
-      </span>
-      <div className="token-usage__popover" role="tooltip">
+      </button>
+      <div
+        id="token-usage-popover"
+        className="token-usage__popover"
+        role="dialog"
+        aria-label="Token usage details"
+        onPointerDown={(event) => event.stopPropagation()}
+        onWheel={(event) => event.stopPropagation()}
+      >
         {hasAny ? (
           <>
             <TokenUsageScopeBlock title="This conversation" scope={conversation} />

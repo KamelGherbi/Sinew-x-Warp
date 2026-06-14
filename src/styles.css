@@ -9569,23 +9569,26 @@ textarea {
   gap: 4px;
   height: 18px;
   padding: 0 7px;
+  border: 0;
   border-radius: 999px;
   background: var(--bg-4);
   color: var(--text-2);
+  font-family: var(--font-ui);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1;
+  cursor: pointer;
   transition: color 160ms ease, background 160ms ease;
 }
 .token-usage:hover .token-usage__chip,
-.token-usage:focus-visible .token-usage__chip,
+.token-usage[data-open="true"] .token-usage__chip,
 .token-usage:focus-within .token-usage__chip {
   color: var(--text-0);
 }
 .token-usage[data-empty="true"] .token-usage__chip {
   color: var(--text-3);
 }
-.token-usage:focus-visible .token-usage__chip {
+.token-usage__chip:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -9600,6 +9603,7 @@ textarea {
   max-width: 340px;
   max-height: 60vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0;
   border: 0;
   border-radius: var(--r-card);
@@ -9616,8 +9620,16 @@ textarea {
   transition: opacity 140ms ease, transform 140ms ease;
   z-index: 40;
 }
+.token-usage__popover::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -8px;
+  height: 8px;
+}
 .token-usage:hover .token-usage__popover,
-.token-usage:focus-visible .token-usage__popover,
+.token-usage[data-open="true"] .token-usage__popover,
 .token-usage:focus-within .token-usage__popover {
   opacity: 1;
   transform: translateY(0);
@@ -9758,6 +9770,7 @@ textarea {
   cursor: pointer;
   transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
 }
+.status-widget[data-open="true"] .status-widget__trigger,
 .status-widget__trigger:hover {
   color: var(--text-0);
   background: var(--bg-3);
@@ -9776,6 +9789,7 @@ textarea {
   color: var(--text-2);
   transition: color 150ms ease;
 }
+.status-widget[data-open="true"] .status-widget__trigger .status-widget__glyph,
 .status-widget__trigger:hover .status-widget__glyph {
   color: var(--text-1);
 }
@@ -9810,6 +9824,7 @@ textarea {
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
+.status-widget[data-open="true"] .status-widget__trigger .status-widget__cost,
 .status-widget__trigger:hover .status-widget__cost {
   color: var(--text-1);
 }
@@ -9824,6 +9839,7 @@ textarea {
   max-width: 340px;
   max-height: min(70vh, 540px);
   overflow-y: auto;
+  overscroll-behavior: contain;
   border-radius: var(--r-card);
   background: var(--bg-2);
   box-shadow: var(--shadow-focus);
@@ -9848,6 +9864,7 @@ textarea {
   height: 8px;
 }
 .status-widget:hover .status-widget__popover,
+.status-widget[data-open="true"] .status-widget__popover,
 .status-widget:focus-within .status-widget__popover {
   opacity: 1;
   transform: translateY(0);

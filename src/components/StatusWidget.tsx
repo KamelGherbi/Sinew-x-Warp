@@ -90,7 +90,9 @@ export function StatusWidget({ workspacePath, conversationId }: Props) {
   const [configured, setConfigured] = useState<readonly string[]>([]);
   const [statuses, setStatuses] = useState<StatusMap>(EMPTY_STATUS);
   const [usage, setUsage] = useState<ProviderUsageSummary | null>(null);
+  const [open, setOpen] = useState(false);
 
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const mountedRef = useRef(true);
   // Monotonic request id: only the most recent refresh is allowed to commit,
   // so a slow response from a previous workspace/conversation never wins.
@@ -156,6 +158,25 @@ export function StatusWidget({ workspacePath, conversationId }: Props) {
       window.clearInterval(interval);
     };
   }, [refresh]);
+
+  // Keep a clicked-open popover stable while users move into it and scroll.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && rootRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
 
   const view = useMemo(
     () => buildTokenUsageView(summary, NO_LIVE_USAGE, conversationId),
@@ -230,12 +251,20 @@ export function StatusWidget({ workspacePath, conversationId }: Props) {
       : `AI status \u00b7 ${connectedCount} provider${connectedCount === 1 ? "" : "s"} connected`;
 
   return (
-    <div className="status-widget" data-tone={overallTone}>
+    <div
+      ref={rootRef}
+      className="status-widget"
+      data-tone={overallTone}
+      data-open={open ? "true" : "false"}
+    >
       <button
         type="button"
         className="status-widget__trigger"
         aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls="status-widget-popover"
         aria-label={triggerLabel}
+        onClick={() => setOpen((value) => !value)}
       >
         <span className="status-widget__dot" data-tone={overallTone} aria-hidden />
         <Icon
@@ -266,9 +295,12 @@ export function StatusWidget({ workspacePath, conversationId }: Props) {
       </button>
 
       <div
+        id="status-widget-popover"
         className="status-widget__popover"
         role="dialog"
         aria-label="AI quota and usage"
+        onPointerDown={(event) => event.stopPropagation()}
+        onWheel={(event) => event.stopPropagation()}
       >
         <section className="status-widget__section">
           <header className="status-widget__section-head">
