@@ -78,7 +78,70 @@ function modelLabel(model) {
   return normalizeModelName(model.provider, model.name) || "Model";
 }
 
-marked.setOptions({ gfm: true, breaks: true });
+/* ── Sinew color spans ─────────────────────────────────────────────────────
+   Agent text may contain `::tone[content]` spans (success/info/warning/danger/
+   accent/muted, plus common aliases). They are rendered as inline <span
+   data-tone> elements via a marked inline extension so they survive markdown
+   parsing AND stay inert inside code spans / fenced blocks. The tone value is
+   always drawn from this fixed allow-list, never from arbitrary text, so no
+   unsafe HTML is introduced; inner content is parsed as markdown and
+   sanitized downstream by DOMPurify. */
+const COLOR_TONES = {
+  success: "success", info: "info", warning: "warning", danger: "danger", accent: "accent", muted: "muted",
+  ok: "success", green: "success",
+  warn: "warning", amber: "warning", orange: "warning", yellow: "warning",
+  error: "danger", important: "danger", red: "danger", rose: "danger",
+  blue: "info",
+  purple: "accent", violet: "accent", pink: "accent", lavender: "accent",
+  gray: "muted", grey: "muted",
+};
+
+// Finds the bracket that closes the one opened at `openIndex`, honouring
+// backslash escapes and nested brackets (so links/markdown inside a tone work).
+function findToneClosingBracket(text, openIndex) {
+  let depth = 1;
+  for (let cursor = openIndex + 1; cursor < text.length; cursor += 1) {
+    const char = text[cursor];
+    if (char === "\\" && cursor + 1 < text.length) {
+      cursor += 1;
+      continue;
+    }
+    if (char === "[") depth += 1;
+    else if (char === "]") {
+      depth -= 1;
+      if (depth === 0) return cursor;
+    }
+  }
+  return -1;
+}
+
+const sinewToneExtension = {
+  name: "sinewTone",
+  level: "inline",
+  start(src) {
+    const match = /::[A-Za-z-]+\[/.exec(src);
+    return match ? match.index : undefined;
+  },
+  tokenizer(src) {
+    const open = /^::([A-Za-z-]+)\[/.exec(src);
+    if (!open) return undefined;
+    const tone = COLOR_TONES[open[1].toLowerCase()];
+    if (!tone) return undefined;
+    const close = findToneClosingBracket(src, open[0].length - 1);
+    if (close < 0) return undefined;
+    return {
+      type: "sinewTone",
+      raw: src.slice(0, close + 1),
+      tone,
+      tokens: this.lexer.inlineTokens(src.slice(open[0].length, close)),
+    };
+  },
+  renderer(token) {
+    return `<span class="md-tone" data-tone="${token.tone}">${this.parser.parseInline(token.tokens)}</span>`;
+  },
+};
+
+marked.use({ gfm: true, breaks: true, extensions: [sinewToneExtension] });
 
 /* ── Utilities ─────────────────────────────────────────────────────────── */
 
@@ -215,7 +278,9 @@ function thinkingFromModel(model) {
 }
 
 function renderMarkdown(text) {
-  return { __html: DOMPurify.sanitize(marked.parse(text || "")) };
+  // Tone spans render as <span class="md-tone" data-tone="…">. DOMPurify keeps
+  // data-* attributes by default; ADD_ATTR makes that intent explicit and safe.
+  return { __html: DOMPurify.sanitize(marked.parse(text || ""), { ADD_ATTR: ["data-tone"] }) };
 }
 
 function fileToBase64(file) {
@@ -1380,10 +1445,10 @@ function App() {
         blocks.length === 0 && !isStreaming && h("div", { className: "chat-empty" }, "Send a message to get started."),
         blocks.map((block, index) => {
           if (block.kind === "user") {
-            return h("div", { key: index, className: "msg" }, h("div", { className: "user-text" }, block.text));
+            return h("div", { key: index, className: "msg msg--user" }, h("div", { className: "user-text" }, block.text));
           }
           if (block.kind === "assistant") {
-            return h("div", { key: index, className: "msg" },
+            return h("div", { key: index, className: "msg msg--assistant" },
               h("div", { className: "md", dangerouslySetInnerHTML: renderMarkdown(block.text) }),
             );
           }
