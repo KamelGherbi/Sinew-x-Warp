@@ -325,6 +325,7 @@ pub fn run() {
             remote::remote_start_pairing,
             remote::remote_stop_pairing,
             remote::remote_revoke_device,
+            remote::remote_set_open_conversations,
             providers::list_configured_model_providers,
             dictation::get_dictation_status,
             dictation::save_dictation_settings,

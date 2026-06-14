@@ -8,6 +8,7 @@ import { api } from "./lib/ipc";
 import { workspaceSessionKey } from "./lib/sessions";
 import type {
   ConversationSummary,
+  RemoteOpenConversationInput,
   UpdateInfo,
   WorkspaceBootstrap,
   WorkspaceSession,
@@ -58,9 +59,27 @@ export default function App() {
   const [state, setState] = useState<AppState>({ kind: "boot" });
   const [bootError, setBootError] = useState<string | null>(null);
   const stateRef = useRef(state);
+  const remoteOpenConversationsSignatureRef = useRef("");
 
   useEffect(() => {
     stateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    if (state.kind === "boot") return;
+    const conversations =
+      state.kind === "workspace"
+        ? remoteOpenConversationsFromSessions(
+            state.sessions,
+            state.activeSessionKey,
+          )
+        : [];
+    const signature = JSON.stringify(conversations);
+    if (signature === remoteOpenConversationsSignatureRef.current) return;
+    remoteOpenConversationsSignatureRef.current = signature;
+    void api.remoteSetOpenConversations(conversations).catch((err) => {
+      console.warn("remote open conversations unavailable", err);
+    });
   }, [state]);
 
   const openWorkspace = useCallback(async (path: string) => {
@@ -469,6 +488,27 @@ export default function App() {
       onBootstrapReplace={replaceBootstrap}
     />
   );
+}
+
+function remoteOpenConversationsFromSessions(
+  sessions: WorkspaceSession[],
+  activeSessionKey: string,
+): RemoteOpenConversationInput[] {
+  return sessions.map((session) => {
+    const workspace = session.bootstrap.workspace;
+    const conversation = session.bootstrap.activeConversation;
+    const summary = session.bootstrap.conversations.find(
+      (item) => item.id === session.conversationId,
+    );
+    return {
+      workspaceId: session.workspacePath,
+      workspaceName: workspace.name,
+      conversationId: session.conversationId,
+      title: summary?.title || conversation.title || "New conversation",
+      updatedAtMs: summary?.updatedAtMs ?? 0,
+      active: session.key === activeSessionKey,
+    };
+  });
 }
 
 function sessionKeyFromBootstrap(bootstrap: WorkspaceBootstrap): string {

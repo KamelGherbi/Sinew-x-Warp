@@ -507,6 +507,15 @@ export type WorkspaceSession = {
   bootstrap: WorkspaceBootstrap;
 };
 
+export type RemoteOpenConversationInput = {
+  workspaceId: string;
+  workspaceName: string;
+  conversationId: string;
+  title: string;
+  updatedAtMs: number;
+  active: boolean;
+};
+
 export type RemotePairingStatus = {
   code: string;
   expiresAtMs: number;

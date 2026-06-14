@@ -319,13 +319,12 @@ function activeTurnKey(turn) {
   return `${turn?.workspaceId || ""}:${turn?.conversationId || ""}`;
 }
 
-/* ── Cross-workspace live / recent conversations ───────────────────────────
-   Remote can observe conversations from other open workspaces through
-   `active_turns_changed` and `agent_event`. We keep them in a stable local map
-   keyed by `workspaceId:conversationId` so a project stays listed once it has
-   streamed at least once, instead of flashing in and out with `active_turns`.
-   A turn that finishes flips to "idle" (recently active) but is NOT removed, so
-   it stays reachable in its project until the user opens it. Entries hold
+/* ── Cross-workspace open / live / recent conversations ─────────────────────
+   Remote can observe conversations that are open in the desktop IDE, plus live
+   streams from other workspaces through `active_turns_changed` and
+   `agent_event`. We keep them in a stable local map keyed by
+   `workspaceId:conversationId` so projects stay listed when relevant instead of
+   flashing in and out with `active_turns`. Entries hold
    { workspaceId, workspaceName, conversationId, title, updatedAtMs, status }. */
 function liveConvKey(workspaceId, conversationId) {
   return `${workspaceId || ""}:${conversationId || ""}`;
@@ -338,7 +337,8 @@ function liveEntriesEqual(a, b) {
     && (a.workspaceName || "") === (b.workspaceName || "")
     && (a.title || "") === (b.title || "")
     && a.updatedAtMs === b.updatedAtMs
-    && a.status === b.status;
+    && a.status === b.status
+    && Boolean(a.active) === Boolean(b.active);
 }
 
 // Reconciles the map against the authoritative active-turns snapshot: present
@@ -361,12 +361,13 @@ function reconcileLiveFromActiveTurns(prev, turns) {
       title: (turn.conversationTitle || "").trim() || prevEntry?.title || "",
       updatedAtMs: turn.startedAtMs || prevEntry?.updatedAtMs || Date.now(),
       status: "streaming",
+      active: Boolean(prevEntry?.active),
     };
     if (!liveEntriesEqual(prevEntry, merged)) ensure().set(key, merged);
   }
   for (const [key, entry] of prev) {
-    if (activeKeys.has(key) || entry.status === "idle") continue;
-    ensure().set(key, { ...entry, status: "idle", updatedAtMs: Date.now() });
+    if (activeKeys.has(key) || entry.status === "idle" || entry.status === "open") continue;
+    ensure().set(key, { ...entry, status: "idle", updatedAtMs: Date.now(), active: false });
   }
   return next || prev;
 }
@@ -386,8 +387,11 @@ function applyLiveAgentEvent(prev, workspaceId, conversationId, event) {
     const nextTitle = (event.title || "").trim();
     if (nextTitle) title = nextTitle;
   }
+  const wasOpen = prevEntry?.status === "open" || Boolean(prevEntry?.active);
   const status = finished
-    ? "idle"
+    ? wasOpen
+      ? "open"
+      : "idle"
     : type === "turn_started"
       ? "streaming"
       : prevEntry?.status || "streaming";
@@ -401,6 +405,7 @@ function applyLiveAgentEvent(prev, workspaceId, conversationId, event) {
     title,
     updatedAtMs: finished || !prevEntry ? Date.now() : prevEntry.updatedAtMs,
     status,
+    active: Boolean(prevEntry?.active),
   });
   return next;
 }
@@ -422,6 +427,35 @@ function enrichLiveFromList(prev, workspaceId, conversations) {
     const updatedAtMs = item.updatedAtMs || prevEntry.updatedAtMs;
     if ((prevEntry.title || "") === title && prevEntry.updatedAtMs === updatedAtMs) continue;
     ensure().set(key, { ...prevEntry, title, updatedAtMs });
+  }
+  return next || prev;
+}
+
+function reconcileLiveFromOpenConversations(prev, openConversations) {
+  let next = null;
+  const ensure = () => next || (next = new Map(prev));
+  const openKeys = new Set();
+  for (const item of openConversations || []) {
+    const workspaceId = item?.workspaceId;
+    const conversationId = item?.conversationId;
+    if (!workspaceId || !conversationId) continue;
+    const key = liveConvKey(workspaceId, conversationId);
+    openKeys.add(key);
+    const prevEntry = prev.get(key);
+    const merged = {
+      workspaceId,
+      workspaceName: item.workspaceName || prevEntry?.workspaceName || "",
+      conversationId,
+      title: (item.title || "").trim() || prevEntry?.title || "New conversation",
+      updatedAtMs: item.updatedAtMs || prevEntry?.updatedAtMs || Date.now(),
+      status: prevEntry?.status === "streaming" ? "streaming" : "open",
+      active: Boolean(item.active),
+    };
+    if (!liveEntriesEqual(prevEntry, merged)) ensure().set(key, merged);
+  }
+  for (const [key, entry] of prev) {
+    if (openKeys.has(key) || entry.status !== "open") continue;
+    ensure().delete(key);
   }
   return next || prev;
 }
@@ -452,13 +486,33 @@ function buildLiveProjects(liveConvs, currentWorkspace, currentConversationIds, 
     if (entry.status === "streaming") group.streaming = true;
     if ((entry.updatedAtMs || 0) > group.latest) group.latest = entry.updatedAtMs || 0;
   }
-  const rank = (entry) => (entry.status === "streaming" ? 0 : 1);
+  const rank = (entry) => liveEntryRank(entry);
   for (const group of groups.values()) {
     group.items.sort((a, b) => rank(a) - rank(b) || (b.updatedAtMs || 0) - (a.updatedAtMs || 0));
   }
   return [...groups.values()].sort(
-    (a, b) => Number(b.streaming) - Number(a.streaming) || b.latest - a.latest,
+    (a, b) => liveProjectRank(a) - liveProjectRank(b) || b.latest - a.latest,
   );
+}
+
+const LIVE_STATUS_RANK = { streaming: 0, open_active: 1, open: 2, idle: 3 };
+
+function liveEntryRank(entry) {
+  if (entry.status === "streaming") return LIVE_STATUS_RANK.streaming;
+  if (entry.status === "open" && entry.active) return LIVE_STATUS_RANK.open_active;
+  if (entry.status === "open") return LIVE_STATUS_RANK.open;
+  return LIVE_STATUS_RANK.idle;
+}
+
+function liveProjectRank(project) {
+  return project.items.reduce((rank, entry) => Math.min(rank, liveEntryRank(entry)), LIVE_STATUS_RANK.idle);
+}
+
+function liveEntryMeta(entry) {
+  if (entry.status === "streaming") return "streaming";
+  if (entry.status === "open" && entry.active) return "active on PC";
+  if (entry.status === "open") return "open on PC";
+  return relativeDate(entry.updatedAtMs);
 }
 
 const TOOL_TONES = [
@@ -931,7 +985,7 @@ function App() {
   const [view, setView] = useState("list");
   const [liveEvents, setLiveEvents] = useState(new Map());
   const [activeTurns, setActiveTurns] = useState([]);
-  // Cross-workspace conversations observed live or recently active, keyed by
+  // Cross-workspace conversations observed open, live or recently active, keyed by
   // `workspaceId:conversationId`. Stable across turns (see helpers above).
   const [liveConvs, setLiveConvs] = useState(() => new Map());
   const [synced, setSynced] = useState(false);
@@ -990,6 +1044,9 @@ function App() {
     if (Array.isArray(data.activeTurns)) setActiveTurns(data.activeTurns);
     // A known list completes (never erases) this project's tracked entries.
     setLiveConvs((current) => enrichLiveFromList(current, resolvedPath, bootstrap.conversations || []));
+    if (Array.isArray(data.openConversations)) {
+      setLiveConvs((current) => reconcileLiveFromOpenConversations(current, data.openConversations));
+    }
     return resolvedPath;
   }, []);
 
@@ -1101,6 +1158,9 @@ function App() {
           if (event?.type === "turn_finished") void handleTurnFinished(payload.conversation_id, payload.workspace_id);
         }
         if (payload.type === "active_turns_changed") setActiveTurns(payload.active_turns || []);
+        if (payload.type === "open_conversations_changed") {
+          setLiveConvs((current) => reconcileLiveFromOpenConversations(current, payload.open_conversations || []));
+        }
         if (payload.type === "device_revoked") {
           setSession(null);
           setWorkspace(null);
@@ -1586,7 +1646,7 @@ function App() {
             entry.status === "streaming" && h("span", { className: "conv-row__pulse" }),
             h("span", { className: "conv-row__title" }, entry.title || "New conversation"),
             h("span", { className: entry.status === "streaming" ? "conv-row__meta conv-row__meta--live" : "conv-row__meta" },
-              entry.status === "streaming" ? "streaming" : relativeDate(entry.updatedAtMs)),
+              liveEntryMeta(entry)),
           )),
         )),
       ),

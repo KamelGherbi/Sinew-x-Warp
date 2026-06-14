@@ -11,6 +11,7 @@ import type {
   ConversationSummary,
   DictationSettings,
   DictationStatus,
+  RemoteOpenConversationInput,
   RemoteStatus,
   RewriteWorkspaceRestoreCheck,
   FileDocument,
@@ -728,6 +729,11 @@ export const api = {
   remoteRevokeDevice(deviceId: string) {
     return invoke<RemoteStatus>("remote_revoke_device", {
       input: { deviceId },
+    });
+  },
+  remoteSetOpenConversations(conversations: RemoteOpenConversationInput[]) {
+    return invoke<void>("remote_set_open_conversations", {
+      input: { conversations },
     });
   },
 };

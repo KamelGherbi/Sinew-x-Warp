@@ -95,6 +95,7 @@ struct RemoteRuntimeInner {
     current_workspace: Option<String>,
     open_workspaces: HashMap<String, String>,
     known_workspaces: HashSet<String>,
+    open_conversations: HashMap<String, Vec<RemoteOpenConversation>>,
     connect_generation: u64,
 }
 
@@ -116,6 +117,7 @@ impl RemoteRuntime {
                 current_workspace: None,
                 open_workspaces: HashMap::new(),
                 known_workspaces: HashSet::new(),
+                open_conversations: HashMap::new(),
                 connect_generation: 0,
             })),
             relay_tx: Arc::new(Mutex::new(None)),
@@ -682,8 +684,8 @@ impl RemoteRuntime {
 
         match envelope.command {
             RemotePhoneCommand::Bootstrap => {
-                let bootstrap = remote_bootstrap(&state, &workspace_path)?;
-                let active_turns = turns::list_active_turns(state)
+                let mut bootstrap = remote_bootstrap(&state, &workspace_path)?;
+                let active_turns = turns::list_active_turns(state.clone())
                     .await
                     .map_err(|err| anyhow::anyhow!(err))?;
                 let workspaces: Vec<Value> = open_workspaces
@@ -695,11 +697,25 @@ impl RemoteRuntime {
                         })
                     })
                     .collect();
+                let open_conversations = self.open_conversations_view().await;
+                if let Some(open_conversation) = open_conversations
+                    .iter()
+                    .filter(|conversation| conversation.workspace_id == workspace_path)
+                    .max_by_key(|conversation| (conversation.active, conversation.updated_at_ms))
+                {
+                    if let Some(active_conversation) = state
+                        .store
+                        .load_conversation(&workspace_path, &open_conversation.conversation_id)?
+                    {
+                        bootstrap.active_conversation = active_conversation;
+                    }
+                }
                 Ok(json!({
                     "workspacePath": workspace_path,
                     "workspaces": workspaces,
                     "bootstrap": bootstrap,
                     "activeTurns": active_turns,
+                    "openConversations": open_conversations,
                 }))
             }
             RemotePhoneCommand::ListConversations => {
@@ -1107,14 +1123,25 @@ impl RemoteRuntime {
     }
 
     pub(super) async fn remove_window_workspace(&self, window_label: &str) {
-        let mut inner = self.inner.lock().await;
-        inner.open_workspaces.remove(window_label);
-        let current_still_open = inner
-            .current_workspace
-            .as_ref()
-            .is_some_and(|current| inner.open_workspaces.values().any(|id| id == current));
-        if !current_still_open {
-            inner.current_workspace = inner.open_workspaces.values().next().cloned();
+        let open_conversations_changed = {
+            let mut inner = self.inner.lock().await;
+            inner.open_workspaces.remove(window_label);
+            let conversations_removed = inner.open_conversations.remove(window_label).is_some();
+            let current_still_open = inner
+                .current_workspace
+                .as_ref()
+                .is_some_and(|current| inner.open_workspaces.values().any(|id| id == current));
+            if !current_still_open {
+                inner.current_workspace = inner.open_workspaces.values().next().cloned();
+            }
+            conversations_removed.then(|| open_conversations_from_inner(&inner))
+        };
+        if let Some(open_conversations) = open_conversations_changed {
+            let _ = self
+                .broadcast_payload(&RemotePcPayload::OpenConversationsChanged {
+                    open_conversations,
+                })
+                .await;
         }
     }
 
@@ -1130,10 +1157,73 @@ impl RemoteRuntime {
         remember_known_workspace(&mut inner, workspace_id);
     }
 
+    pub(super) async fn set_window_open_conversations(
+        &self,
+        window_label: String,
+        conversations: Vec<RemoteOpenConversation>,
+    ) {
+        let open_conversations = {
+            let mut inner = self.inner.lock().await;
+            let normalized = normalize_open_conversations(conversations);
+            let unchanged = match (
+                inner.open_conversations.get(&window_label),
+                normalized.is_empty(),
+            ) {
+                (None, true) => true,
+                (Some(current), false) => current == &normalized,
+                _ => false,
+            };
+            if unchanged {
+                return;
+            }
+            for conversation in &normalized {
+                remember_known_workspace(&mut inner, &conversation.workspace_id);
+            }
+            let active_workspace = normalized
+                .iter()
+                .find(|conversation| conversation.active)
+                .or_else(|| normalized.first())
+                .map(|conversation| conversation.workspace_id.clone());
+            if normalized.is_empty() {
+                inner.open_conversations.remove(&window_label);
+                inner.open_workspaces.remove(&window_label);
+                let current_still_open = inner
+                    .current_workspace
+                    .as_ref()
+                    .is_some_and(|current| inner.open_workspaces.values().any(|id| id == current));
+                if !current_still_open {
+                    inner.current_workspace = inner.open_workspaces.values().next().cloned();
+                }
+            } else {
+                if let Some(active_workspace) = active_workspace {
+                    inner
+                        .open_workspaces
+                        .insert(window_label.clone(), active_workspace.clone());
+                    inner.current_workspace = Some(active_workspace);
+                }
+                inner.open_conversations.insert(window_label, normalized);
+            }
+            open_conversations_from_inner(&inner)
+        };
+        let _ = self
+            .broadcast_payload(&RemotePcPayload::OpenConversationsChanged { open_conversations })
+            .await;
+    }
+
+    async fn open_conversations_view(&self) -> Vec<RemoteOpenConversation> {
+        let inner = self.inner.lock().await;
+        open_conversations_from_inner(&inner)
+    }
+
     async fn workspace_view(&self) -> (Option<String>, Vec<String>) {
         let inner = self.inner.lock().await;
         let mut list: Vec<String> = inner.open_workspaces.values().cloned().collect();
         list.extend(inner.known_workspaces.iter().cloned());
+        for conversations in inner.open_conversations.values() {
+            for conversation in conversations {
+                list.push(conversation.workspace_id.clone());
+            }
+        }
         list.sort();
         list.dedup();
         (inner.current_workspace.clone(), list)
@@ -1211,6 +1301,12 @@ pub(super) struct RemoteDeviceInput {
     device_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RemoteOpenConversationsInput {
+    conversations: Vec<RemoteOpenConversation>,
+}
+
 #[tauri::command]
 pub(super) async fn remote_get_status(
     state: State<'_, DesktopState>,
@@ -1262,6 +1358,19 @@ pub(super) async fn remote_revoke_device(
         .revoke_device(&app, &state.store, &input.device_id)
         .await
         .map_err(error_to_string)
+}
+
+#[tauri::command]
+pub(super) async fn remote_set_open_conversations(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: RemoteOpenConversationsInput,
+) -> std::result::Result<(), String> {
+    state
+        .remote
+        .set_window_open_conversations(window.label().to_string(), input.conversations)
+        .await;
+    Ok(())
 }
 
 pub(super) fn start_remote_if_enabled(app: &AppHandle) {
@@ -1625,7 +1734,110 @@ enum RemotePcPayload {
     ActiveTurnsChanged {
         active_turns: Vec<ActiveTurnSummary>,
     },
+    OpenConversationsChanged {
+        open_conversations: Vec<RemoteOpenConversation>,
+    },
     DeviceRevoked,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RemoteOpenConversation {
+    workspace_id: String,
+    workspace_name: String,
+    conversation_id: String,
+    title: String,
+    updated_at_ms: i64,
+    active: bool,
+}
+
+fn normalize_open_conversations(
+    conversations: Vec<RemoteOpenConversation>,
+) -> Vec<RemoteOpenConversation> {
+    let mut by_key: HashMap<(String, String), RemoteOpenConversation> = HashMap::new();
+    for mut conversation in conversations {
+        conversation.workspace_id = conversation.workspace_id.trim().to_string();
+        conversation.workspace_name = conversation.workspace_name.trim().to_string();
+        conversation.conversation_id = conversation.conversation_id.trim().to_string();
+        conversation.title = conversation.title.trim().to_string();
+        if conversation.workspace_id.is_empty() || conversation.conversation_id.is_empty() {
+            continue;
+        }
+        if conversation.workspace_name.is_empty() {
+            conversation.workspace_name = workspace_display_name(&conversation.workspace_id);
+        }
+        if conversation.title.is_empty() {
+            conversation.title = "New conversation".to_string();
+        }
+        let key = (
+            conversation.workspace_id.clone(),
+            conversation.conversation_id.clone(),
+        );
+        by_key
+            .entry(key)
+            .and_modify(|existing| {
+                if conversation.active {
+                    existing.active = true;
+                }
+                if conversation.updated_at_ms > existing.updated_at_ms {
+                    existing.updated_at_ms = conversation.updated_at_ms;
+                }
+                if !conversation.workspace_name.is_empty() {
+                    existing.workspace_name = conversation.workspace_name.clone();
+                }
+                if !conversation.title.is_empty() {
+                    existing.title = conversation.title.clone();
+                }
+            })
+            .or_insert(conversation);
+    }
+    let mut normalized = by_key.into_values().collect::<Vec<_>>();
+    normalized.sort_by(|a, b| {
+        a.workspace_id
+            .cmp(&b.workspace_id)
+            .then_with(|| b.active.cmp(&a.active))
+            .then_with(|| b.updated_at_ms.cmp(&a.updated_at_ms))
+            .then_with(|| a.conversation_id.cmp(&b.conversation_id))
+    });
+    normalized
+}
+
+fn open_conversations_from_inner(inner: &RemoteRuntimeInner) -> Vec<RemoteOpenConversation> {
+    let mut by_key: HashMap<(String, String), RemoteOpenConversation> = HashMap::new();
+    for conversations in inner.open_conversations.values() {
+        for conversation in conversations {
+            let key = (
+                conversation.workspace_id.clone(),
+                conversation.conversation_id.clone(),
+            );
+            by_key
+                .entry(key)
+                .and_modify(|existing| {
+                    if conversation.active {
+                        existing.active = true;
+                    }
+                    if conversation.updated_at_ms > existing.updated_at_ms {
+                        existing.updated_at_ms = conversation.updated_at_ms;
+                    }
+                    if !conversation.workspace_name.is_empty() {
+                        existing.workspace_name = conversation.workspace_name.clone();
+                    }
+                    if !conversation.title.is_empty() {
+                        existing.title = conversation.title.clone();
+                    }
+                })
+                .or_insert_with(|| conversation.clone());
+        }
+    }
+    let mut open_conversations = by_key.into_values().collect::<Vec<_>>();
+    open_conversations.sort_by(|a, b| {
+        a.workspace_id
+            .cmp(&b.workspace_id)
+            .then_with(|| b.active.cmp(&a.active))
+            .then_with(|| b.updated_at_ms.cmp(&a.updated_at_ms))
+            .then_with(|| a.conversation_id.cmp(&b.conversation_id))
+    });
+    open_conversations
 }
 
 fn active_turn_workspaces(state: &DesktopState) -> Vec<String> {
