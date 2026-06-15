@@ -2337,6 +2337,14 @@ fn title_hidden_text(meta: &Option<Value>) -> bool {
         || meta.get("plan_control").and_then(Value::as_str).is_some()
 }
 
+const IGNORED_TOKEN_USAGE_PROVIDERS: &[&str] = &["anthropic"];
+
+fn is_ignored_token_usage_provider(provider: &str) -> bool {
+    IGNORED_TOKEN_USAGE_PROVIDERS
+        .iter()
+        .any(|ignored| provider.eq_ignore_ascii_case(ignored))
+}
+
 #[derive(Debug, Clone)]
 struct StoredTokenUsage {
     provider: String,
@@ -2487,7 +2495,7 @@ fn stored_token_usage_from_meta(value: &Value) -> Option<StoredTokenUsage> {
     }
     let provider = object.get("provider")?.as_str()?.trim();
     let model = object.get("model")?.as_str()?.trim();
-    if provider.is_empty() || model.is_empty() {
+    if provider.is_empty() || model.is_empty() || is_ignored_token_usage_provider(provider) {
         return None;
     }
 

@@ -61,13 +61,16 @@ const PROVIDER_BILLING: Record<string, ProviderBilling> = {
   openai: { outputIncludesReasoning: true, inputIncludesCacheRead: true },
   // Kimi is OpenAI-compatible.
   kimi: { outputIncludesReasoning: true, inputIncludesCacheRead: true },
-  // Anthropic: thinking tokens are counted inside output; cache read/creation
-  // tokens are reported as fields separate from `input_tokens`.
-  anthropic: { outputIncludesReasoning: true, inputIncludesCacheRead: false },
   // Gemini: candidate (output) tokens exclude "thoughts", which arrive in the
   // separate reasoning field; cache-read is not surfaced (always 0).
   google: { outputIncludesReasoning: false, inputIncludesCacheRead: true },
 };
+
+const IGNORED_USAGE_PROVIDERS = new Set(["anthropic"]);
+
+function isIgnoredUsageProvider(provider: string): boolean {
+  return IGNORED_USAGE_PROVIDERS.has(provider.trim().toLowerCase());
+}
 
 function billingFor(provider: string): ProviderBilling {
   return PROVIDER_BILLING[provider.toLowerCase()] ?? DEFAULT_BILLING;
@@ -87,10 +90,6 @@ function rates(
   };
 }
 
-// Anthropic charges ~1.25x input for cache writes and ~0.1x for cache reads.
-const anthropicRates = (input: number, output: number) =>
-  rates(input, output, 0.1, 1.25);
-
 /**
  * Estimated per-million-token rates for a provider/model pair. Matching is done
  * on coarse model-family keywords so new point releases stay covered. Returns
@@ -101,11 +100,6 @@ export function ratesFor(provider: string, model: string): TokenRates | null {
   const p = provider.toLowerCase();
   const m = model.toLowerCase();
   switch (p) {
-    case "anthropic":
-      if (m.includes("opus")) return anthropicRates(15, 75);
-      if (m.includes("haiku")) return anthropicRates(0.8, 4);
-      // sonnet, fable, and any other mid-tier Claude.
-      return anthropicRates(3, 15);
     case "openai":
       if (m.includes("mini")) return rates(0.25, 2);
       if (m.includes("spark")) return rates(0.5, 4);
@@ -237,7 +231,7 @@ export function addLiveUsage(
 ): LiveUsageMap {
   const cleanProvider = provider.trim();
   const cleanModel = model.trim();
-  if (!cleanProvider || !cleanModel) return map;
+  if (!cleanProvider || !cleanModel || isIgnoredUsageProvider(cleanProvider)) return map;
   const totals = totalsFromStreamUsage(usage);
   if (totals.totalTokens <= 0) return map;
   const key = modelKey(cleanProvider, cleanModel);
@@ -251,6 +245,8 @@ export function mergeLiveMaps(maps: LiveUsageMap[]): LiveUsageMap {
   const merged: LiveUsageMap = {};
   for (const map of maps) {
     for (const [key, totals] of Object.entries(map)) {
+      const { provider } = splitModelKey(key);
+      if (isIgnoredUsageProvider(provider)) continue;
       merged[key] = addTotals(merged[key] ?? emptyTotals(), totals);
     }
   }
@@ -326,6 +322,7 @@ function buildScope(
 
   if (scope) {
     for (const provider of scope.providers) {
+      if (isIgnoredUsageProvider(provider.provider)) continue;
       for (const model of provider.models) {
         addModel(model.provider, model.model, model.totals);
       }
@@ -333,6 +330,7 @@ function buildScope(
   }
   for (const [key, totals] of Object.entries(live)) {
     const { provider, model } = splitModelKey(key);
+    if (isIgnoredUsageProvider(provider)) continue;
     addModel(provider, model, totals);
   }
 

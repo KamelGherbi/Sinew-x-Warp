@@ -63,17 +63,23 @@ type Tone = "ok" | "pending" | "error" | "off";
 // Severity of a quota bar, driven by how much headroom is left.
 type BarTone = "ok" | "warn" | "low" | "unknown";
 
-/** Shared shape across the five provider status payloads we care about here. */
+type UsageProviderId = Exclude<ProviderId, "anthropic">;
+
+const USAGE_PROVIDERS = PROVIDERS.filter(
+  (provider): provider is (typeof PROVIDERS)[number] & { value: UsageProviderId } =>
+    provider.value !== "anthropic",
+);
+
+/** Shared shape across the provider status payloads we care about here. */
 type ProviderStatusLike = {
   connected: boolean;
   connectionState: ProviderConnectionState;
   error?: string | null;
 };
 
-type StatusMap = Record<ProviderId, ProviderStatusLike | null>;
+type StatusMap = Record<UsageProviderId, ProviderStatusLike | null>;
 
 const EMPTY_STATUS: StatusMap = {
-  anthropic: null,
   openai: null,
   google: null,
   kimi: null,
@@ -112,7 +118,6 @@ export function StatusWidget({ workspacePath, conversationId }: Props) {
       configuredRes,
       usageRes,
       openai,
-      anthropic,
       google,
       kimi,
       openrouter,
@@ -121,7 +126,6 @@ export function StatusWidget({ workspacePath, conversationId }: Props) {
       api.listConfiguredModelProviders().catch(() => [] as string[]),
       api.providerUsageSummary().catch(() => null),
       api.getOpenAiProviderStatus().catch(() => null),
-      api.getAnthropicProviderStatus().catch(() => null),
       api.getGoogleProviderStatus().catch(() => null),
       api.getKimiProviderStatus().catch(() => null),
       api.getOpenRouterProviderStatus().catch(() => null),
@@ -129,9 +133,9 @@ export function StatusWidget({ workspacePath, conversationId }: Props) {
     // Drop stale or post-unmount responses.
     if (!mountedRef.current || myId !== reqIdRef.current) return;
     setSummary(summaryRes);
-    setConfigured(configuredRes);
+    setConfigured(configuredRes.filter((provider) => provider !== "anthropic"));
     setUsage(usageRes);
-    setStatuses({ anthropic, openai, google, kimi, openrouter });
+    setStatuses({ openai, google, kimi, openrouter });
   }, [workspacePath, conversationId]);
 
   // Mount + workspace/conversation change.
@@ -200,7 +204,7 @@ export function StatusWidget({ workspacePath, conversationId }: Props) {
   const providerRows = useMemo(() => {
     const conversationByProvider = indexProviderTotals(view.conversation);
     const globalByProvider = indexProviderTotals(view.global);
-    return PROVIDERS.map((provider) => {
+    return USAGE_PROVIDERS.map((provider) => {
       const status = statuses[provider.value];
       const descriptor = describeStatus(status, configuredSet.has(provider.value));
       const conversationTotals =

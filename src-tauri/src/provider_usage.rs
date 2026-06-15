@@ -72,9 +72,8 @@ pub(super) async fn provider_usage_summary() -> std::result::Result<ProviderUsag
         .build()
         .map_err(|err| format!("unable to build usage client: {err}"))?;
 
-    let (openai, anthropic, google, kimi, openrouter) = tokio::join!(
+    let (openai, google, kimi, openrouter) = tokio::join!(
         fetch_openai_codex_usage(http.clone()),
-        fetch_anthropic_usage(http.clone()),
         fetch_google_usage(http.clone()),
         fetch_kimi_usage(http.clone()),
         fetch_openrouter_usage(http),
@@ -82,7 +81,7 @@ pub(super) async fn provider_usage_summary() -> std::result::Result<ProviderUsag
 
     Ok(ProviderUsageSummary {
         updated_at_ms: now_ms(),
-        providers: vec![openai, anthropic, google, kimi, openrouter],
+        providers: vec![openai, google, kimi, openrouter],
     })
 }
 
@@ -167,90 +166,6 @@ async fn fetch_openai_codex_usage(http: reqwest::Client) -> ProviderUsageStatus 
         windows,
         balance,
         spend: None,
-        error: None,
-    }
-}
-
-async fn fetch_anthropic_usage(http: reqwest::Client) -> ProviderUsageStatus {
-    let provider = "anthropic";
-    let source = "claude-oauth";
-    let credential = match sinew_anthropic::Credential::load_default() {
-        Ok(Some(credential)) => credential,
-        Ok(None) => return unavailable(provider, source, "Anthropic OAuth is not connected."),
-        Err(err) => return errored(provider, source, err.to_string()),
-    };
-    let token = match credential.bearer_or_key(&http).await {
-        Ok(token) => token,
-        Err(err) => return errored(provider, source, err.to_string()),
-    };
-    let json = match send_json(
-        http.get("https://api.anthropic.com/api/oauth/usage")
-            .bearer_auth(token)
-            .header("accept", "application/json")
-            .header("content-type", "application/json")
-            .header("anthropic-beta", "oauth-2025-04-20")
-            .header("user-agent", "claude-code/2.1.0"),
-    )
-    .await
-    {
-        Ok(json) => json,
-        Err(err) => return errored(provider, source, err),
-    };
-
-    let mut windows = Vec::new();
-    if let Some(value) = first_child(&json, &["five_hour"]) {
-        windows.push(parse_anthropic_window(value, "session", "Session / 5h"));
-    }
-    if let Some(value) = first_child(&json, &["seven_day"]) {
-        windows.push(parse_anthropic_window(value, "weekly", "Weekly"));
-    }
-    for (id, label, keys) in [
-        ("weekly-opus", "Weekly Opus", ["seven_day_opus", "opus"]),
-        ("weekly-sonnet", "Weekly Sonnet", ["seven_day_sonnet", "sonnet"]),
-        ("daily-routines", "Daily routines", ["seven_day_routines", "seven_day_cowork"]),
-    ] {
-        if let Some(value) = first_child(&json, &keys) {
-            windows.push(parse_anthropic_window(value, id, label));
-        }
-    }
-
-    let extra = json.get("extra_usage").or_else(|| json.get("extraUsage"));
-    let mut spend = None;
-    if let Some(extra) = extra {
-        let used = field_f64(extra, &["used_credits", "usedCredits", "used"]);
-        let limit = field_f64(extra, &["monthly_limit", "monthlyLimit", "limit"]);
-        let currency = field_string(extra, &["currency"]);
-        if used.is_some() || limit.is_some() {
-            if let (Some(used), Some(limit)) = (used, limit) {
-                windows.push(window_from_amounts(
-                    "extra-usage",
-                    "Extra monthly usage",
-                    Some(used),
-                    Some(limit),
-                    None,
-                    currency.clone().or_else(|| Some("credits".into())),
-                    None,
-                    None,
-                ));
-            }
-            spend = used.map(|used| ProviderUsageSpend {
-                today: None,
-                week: None,
-                month: Some(used),
-                currency,
-            });
-        }
-    }
-
-    ProviderUsageStatus {
-        provider: provider.into(),
-        source: source.into(),
-        state: ProviderUsageState::Available,
-        exact: true,
-        label: Some("Claude subscription quota".into()),
-        windows,
-        balance: None,
-        spend,
         error: None,
     }
 }
@@ -537,24 +452,6 @@ async fn send_json(request: reqwest::RequestBuilder) -> Result<Value, String> {
         .json::<Value>()
         .await
         .map_err(|err| format!("invalid JSON response: {err}"))
-}
-
-fn parse_anthropic_window(value: &Value, id: &str, label: &str) -> ProviderUsageWindow {
-    let used_percent = field_f64(value, &["utilization", "used_percent", "usedPercent"])
-        .map(percent_from_ratio_or_percent);
-    let reset_at = field_string(value, &["resets_at", "resetsAt", "reset_at", "resetAt"]);
-    ProviderUsageWindow {
-        id: id.into(),
-        label: label.into(),
-        used_percent,
-        remaining_percent: used_percent.map(|percent| clamp_percent(100.0 - percent)),
-        used: None,
-        limit: None,
-        remaining: None,
-        unit: Some("percent".into()),
-        reset_at_ms: reset_at.as_deref().and_then(parse_epoch_ms),
-        reset_at,
-    }
 }
 
 fn parse_generic_window(value: &Value, id: &str, label: &str, unit: Option<&str>) -> ProviderUsageWindow {
